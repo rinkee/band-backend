@@ -1,0 +1,294 @@
+[2025-03-12 22:45:12] ERROR: Failed to login: Manual login timeout
+[2025-03-12 22:45:12] ERROR: Failed to crawl posts from band 96643229: Manual login timeout
+[2025-03-12 22:45:12] ERROR: 게시물 크롤링 오류: Manual login timeout
+[2025-03-12 22:46:43] ERROR: Failed to login: page is not defined
+[2025-03-12 22:46:43] ERROR: Failed to crawl posts from band 96643229: page is not defined
+[2025-03-12 22:46:43] ERROR: 게시물 크롤링 오류: page is not defined
+[2025-03-12 22:46:43] ERROR: Failed to login: page is not defined
+[2025-03-12 22:46:43] ERROR: Failed to crawl posts from band 96643229: page is not defined
+[2025-03-12 22:46:43] ERROR: 게시물 크롤링 오류: page is not defined
+[2025-03-12 22:48:04] ERROR: Failed to login: updateTaskStatus is not defined
+[2025-03-12 22:48:04] ERROR: Failed to crawl posts from band 96643229: updateTaskStatus is not defined
+[2025-03-12 22:48:04] ERROR: 게시물 크롤링 오류: updateTaskStatus is not defined
+[2025-03-12 22:48:06] ERROR: Failed to login: updateTaskStatus is not defined
+[2025-03-12 22:48:06] ERROR: Failed to crawl posts from band 96643229: updateTaskStatus is not defined
+[2025-03-12 22:48:06] ERROR: 게시물 크롤링 오류: updateTaskStatus is not defined
+[2025-03-12 22:49:14] ERROR: Failed to save posts: notNull Violation: Post.postId cannot be null
+[2025-03-12 22:49:14] ERROR: 게시물 크롤링 오류: notNull Violation: Post.postId cannot be null
+[2025-03-12 22:54:14] ERROR: Failed to crawl posts from band 96643229: net::ERR_ABORTED at https://band.us/band/96643229
+[2025-03-12 22:54:14] ERROR: 게시물 크롤링 오류: net::ERR_ABORTED at https://band.us/band/96643229
+[2025-03-12 22:56:23] ERROR: Failed to save posts: notNull Violation: Post.postId cannot be null
+[2025-03-12 22:56:23] ERROR: 게시물 크롤링 오류: notNull Violation: Post.postId cannot be null
+[2025-03-12 23:07:34] ERROR: 게시물 크롤링 오류: bandId is not defined
+[2025-03-12 23:08:56] ERROR: 게시물 크롤링 오류: bandId is not defined
+[2025-03-12 23:10:23] ERROR: Failed to check login status: Attempted to use detached Frame 'B15EDD6B02CE1B2814129A4DC58BEC33'.
+[2025-03-12 23:10:23] ERROR: Failed to login: Attempted to use detached Frame 'B15EDD6B02CE1B2814129A4DC58BEC33'.
+[2025-03-12 23:10:23] ERROR: 게시물 크롤링 오류: bandId is not defined
+[2025-03-12 23:15:06] ERROR: 게시물 크롤링 오류: bandId is not defined
+[2025-03-12 23:15:17] ERROR: Failed to check login status: Navigating frame was detached
+[2025-03-12 23:15:17] ERROR: Failed to login: Attempted to use detached Frame '32F18BD9A88410429F07993F87ED5025'.
+[2025-03-12 23:15:17] ERROR: 게시물 크롤링 오류: bandId is not defined
+[2025-03-12 23:17:14] ERROR: Failed to initialize browser: naverId is not defined
+[2025-03-12 23:17:14] ERROR: 게시물 크롤링 오류: naverId is not defined
+[2025-03-12 23:19:03] ERROR: Failed to initialize browser: naverId is not defined
+[2025-03-12 23:19:03] ERROR: 게시물 크롤링 오류: naverId is not defined
+[2025-03-12 23:22:04] ERROR: 게시물 크롤링 오류: bandId is not defined
+[2025-03-12 23:26:05] ERROR: 게시물 크롤링 오류: bandId is not defined
+[2025-03-12 23:28:33] ERROR: 게시물 크롤링 오류: bandId is not defined
+[2025-03-12 23:30:41] ERROR: 게시물 크롤링 오류: net::ERR_ABORTED at https://band.us/band/96643229
+[2025-03-12 23:34:25] ERROR: Failed to login: net::ERR_ABORTED at https://band.us/band/96643229
+[2025-03-12 23:34:25] ERROR: 게시물 크롤링 오류: net::ERR_ABORTED at https://band.us/band/96643229
+[2025-03-12 23:35:42] ERROR: Failed to login: Navigating frame was detached
+[2025-03-12 23:35:42] ERROR: 게시물 크롤링 오류: Navigating frame was detached
+[2025-03-12 23:42:29] ERROR: 게시물 크롤링 오류: Waiting for selector `.cCard.gContentCardShadow` failed: Waiting failed: 10000ms exceeded
+[2025-03-12 23:47:07] ERROR: 게시물 크롤링 오류: Waiting for selector `.cCard.gContentCardShadow` failed: Protocol error (Runtime.callFunctionOn): Target closed
+[2025-03-12 23:48:38] ERROR: 게시물 크롤링 오류: Navigating frame was detached
+[2025-03-13 00:57:30] ERROR: Failed to check login status: Navigating frame was detached
+[2025-03-13 00:57:30] ERROR: Failed to login: Attempted to use detached Frame '5EB0CC70082F2C739771F1868FB2EE2B'.
+[2025-03-13 00:57:30] ERROR: 게시물 크롤링 오류: Attempted to use detached Frame '5EB0CC70082F2C739771F1868FB2EE2B'.
+[2025-03-13 01:08:26] ERROR: Failed to login: Protocol error (Network.getCookies): Session closed. Most likely the page has been closed.
+[2025-03-13 01:08:26] ERROR: 게시물 크롤링 오류: Protocol error (Network.getCookies): Session closed. Most likely the page has been closed.
+[2025-03-13 01:16:07] ERROR: Failed to login: net::ERR_ABORTED at https://band.us/band/96643229
+[2025-03-13 01:16:07] ERROR: 게시물 크롤링 오류: net::ERR_ABORTED at https://band.us/band/96643229
+[2025-03-13 01:21:46] ERROR: 게시물 크롤링 오류: Attempted to use detached Frame 'DE7865FF431D3095A1A24F1BE5203FD7'.
+[2025-03-13 01:27:57] ERROR: 로그인 상태 확인 실패: page is not defined
+[2025-03-13 01:27:59] ERROR: 게시물 크롤링 오류: Navigating frame was detached
+[2025-03-13 01:30:07] ERROR: 로그인 상태 확인 실패: page is not defined
+[2025-03-13 01:30:13] ERROR: 게시물 크롤링 오류: Attempted to use detached Frame 'D293ECC18D355D5F29DBB07CFED49880'.
+[2025-03-13 01:50:01] ERROR: 로그인 상태 확인 실패: Attempted to use detached Frame 'B27F6D1FB51635B81E6CD4F26D6F468C'.
+[2025-03-13 01:50:01] ERROR: 로그인 상태 확인 실패: Attempted to use detached Frame 'B27F6D1FB51635B81E6CD4F26D6F468C'.
+[2025-03-13 01:50:01] ERROR: 로그인 실패: Attempted to use detached Frame 'B27F6D1FB51635B81E6CD4F26D6F468C'.
+[2025-03-13 01:50:01] ERROR: 게시물 크롤링 오류: Attempted to use detached Frame 'B27F6D1FB51635B81E6CD4F26D6F468C'.
+[2025-03-13 01:56:14] ERROR: 로그인 실패: Waiting for selector `#id` failed: Waiting failed: 30000ms exceeded
+[2025-03-13 01:56:14] ERROR: 게시물 크롤링 오류: Waiting for selector `#id` failed: Waiting failed: 30000ms exceeded
+[2025-03-13 01:56:37] ERROR: 로그인 실패: Navigating frame was detached
+[2025-03-13 01:56:37] ERROR: 게시물 크롤링 오류: Navigating frame was detached
+[2025-03-13 02:05:23] ERROR: 게시물 크롤링 오류: Waiting for selector `.cCard.gContentCardShadow` failed: Waiting failed: 10000ms exceeded
+[2025-03-13 02:07:56] ERROR: 로그인 실패: No element found for selector: ._loginBtn
+[2025-03-13 02:07:56] ERROR: 게시물 크롤링 오류: No element found for selector: ._loginBtn
+[2025-03-13 02:14:42] ERROR: 게시물 크롤링 오류: Waiting for selector `.cCard.gContentCardShadow` failed: Waiting failed: 10000ms exceeded
+[2025-03-13 02:20:00] ERROR: 로그인 실패: No element found for selector: ._loginBtn
+[2025-03-13 02:20:00] ERROR: 게시물 크롤링 오류: No element found for selector: ._loginBtn
+[2025-03-13 02:20:27] ERROR: 로그인 상태 확인 실패: Navigating frame was detached
+[2025-03-13 02:20:27] ERROR: 로그인 실패: Attempted to use detached Frame 'D29ABC9575DD22E49B3ECCC2B86D055A'.
+[2025-03-13 02:20:27] ERROR: 게시물 크롤링 오류: Attempted to use detached Frame 'D29ABC9575DD22E49B3ECCC2B86D055A'.
+[2025-03-13 02:29:39] ERROR: 브라우저 초기화 실패: isLoggedIn is not defined
+[2025-03-13 02:29:39] ERROR: 게시물 크롤링 오류: isLoggedIn is not defined
+[2025-03-13 02:30:18] ERROR: 로그인 실패: No element found for selector: ._loginBtn
+[2025-03-13 02:30:18] ERROR: 게시물 크롤링 오류: No element found for selector: ._loginBtn
+[2025-03-13 02:31:25] ERROR: 로그인 실패: No element found for selector: ._loginBtn
+[2025-03-13 02:31:25] ERROR: 게시물 크롤링 오류: No element found for selector: ._loginBtn
+[2025-03-13 02:34:20] ERROR: 로그인 실패: No element found for selector: ._loginBtn
+[2025-03-13 02:34:20] ERROR: 게시물 크롤링 오류: No element found for selector: ._loginBtn
+[2025-03-13 02:34:59] ERROR: 로그인 실패: No element found for selector: ._loginBtn
+[2025-03-13 02:34:59] ERROR: 게시물 크롤링 오류: No element found for selector: ._loginBtn
+[2025-03-13 02:38:07] ERROR: 로그인 실패: No element found for selector: .-naver
+[2025-03-13 02:38:07] ERROR: 게시물 크롤링 오류: No element found for selector: .-naver
+[2025-03-13 02:39:54] ERROR: 로그인 실패: No element found for selector: .-naver
+[2025-03-13 02:39:54] ERROR: 게시물 크롤링 오류: No element found for selector: .-naver
+[2025-03-13 02:48:08] ERROR: 게시물 크롤링 오류: Waiting for selector `.cCard.gContentCardShadow` failed: Waiting failed: 10000ms exceeded
+[2025-03-13 03:02:15] ERROR: 로그인 실패: 크롤링을 중단합니다
+[2025-03-13 03:02:15] ERROR: 밴드 96643229 게시물 크롤링 실패: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 03:02:15] ERROR: 게시물 크롤링 오류: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 03:03:43] ERROR: 로그인 실패: No element found for selector: ._loginBtn
+[2025-03-13 03:03:43] ERROR: 밴드 96643229 게시물 크롤링 실패: No element found for selector: ._loginBtn
+[2025-03-13 03:03:43] ERROR: 게시물 크롤링 오류: No element found for selector: ._loginBtn
+[2025-03-13 03:04:27] ERROR: 로그인 실패: 크롤링을 중단합니다
+[2025-03-13 03:04:27] ERROR: 밴드 96643229 게시물 크롤링 실패: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 03:04:27] ERROR: 게시물 크롤링 오류: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 03:08:11] ERROR: 로그인 실패: No element found for selector: ._loginBtn
+[2025-03-13 03:08:11] ERROR: 밴드 96643229 게시물 크롤링 실패: No element found for selector: ._loginBtn
+[2025-03-13 03:08:11] ERROR: 게시물 크롤링 오류: No element found for selector: ._loginBtn
+[2025-03-13 03:09:08] ERROR: 로그인 실패: No element found for selector: ._loginBtn
+[2025-03-13 03:09:08] ERROR: 밴드 96643229 게시물 크롤링 실패: No element found for selector: ._loginBtn
+[2025-03-13 03:09:08] ERROR: 게시물 크롤링 오류: No element found for selector: ._loginBtn
+[2025-03-13 03:14:40] ERROR: 브라우저 초기화 실패: page is not defined
+[2025-03-13 03:15:07] ERROR: 로그인 실패: 크롤링을 중단합니다
+[2025-03-13 03:15:07] ERROR: 밴드 96643229 게시물 크롤링 실패: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 03:15:07] ERROR: 게시물 크롤링 오류: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 22:05:02] ERROR: 브라우저 초기화 실패: page is not defined
+[2025-03-13 22:05:29] ERROR: 로그인 실패: 크롤링을 중단합니다
+[2025-03-13 22:05:29] ERROR: 밴드 96643229 게시물 크롤링 실패: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 22:05:29] ERROR: 게시물 크롤링 오류: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 22:11:35] ERROR: 브라우저 초기화 실패: page is not defined
+[2025-03-13 22:12:04] ERROR: 로그인 실패: 크롤링을 중단합니다
+[2025-03-13 22:12:04] ERROR: 밴드 96643229 게시물 크롤링 실패: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 22:12:04] ERROR: 게시물 크롤링 오류: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 22:14:21] ERROR: 브라우저 초기화 실패: page is not defined
+[2025-03-13 22:14:52] ERROR: 로그인 실패: 크롤링을 중단합니다
+[2025-03-13 22:14:52] ERROR: 밴드 96643229 게시물 크롤링 실패: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 22:14:52] ERROR: 게시물 크롤링 오류: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 22:15:20] ERROR: 브라우저 초기화 실패: page is not defined
+[2025-03-13 22:16:08] ERROR: 로그인 실패: 크롤링을 중단합니다
+[2025-03-13 22:16:08] ERROR: 밴드 96643229 게시물 크롤링 실패: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 22:16:08] ERROR: 게시물 크롤링 오류: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 22:43:05] ERROR: 로그인 실패: 수동 로그인 시간 초과
+[2025-03-13 22:43:05] ERROR: 밴드 96643229 게시물 크롤링 실패: 수동 로그인 시간 초과
+[2025-03-13 22:43:05] ERROR: 게시물 크롤링 오류: 수동 로그인 시간 초과
+[2025-03-13 22:45:37] ERROR: 로그인 상태 확인 실패: Attempted to use detached Frame '4B90814A9720885BBD59359E276C21ED'.
+[2025-03-13 22:45:37] ERROR: 로그인 실패: 크롤링을 중단합니다
+[2025-03-13 22:45:37] ERROR: 밴드 96643229 게시물 크롤링 실패: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 22:45:37] ERROR: 게시물 크롤링 오류: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 22:45:46] ERROR: Failed to detect recaptcha: Attempted to use detached Frame 'E0C9D1E305923CEF734A6204C3D58886'.
+[2025-03-13 22:45:50] ERROR: 로그인 상태 확인 실패: Attempted to use detached Frame 'E0C9D1E305923CEF734A6204C3D58886'.
+[2025-03-13 22:45:50] ERROR: 로그인 실패: 크롤링을 중단합니다
+[2025-03-13 22:45:50] ERROR: 밴드 96643229 게시물 크롤링 실패: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 22:45:50] ERROR: 게시물 크롤링 오류: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 22:48:10] ERROR: 로그인 실패: page.waitForTimeout is not a function
+[2025-03-13 22:48:10] ERROR: 밴드 96643229 게시물 크롤링 실패: page.waitForTimeout is not a function
+[2025-03-13 22:48:10] ERROR: 게시물 크롤링 오류: page.waitForTimeout is not a function
+[2025-03-13 23:03:29] ERROR: 로그인 실패: 수동 로그인 시간 초과
+[2025-03-13 23:03:29] ERROR: 밴드 96643229 게시물 크롤링 실패: 수동 로그인 시간 초과
+[2025-03-13 23:03:29] ERROR: 게시물 크롤링 오류: 수동 로그인 시간 초과
+[2025-03-13 23:04:10] ERROR: 로그인 실패: page is not defined
+[2025-03-13 23:04:10] ERROR: 밴드 96643229 게시물 크롤링 실패: page is not defined
+[2025-03-13 23:04:10] ERROR: 게시물 크롤링 오류: page is not defined
+[2025-03-13 23:05:34] ERROR: 로그인 실패: id is not defined
+[2025-03-13 23:05:34] ERROR: 밴드 96643229 게시물 크롤링 실패: id is not defined
+[2025-03-13 23:05:34] ERROR: 게시물 크롤링 오류: id is not defined
+[2025-03-13 23:08:54] ERROR: 로그인 실패: 크롤링을 중단합니다
+[2025-03-13 23:08:54] ERROR: 밴드 96643229 게시물 크롤링 실패: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-13 23:08:54] ERROR: 게시물 크롤링 오류: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-14 00:10:52] ERROR: 로그인 실패: 크롤링을 중단합니다
+[2025-03-14 00:10:52] ERROR: 밴드 96643229 게시물 크롤링 실패: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-14 00:10:52] ERROR: 게시물 크롤링 오류: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-14 00:18:56] ERROR: 브라우저 초기화 실패: crawlingTasks is not defined
+[2025-03-14 00:25:03] ERROR: 밴드 96643229 게시물 크롤링 실패: crawlingTasks is not defined
+[2025-03-14 00:25:03] ERROR: 게시물 크롤링 오류: crawlingTasks is not defined
+[2025-03-14 00:25:05] ERROR: 밴드 96643229 게시물 크롤링 실패: crawlingTasks is not defined
+[2025-03-14 00:25:05] ERROR: 게시물 크롤링 오류: crawlingTasks is not defined
+[2025-03-14 00:31:50] ERROR: 밴드 96643229 게시물 크롤링 실패: Attempted to use detached Frame 'E8BFF95DE08660661E4C0BBD23C5E8A4'.
+[2025-03-14 00:31:50] ERROR: 게시물 크롤링 오류: Attempted to use detached Frame 'E8BFF95DE08660661E4C0BBD23C5E8A4'.
+[2025-03-14 00:45:48] ERROR: 게시물 크롤링 오류: 밴드 접근 권한이 없습니다.
+[2025-03-14 00:54:00] ERROR: 게시물 크롤링 오류: 밴드 접근 권한이 없습니다.
+[2025-03-14 00:55:24] ERROR: 게시물 크롤링 오류: 밴드 접근 권한이 없습니다.
+[2025-03-14 00:57:52] ERROR: 게시물 크롤링 오류: 밴드 접근 권한이 없습니다.
+[2025-03-14 00:59:05] ERROR: 게시물 크롤링 오류: Execution context was destroyed, most likely because of a navigation.
+[2025-03-14 01:00:45] ERROR: 게시물 크롤링 오류: Attempted to use detached Frame 'BFB3B436D9F788343DC827969C672B1A'.
+[2025-03-14 01:07:36] ERROR: 게시물 크롤링 오류: Navigating frame was detached
+[2025-03-14 01:12:00] ERROR: 게시물 크롤링 오류: Execution context was destroyed, most likely because of a navigation.
+[2025-03-14 01:18:48] ERROR: 게시물 크롤링 오류: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-14 01:21:03] ERROR: 게시물 크롤링 오류: Attempted to use detached Frame '4BEAD51DB28AF7E2A27455E47E06D23C'.
+[2025-03-14 01:28:17] ERROR: 게시물 크롤링 오류: hasNidAut is not defined
+[2025-03-14 01:31:09] ERROR: 게시물 크롤링 오류: No element found for selector: a.login
+[2025-03-14 01:31:35] ERROR: 게시물 크롤링 오류: No element found for selector: a.login
+[2025-03-14 01:32:59] ERROR: 게시물 크롤링 오류: 밴드 접근 권한이 없습니다.
+[2025-03-14 01:34:11] ERROR: 게시물 크롤링 오류: No element found for selector: a.login
+[2025-03-14 01:37:47] ERROR: 게시물 크롤링 오류: No element found for selector: a.login
+[2025-03-14 01:39:02] ERROR: 게시물 크롤링 오류: hasNidAut is not defined
+[2025-03-14 01:43:54] ERROR: 게시물 크롤링 오류: Attempted to use detached Frame '7A159291C50D2E592F57360A34467972'.
+[2025-03-14 01:54:27] ERROR: 게시물 크롤링 오류: 밴드 접근 권한이 없습니다.
+[2025-03-14 02:05:43] ERROR: 게시물 크롤링 오류: 로그인 실패: 크롤링을 진행할 수 없습니다
+[2025-03-14 02:14:57] ERROR: 게시물 크롤링 오류: No element found for selector: a.login
+[2025-03-14 02:24:15] ERROR: 게시물 크롤링 오류: Navigating frame was detached
+[2025-03-14 10:00:34] ERROR: Firebase 저장 오류: Value for argument "documentPath" is not a valid resource path. Path must be a non-empty string.
+[2025-03-14 10:00:34] ERROR: 게시물 상세 정보 크롤링 오류: Value for argument "documentPath" is not a valid resource path. Path must be a non-empty string.
+[2025-03-14 16:03:11] ERROR: 게시물 상세 정보 크롤링 오류: 밴드 접근 권한이 없습니다.
+[2025-03-14 16:03:12] ERROR: 게시물 상세 정보 크롤링 오류: 밴드 접근 권한이 없습니다.
+[2025-03-14 16:03:19] ERROR: 게시물 상세 정보 크롤링 오류: 밴드 접근 권한이 없습니다.
+[2025-03-14 16:07:13] ERROR: 다음 버튼 처리 중 오류: Node is either not clickable or not an Element
+[2025-03-14 16:07:19] ERROR: 다음 버튼 처리 중 오류: Node is either not clickable or not an Element
+[2025-03-14 16:08:33] ERROR: 다음 버튼 처리 중 오류: Node is either not clickable or not an Element
+[2025-03-14 17:06:34] ERROR: 다음 버튼 처리 중 오류: Node is either not clickable or not an Element
+[2025-03-14 17:07:40] ERROR: 다음 버튼 처리 중 오류: Node is either not clickable or not an Element
+[2025-03-14 17:13:36] ERROR: 이전 댓글 로드 중 오류 발생: document is not defined
+[2025-03-14 17:13:39] ERROR: 다음 버튼 처리 중 오류: Node is either not clickable or not an Element
+[2025-03-14 20:52:36] ERROR: 이전 댓글 로드 중 오류 발생: document is not defined
+[2025-03-14 20:52:39] ERROR: 다음 버튼 처리 중 오류: Node is either not clickable or not an Element
+[2025-03-14 21:21:54] ERROR: 이전 댓글 로드 중 오류 발생: this.updateTaskStatus is not a function
+[2025-03-14 21:22:01] ERROR: 이전 댓글 로드 중 오류 발생: this.updateTaskStatus is not a function
+[2025-03-14 21:22:08] ERROR: 이전 댓글 로드 중 오류 발생: this.updateTaskStatus is not a function
+[2025-03-14 21:24:02] ERROR: 이전 댓글 로드 중 오류 발생: logger is not defined
+[2025-03-14 21:24:05] ERROR: 이전 댓글 로드 중 오류 발생: logger is not defined
+[2025-03-14 21:24:09] ERROR: 이전 댓글 로드 중 오류 발생: logger is not defined
+[2025-03-14 21:24:12] ERROR: 이전 댓글 로드 중 오류 발생: logger is not defined
+[2025-03-14 21:24:16] ERROR: 이전 댓글 로드 중 오류 발생: logger is not defined
+[2025-03-14 21:24:19] ERROR: 이전 댓글 로드 중 오류 발생: logger is not defined
+[2025-03-14 21:53:46] ERROR: 게시물 내용 추출 중 오류: page is not defined
+[2025-03-14 21:53:51] ERROR: 게시물 내용 추출 중 오류: page is not defined
+[2025-03-14 21:53:56] ERROR: 게시물 내용 추출 중 오류: page is not defined
+[2025-03-14 21:54:22] ERROR: 게시물 상세 정보 크롤링 오류: 밴드 접근 권한이 없습니다.
+[2025-03-14 23:25:49] ERROR: 게시물 내용 추출 중 오류: Attempted to use detached Frame 'E4D227E877079DE70BC5E7902DFB39F5'.
+[2025-03-14 23:25:50] ERROR: 다음 버튼 처리 중 오류: Attempted to use detached Frame 'E4D227E877079DE70BC5E7902DFB39F5'.
+[2025-03-14 23:25:50] ERROR: 게시물 상세 정보 크롤링 오류: Protocol error (Input.dispatchKeyEvent): Session closed. Most likely the page has been closed.
+[2025-03-14 23:39:53] ERROR: 게시물 내용 추출 중 오류: Attempted to use detached Frame '4BDC3A4D860BA044AD124F3C4CA39CC6'.
+[2025-03-14 23:39:54] ERROR: 다음 버튼 처리 중 오류: Attempted to use detached Frame '4BDC3A4D860BA044AD124F3C4CA39CC6'.
+[2025-03-14 23:39:54] ERROR: 게시물 상세 정보 크롤링 오류: Protocol error (Input.dispatchKeyEvent): Session closed. Most likely the page has been closed.
+[2025-03-15 00:05:10] ERROR: 다음 버튼 처리 중 오류: Attempted to use detached Frame 'CFA62F7F52FDCA1717472DCC4520CB1D'.
+[2025-03-15 00:05:10] ERROR: 게시물 상세 정보 크롤링 오류: Protocol error (Input.dispatchKeyEvent): Session closed. Most likely the page has been closed.
+[2025-03-15 00:05:48] ERROR: 다음 버튼 처리 중 오류: Attempted to use detached Frame '73679A2ADF48189AA3854426C81BB02C'.
+[2025-03-15 00:05:48] ERROR: 게시물 상세 정보 크롤링 오류: Protocol error (Input.dispatchKeyEvent): Session closed. Most likely the page has been closed.
+[2025-03-15 00:12:06] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 00:12:18] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 00:16:11] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 00:16:23] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 00:17:55] ERROR: 다음 버튼 처리 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 00:26:14] ERROR: 다음 버튼 클릭 중 오류: this.page.waitForTimeout is not a function
+[2025-03-15 00:27:32] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 00:31:49] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 00:38:49] ERROR: 다음 버튼 클릭 처리 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 00:38:49] ERROR: 추가 확인 중 오류: this.page.waitForTimeout is not a function
+[2025-03-15 00:50:50] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 01:00:20] ERROR: 게시물 내용 추출 중 오류: this.page.waitForTimeout is not a function
+[2025-03-15 01:00:38] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 01:00:38] ERROR: 게시물 내용 추출 중 오류: this.page.waitForTimeout is not a function
+[2025-03-15 01:00:51] ERROR: 게시물 내용 추출 중 오류: this.page.waitForTimeout is not a function
+[2025-03-15 01:03:16] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 01:03:16] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 01:06:52] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 01:32:45] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 09:45:52] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 09:49:34] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 10:15:08] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 10:20:34] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 10:45:55] ERROR: 이전 댓글 로드 중 오류: Waiting failed: 5000ms exceeded
+[2025-03-15 11:11:55] ERROR: 게시물 2 크롤링 중 오류: currentUrl is not defined
+[2025-03-15 12:24:52] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: this._accessBandPage is not a function
+[2025-03-15 12:24:57] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: this._accessBandPage is not a function
+[2025-03-15 12:24:58] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: this._accessBandPage is not a function
+[2025-03-15 12:25:10] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: this._accessBandPage is not a function
+[2025-03-15 12:27:36] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: Attempted to use detached Frame '9C8614639E2A2A895F95C226E7570978'.
+[2025-03-15 12:29:45] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: naverId is not defined
+[2025-03-15 12:29:55] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: naverId is not defined
+[2025-03-15 12:29:55] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: naverId is not defined
+[2025-03-15 12:30:09] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: naverId is not defined
+[2025-03-15 12:37:36] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: 밴드 페이지 접근이 거부되었습니다.
+[2025-03-15 12:48:57] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: 밴드 페이지 접근이 거부되었습니다.
+[2025-03-15 12:53:41] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: Attempted to use detached Frame '129229F6E828D79B79CEA40F1F1622A6'.
+[2025-03-15 12:55:25] ERROR: 게시물 상세 정보 추출 중 오류 발생: Waiting for selector `.dPostContent` failed: Waiting failed: 10000ms exceeded
+[2025-03-15 12:55:37] ERROR: 게시물 상세 정보 추출 중 오류 발생: Waiting for selector `.dPostContent` failed: Waiting failed: 10000ms exceeded
+[2025-03-15 12:55:49] ERROR: 게시물 상세 정보 추출 중 오류 발생: Waiting for selector `.dPostContent` failed: Waiting failed: 10000ms exceeded
+[2025-03-15 13:19:40] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: naverId is not defined
+[2025-03-15 13:21:42] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: naverId is not defined
+[2025-03-15 13:21:42] ERROR: 브라우저 종료 오류: crawler is not defined
+[2025-03-15 13:24:23] ERROR: 게시물 상세 정보 추출 중 오류 발생: Waiting for selector `.dPostContent` failed: Waiting failed: 10000ms exceeded
+[2025-03-15 13:24:36] ERROR: 게시물 상세 정보 추출 중 오류 발생: Waiting for selector `.dPostContent` failed: Waiting failed: 10000ms exceeded
+[2025-03-15 13:24:48] ERROR: 게시물 상세 정보 추출 중 오류 발생: Waiting for selector `.dPostContent` failed: Waiting failed: 10000ms exceeded
+[2025-03-15 13:24:48] ERROR: 브라우저 종료 오류: crawler is not defined
+[2025-03-15 13:28:59] ERROR: 이전 댓글 버튼 클릭 중 오류 발생: this.page.waitForTimeout is not a function
+[2025-03-15 13:28:59] ERROR: 모든 댓글 로드 중 오류 발생: this.page.waitForTimeout is not a function
+[2025-03-15 13:29:03] ERROR: 이전 댓글 버튼 클릭 중 오류 발생: this.page.waitForTimeout is not a function
+[2025-03-15 13:29:03] ERROR: 모든 댓글 로드 중 오류 발생: this.page.waitForTimeout is not a function
+[2025-03-15 13:29:04] ERROR: 브라우저 종료 오류: crawler is not defined
+[2025-03-15 13:30:00] ERROR: 이전 댓글 버튼 클릭 중 오류 발생: this.page.waitForTimeout is not a function
+[2025-03-15 13:30:00] ERROR: 모든 댓글 로드 중 오류 발생: this.page.waitForTimeout is not a function
+[2025-03-15 13:30:04] ERROR: 이전 댓글 버튼 클릭 중 오류 발생: this.page.waitForTimeout is not a function
+[2025-03-15 13:30:04] ERROR: 모든 댓글 로드 중 오류 발생: this.page.waitForTimeout is not a function
+[2025-03-15 13:30:05] ERROR: 브라우저 종료 오류: crawler is not defined
+[2025-03-15 13:47:01] ERROR: 이전 댓글 버튼 클릭 중 오류 발생: Promise constructor cannot be invoked without 'new'
+[2025-03-15 13:47:01] ERROR: 모든 댓글 로드 중 오류 발생: Promise constructor cannot be invoked without 'new'
+[2025-03-15 13:47:06] ERROR: 이전 댓글 버튼 클릭 중 오류 발생: Promise constructor cannot be invoked without 'new'
+[2025-03-15 13:47:06] ERROR: 모든 댓글 로드 중 오류 발생: Promise constructor cannot be invoked without 'new'
+[2025-03-15 13:56:49] ERROR: 이전 댓글 버튼 클릭 중 오류 발생: Promise constructor cannot be invoked without 'new'
+[2025-03-15 13:56:49] ERROR: 모든 댓글 로드 중 오류 발생: Promise constructor cannot be invoked without 'new'
+[2025-03-15 13:56:53] ERROR: 이전 댓글 버튼 클릭 중 오류 발생: Promise constructor cannot be invoked without 'new'
+[2025-03-15 13:56:53] ERROR: 모든 댓글 로드 중 오류 발생: Promise constructor cannot be invoked without 'new'
+[2025-03-15 15:14:29] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: 밴드 페이지 접근이 거부되었습니다.
+[2025-03-15 15:15:41] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: 밴드 페이지 접근이 거부되었습니다.
+[2025-03-15 15:20:24] ERROR: 댓글 로드 중 오류 발생: Assignment to constant variable.
+[2025-03-15 15:20:31] ERROR: 댓글 로드 중 오류 발생: Assignment to constant variable.
+[2025-03-15 15:20:43] ERROR: 댓글 로드 중 오류 발생: Assignment to constant variable.
+[2025-03-16 13:06:54] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: Attempted to use detached Frame '1E22233B48D21A9A9B8B25889E14E1D1'.
+[2025-03-16 17:11:03] ERROR: Firebase 저장 오류: Value for argument "seconds" is not a valid integer.
+[2025-03-16 17:11:03] ERROR: 게시물 상세 정보 크롤링 오류: Value for argument "seconds" is not a valid integer.
+[2025-03-16 17:41:36] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: Attempted to use detached Frame '4BEC6C2CCD72D8547683A928B95647CF'.

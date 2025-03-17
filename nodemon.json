@@ -1,0 +1,4 @@
+{
+  "ignore": ["cookies/*", "*.png", "*.jpg", "*.jpeg"],
+  "watch": ["src/"]
+}
