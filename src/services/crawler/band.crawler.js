@@ -95,6 +95,59 @@ function safeParseDate(dateString) {
   }
 }
 
+// 가격 추출 함수 추가
+function extractPriceFromContent(content) {
+  if (!content) return 0;
+
+  // 가격 패턴 (숫자+원) 찾기
+  const priceRegex = /(\d+,?\d*,?\d*)원/g;
+  const priceMatches = content.match(priceRegex);
+
+  if (!priceMatches || priceMatches.length === 0) {
+    return 0;
+  }
+
+  // 모든 가격을 숫자로 변환
+  const prices = priceMatches
+    .map((priceText) => {
+      // 쉼표 제거하고 '원' 제거
+      const numStr = priceText.replace(/,/g, "").replace("원", "");
+      return parseInt(numStr, 10);
+    })
+    .filter((price) => !isNaN(price) && price > 0);
+
+  // 가격이 없으면 0 반환
+  if (prices.length === 0) {
+    return 0;
+  }
+
+  // 가장 낮은 가격 반환
+  return Math.min(...prices);
+}
+
+// 문서 ID 단순화 함수 추가
+function generateSimpleId(prefix = "", length = 8) {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let result = prefix ? `${prefix}_` : "";
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+// 주문 수량 추출 함수 추가
+function extractQuantityFromComment(content) {
+  if (!content) return 1;
+
+  // 숫자만 추출하는 정규식
+  const numbers = content.match(/\d+/g);
+  if (!numbers) return 1;
+
+  // 10 이하의 첫 번째 숫자를 찾음
+  const quantity = numbers.find((num) => parseInt(num) <= 10);
+  return quantity ? parseInt(quantity) : 1;
+}
+
 class BandCrawler extends BaseCrawler {
   constructor(bandId, options = {}) {
     super();
@@ -394,7 +447,7 @@ class BandCrawler extends BaseCrawler {
         try {
           // 직접 URL로 이동
           await this.page.goto(postUrl, {
-            waitUntil: "networkidle0",
+            waitUntil: "networkidle2",
             timeout: 30000,
           });
 
@@ -439,7 +492,7 @@ class BandCrawler extends BaseCrawler {
         93
       );
       const db = getFirebaseDb();
-      const batch = db.batch();
+      let batch = db.batch();
 
       // 현재 밴드에 연결된 userId 찾기
       let userId = await this._getOrCreateUserIdForBand();
@@ -447,10 +500,31 @@ class BandCrawler extends BaseCrawler {
       // 수정: 직접 products 컬렉션과 orders 컬렉션에 저장
       const productsRef = db.collection("products");
       const ordersRef = db.collection("orders");
+      const postsRef = db.collection("posts");
       const customersRef = db.collection("customers");
+
+      // 추가: 중복 저장 방지를 위해 기존 주문 데이터 확인
+      // 현재 밴드 ID와 연관된 모든 주문을 한 번만 조회
+      const existingOrdersQuery = await ordersRef
+        .where("bandId", "==", this.bandId)
+        .get();
+
+      // 빠른 검색을 위해 Map 객체에 저장
+      const existingOrdersMap = new Map();
+      existingOrdersQuery.forEach((doc) => {
+        // bandId_postId_timestamp 형식의 ID를 키로 사용
+        const orderData = doc.data();
+        if (orderData.bandCommentId) {
+          existingOrdersMap.set(orderData.bandCommentId, doc.id);
+        }
+      });
+
+      logger.info(`기존 주문 ${existingOrdersMap.size}개 로드 완료`);
 
       let totalCommentCount = 0;
       let postsWithComments = 0;
+      let newOrdersCount = 0;
+      let updatedOrdersCount = 0;
 
       for (const post of detailedPosts) {
         if (!post.postId || post.postId === "undefined") {
@@ -464,7 +538,12 @@ class BandCrawler extends BaseCrawler {
 
         const { comments, ...postData } = post;
         const commentCount = comments?.length || 0;
-        const productId = post.postId;
+
+        // 문서 ID 형식 변경 - 밴드ID_product_포스트번호
+        const productId = `${this.bandId}_product_${post.postId}`;
+
+        // 가격 추출 - 게시물 내용에서 가격 추출
+        const extractedPrice = extractPriceFromContent(post.postContent || "");
 
         if (commentCount > 0) {
           postsWithComments++;
@@ -474,7 +553,7 @@ class BandCrawler extends BaseCrawler {
         }
         totalCommentCount += commentCount;
 
-        // 상품 정보 저장
+        // 상품 정보 저장 - 가격 정보 및 전체 내용 포함
         const productDocRef = productsRef.doc(productId);
         batch.set(
           productDocRef,
@@ -482,14 +561,17 @@ class BandCrawler extends BaseCrawler {
             userId: userId,
             title: post.postTitle || "제목 없음",
             description: post.postContent || "",
-            price: 0,
-            originalPrice: 0,
+            originalContent: post.postContent || "",
+            price: extractedPrice,
+            originalPrice: extractedPrice,
             images: post.imageUrls || [],
             status: "판매중",
             bandPostId: post.postId,
+            bandId: this.bandId,
             bandPostUrl: `https://band.us/band/${this.bandId}/post/${post.postId}`,
             category: "기타",
             tags: [],
+            commentCount: commentCount,
             orderSummary: {
               totalOrders: commentCount,
               pendingOrders: commentCount,
@@ -501,52 +583,86 @@ class BandCrawler extends BaseCrawler {
           { merge: true }
         );
 
+        // 게시글 정보 저장 - Posts 컬렉션에 저장
+        const postDocRef = postsRef.doc(`${this.bandId}_post_${post.postId}`);
+        batch.set(
+          postDocRef,
+          {
+            userId: userId,
+            title: post.postTitle || "제목 없음",
+            content: post.postContent || "",
+            images: post.imageUrls || [],
+            bandPostId: post.postId,
+            bandId: this.bandId,
+            bandPostUrl: `https://band.us/band/${this.bandId}/post/${post.postId}`,
+            commentCount: commentCount,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+          { merge: true }
+        );
+
         // 댓글을 주문으로 변환하여 저장
         if (comments && comments.length > 0) {
-          comments.forEach((comment, index) => {
-            // 주문 ID 형식 변경: 밴드ID_상품ID_order_인덱스
-            const orderId = `${this.bandId}_${productId}_order_${index}`;
-            const customerName = comment.author || "익명";
+          // 배치 크기 제한에 도달하면 커밋 후 새 배치 생성
+          let currentBatchSize = 2; // 이미 product와 post 2개를 추가했으므로 2부터 시작
+
+          for (let index = 0; index < comments.length; index++) {
+            const comment = comments[index];
 
             // 시간 처리를 위한 안전한 날짜 변환
             const orderTime = safeParseDate(comment.time);
 
+            // 댓글 식별자
+            const bandCommentId = `${post.postId}_comment_${index}`;
+
+            // 중복 확인: 이미 저장된 주문인지 확인
+            const existingOrderId = existingOrdersMap.get(bandCommentId);
+
+            // 시간 정보를 기반으로 orderId 생성
+            const orderId =
+              existingOrderId ||
+              `${this.bandId}_${post.postId}_${orderTime.getTime()}`;
+            const customerName = comment.author || "익명";
+
+            // 수량 추출
+            const quantity = extractQuantityFromComment(comment.content);
+
             // 주문 정보 저장
             const orderDocRef = ordersRef.doc(orderId);
-            batch.set(
-              orderDocRef,
-              {
-                userId: userId,
-                productId: productId,
-                originalProductId: productId,
-                customerName: customerName,
-                customerBandId: "",
-                customerProfile: "",
-                quantity: 1,
-                price: 0,
-                totalAmount: 0,
-                comment: comment.content || "",
-                status: "신규",
-                paymentStatus: "미결제",
-                deliveryStatus: "준비중",
-                // 수정된 부분: 안전하게 변환된 날짜 사용
-                orderedAt: orderTime,
-                bandCommentId: `${post.postId}_comment_${index}`,
-                bandId: this.bandId,
-                bandCommentUrl: `https://band.us/band/${this.bandId}/post/${post.postId}#comment`,
-                createdAt: new Date(),
-                updatedAt: new Date(),
-              },
-              { merge: true }
-            );
 
-            // 고객 정보 추가 또는 업데이트 - ID 형식 변경
-            // 기존: const customerId = `${userId}_${customerName.replace(/\s+/g, '_')}`;
-            // 변경: 밴드 ID를 포함한 고객 ID 형식으로 변경
-            const customerId = `${this.bandId}_${customerName.replace(
-              /\s+/g,
-              "_"
-            )}`;
+            const orderData = {
+              userId: userId,
+              productId: productId,
+              originalProductId: post.postId,
+              customerName: customerName,
+              customerBandId: "",
+              customerProfile: "",
+              quantity: quantity,
+              price: extractedPrice,
+              totalAmount: extractedPrice * quantity,
+              comment: comment.content || "",
+              status: "주문완료", // 상태 변경
+              orderedAt: orderTime,
+              bandCommentId: bandCommentId,
+              bandId: this.bandId,
+              bandCommentUrl: `https://band.us/band/${this.bandId}/post/${post.postId}#comment`,
+              updatedAt: new Date(),
+            };
+
+            // 신규 주문인 경우에만 createdAt 추가
+            if (!existingOrderId) {
+              orderData.createdAt = new Date();
+              newOrdersCount++;
+            } else {
+              updatedOrdersCount++;
+            }
+
+            batch.set(orderDocRef, orderData, { merge: true });
+            currentBatchSize++;
+
+            // 고객 정보 추가 또는 업데이트 (단순화된 ID 사용)
+            const customerId = generateSimpleId(`${this.bandId}_customer`, 10);
             const customerDocRef = customersRef.doc(customerId);
 
             batch.set(
@@ -555,7 +671,7 @@ class BandCrawler extends BaseCrawler {
                 userId: userId,
                 name: customerName,
                 bandUserId: "",
-                bandId: this.bandId, // 밴드 ID 필드 추가
+                bandId: this.bandId,
                 totalOrders: 1,
                 firstOrderAt: orderTime,
                 lastOrderAt: orderTime,
@@ -564,7 +680,16 @@ class BandCrawler extends BaseCrawler {
               },
               { merge: true }
             );
-          });
+            currentBatchSize++;
+
+            // Firestore 배치 크기 제한(500)에 도달하면 커밋하고 새 배치 생성
+            if (currentBatchSize >= 450) {
+              await batch.commit();
+              logger.info(`배치 처리 완료 (${currentBatchSize}개 작업)`);
+              batch = db.batch();
+              currentBatchSize = 0;
+            }
+          }
         }
       }
 
@@ -574,12 +699,17 @@ class BandCrawler extends BaseCrawler {
         return;
       }
 
+      // 남은 작업이 있으면 커밋
+      if (batch._mutations && batch._mutations.length > 0) {
+        await batch.commit();
+      }
+
       logger.info(
         `총 ${detailedPosts.length}개의 상품 중 ${postsWithComments}개의 상품에 주문이 있음`
       );
-      logger.info(`총 ${totalCommentCount}개의 주문을 저장 시도 중...`);
-
-      await batch.commit();
+      logger.info(
+        `총 ${totalCommentCount}개의 댓글 중 ${newOrdersCount}개의 새 주문, ${updatedOrdersCount}개의 업데이트된 주문 처리됨`
+      );
 
       // 고객 정보 업데이트 (별도 트랜잭션)
       if (totalCommentCount > 0) {
@@ -588,18 +718,18 @@ class BandCrawler extends BaseCrawler {
 
       this.updateTaskStatus(
         "processing",
-        `${detailedPosts.length}개의 상품 정보와 ${totalCommentCount}개의 주문이 Firebase에 저장되었습니다.`,
+        `${detailedPosts.length}개의 상품 정보와 ${newOrdersCount}개의 새 주문이 Firebase에 저장되었습니다.`,
         94
       );
 
       logger.info(
-        `Firebase 저장 완료: ${detailedPosts.length}개 상품, ${totalCommentCount}개 주문`
+        `Firebase 저장 완료: ${detailedPosts.length}개 상품, ${newOrdersCount}개 새 주문, ${updatedOrdersCount}개 업데이트된 주문`
       );
 
       // 크롤링 히스토리 저장
       await this._saveCrawlHistory(userId, {
         newPosts: detailedPosts.length,
-        newComments: totalCommentCount,
+        newComments: newOrdersCount,
       });
     } catch (error) {
       this.updateTaskStatus(
@@ -1298,46 +1428,80 @@ class BandCrawler extends BaseCrawler {
   }
 
   async _updateCustomersTotalOrders(userId) {
-    const db = getFirebaseDb();
+    try {
+      const db = getFirebaseDb();
 
-    // userId에 속한 모든 고객 찾기
-    const customersSnapshot = await db
-      .collection("customers")
-      .where("userId", "==", userId)
-      .get();
-
-    // 각 고객별로 총 주문 수 계산
-    const batch = db.batch();
-    for (const customerDoc of customersSnapshot.docs) {
-      const customerId = customerDoc.id;
-
-      // 이 고객의 주문 수 계산
+      // 최적화: 고객별로 개별 쿼리를 실행하는 대신, 한 번에 모든 주문을 가져옴
+      // 모든 주문을 메모리에서 처리하여 읽기 수를 대폭 줄임
       const ordersSnapshot = await db
         .collection("orders")
         .where("userId", "==", userId)
-        .where("customerName", "==", customerDoc.data().name)
         .get();
 
-      const totalOrders = ordersSnapshot.size;
+      // 고객별 주문 수를 집계하는 객체 생성
+      const customerOrderCounts = {};
+      const customerFirstOrders = {};
+      const customerLastOrders = {};
 
-      // 가장 최근 주문 찾기
-      let lastOrderAt = new Date(0);
-      ordersSnapshot.forEach((orderDoc) => {
-        const orderedAt = orderDoc.data().orderedAt.toDate();
-        if (orderedAt > lastOrderAt) {
-          lastOrderAt = orderedAt;
+      // 메모리에서 주문 데이터 처리
+      ordersSnapshot.forEach((doc) => {
+        const orderData = doc.data();
+        const customerName = orderData.customerName;
+
+        if (!customerName) return;
+
+        // 주문 수 집계
+        if (!customerOrderCounts[customerName]) {
+          customerOrderCounts[customerName] = 0;
+          customerFirstOrders[customerName] = new Date(8640000000000000); // 최대 날짜로 초기화
+          customerLastOrders[customerName] = new Date(0); // 최소 날짜로 초기화
+        }
+
+        customerOrderCounts[customerName]++;
+
+        // 첫 주문 및 마지막 주문 날짜 업데이트
+        const orderDate =
+          orderData.orderedAt instanceof Date
+            ? orderData.orderedAt
+            : new Date(orderData.orderedAt);
+
+        if (orderDate < customerFirstOrders[customerName]) {
+          customerFirstOrders[customerName] = orderDate;
+        }
+
+        if (orderDate > customerLastOrders[customerName]) {
+          customerLastOrders[customerName] = orderDate;
         }
       });
 
-      // 고객 정보 업데이트
-      batch.update(customerDoc.ref, {
-        totalOrders: totalOrders,
-        lastOrderAt: lastOrderAt,
-        updatedAt: new Date(),
-      });
-    }
+      // 고객 데이터 업데이트를 위한 배치 생성
+      const batch = db.batch();
+      const customersSnapshot = await db
+        .collection("customers")
+        .where("userId", "==", userId)
+        .get();
 
-    await batch.commit();
+      // 각 고객 문서 업데이트
+      customersSnapshot.forEach((doc) => {
+        const customerData = doc.data();
+        const customerName = customerData.name;
+
+        if (customerOrderCounts[customerName]) {
+          batch.update(doc.ref, {
+            totalOrders: customerOrderCounts[customerName],
+            firstOrderAt: customerFirstOrders[customerName],
+            lastOrderAt: customerLastOrders[customerName],
+            updatedAt: new Date(),
+          });
+        }
+      });
+
+      // 배치 커밋
+      await batch.commit();
+      logger.info(`${customersSnapshot.size}명의 고객 주문 정보 업데이트 완료`);
+    } catch (error) {
+      logger.error(`고객 주문 정보 업데이트 중 오류 발생: ${error.message}`);
+    }
   }
 
   async _saveCrawlHistory(userId, stats) {

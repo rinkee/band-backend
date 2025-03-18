@@ -1,6 +1,5 @@
 // src/services/crawler.service.js - 크롤링 서비스
 const puppeteer = require("puppeteer");
-const { Post, Comment, sequelize } = require("../models");
 const fs = require("fs").promises;
 const path = require("path");
 
@@ -27,10 +26,6 @@ async function writeLog(message) {
   try {
     const timestamp = new Date().toISOString();
     const logMessage = `[${timestamp}] ${message}\n`;
-
-
-
-    
 
     // 로그 디렉토리가 없으면 생성
     await fs.mkdir(LOG_PATH, { recursive: true });
@@ -177,94 +172,6 @@ async function checkLoginStatus(page, bandId) {
     return false;
   }
 }
-
-/**
- * 네이버 로그인 후 밴드 크롤링 수행
- * @param {string} naverId - 네이버 아이디
- * @param {string} naverPassword - 네이버 비밀번호
- * @param {string} bandId - 네이버 밴드 ID
- * @returns {Promise<string>} - 작업 ID
- */
-const startCrawling = async (naverId, naverPassword, bandId) => {
-  const taskId = `task_${Date.now()}`;
-
-  crawlingTasks.set(taskId, {
-    status: "processing",
-    message: "크롤링 작업 시작...",
-    progress: 0,
-    bandId,
-    createdAt: new Date(),
-  });
-
-  updateTaskStatus(taskId, "processing", "브라우저 시작 중...", 5);
-
-  const browser = await puppeteer.launch({
-    headless: false,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
-    defaultViewport: null,
-  });
-
-  try {
-    const page = await browser.newPage();
-    let isLoggedIn = false;
-
-    // 저장된 쿠키 로드 시도
-    const savedCookies = await loadCookies(naverId);
-    if (savedCookies) {
-      await page.setCookie(...savedCookies);
-      console.log("저장된 쿠키를 로드했습니다.");
-
-      // 쿠키로 로그인 상태 확인
-      isLoggedIn = await checkLoginStatus(page, bandId);
-      if (isLoggedIn) {
-        console.log("저장된 쿠키로 로그인 성공");
-        updateTaskStatus(taskId, "processing", "저장된 쿠키로 로그인됨", 30);
-      } else {
-        console.log("저장된 쿠키가 만료되었습니다. 다시 로그인합니다.");
-      }
-    }
-
-    // 로그인되지 않은 경우에만 로그인 진행
-    if (!isLoggedIn) {
-      await loginToNaver(browser, taskId, naverId, naverPassword);
-    }
-
-    // 2. 밴드 페이지로 이동
-    updateTaskStatus(taskId, "processing", "밴드 페이지로 이동 중...", 40);
-    await page.goto(`https://band.us/band/${bandId}`, {
-      waitUntil: "networkidle2",
-    });
-
-    // 3. 게시물 및 댓글 크롤링
-    const { posts, comments } = await crawlPostsAndComments(
-      page,
-      taskId,
-      bandId
-    );
-
-    // 4. 데이터베이스에 저장
-    await saveToDatabase(taskId, posts, comments);
-
-    // 5. 완료 상태 업데이트
-    updateTaskStatus(
-      taskId,
-      "completed",
-      `크롤링 완료: ${posts.length}개 게시물 수집됨`,
-      100,
-      {
-        postCount: posts.length,
-        commentCount: comments.length,
-        completedAt: new Date(),
-      }
-    );
-  } finally {
-    // 브라우저 종료
-    await browser.close();
-  }
-
-  return taskId;
-};
-
 /**
  * 네이버 로그인 수행
  * @param {Browser} browser - Puppeteer 브라우저 인스턴스
@@ -1184,6 +1091,74 @@ const crawlPostComments = async (naverId, naverPassword, bandId, postId) => {
       taskId,
     };
   }
+};
+
+/**
+ * 밴드 크롤링 시작 함수
+ * @param {string} naverId - 네이버 아이디
+ * @param {string} naverPassword - 네이버 비밀번호
+ * @param {string} bandId - 밴드 ID
+ * @returns {Promise<string>} - 태스크 ID
+ */
+const startCrawling = async (naverId, naverPassword, bandId) => {
+  // 고유 태스크 ID 생성
+  const taskId = `task_${Date.now()}`;
+
+  // 작업 상태 초기화
+  crawlingTasks.set(taskId, {
+    status: "pending",
+    message: "크롤링 작업 준비 중...",
+    progress: 0,
+    bandId,
+    createdAt: new Date(),
+  });
+
+  // 비동기로 크롤링 작업 시작
+  setTimeout(async () => {
+    try {
+      // 브라우저 실행
+      const browser = await puppeteer.launch({
+        headless: "new",
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-accelerated-2d-canvas",
+          "--disable-gpu",
+          "--window-size=1280,800",
+        ],
+      });
+
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1280, height: 800 });
+
+      updateTaskStatus(taskId, "processing", "네이버 로그인 중...", 10);
+
+      // 네이버 로그인
+      await loginToNaver(browser, taskId, naverId, naverPassword);
+
+      updateTaskStatus(taskId, "processing", "게시물 크롤링 중...", 30);
+
+      // 밴드로 이동해서 게시물과 댓글 크롤링
+      await crawlPostsAndComments(page, taskId, bandId);
+
+      // 작업 완료 상태 업데이트
+      updateTaskStatus(taskId, "completed", "크롤링 작업 완료", 100);
+
+      // 브라우저 종료
+      await browser.close();
+    } catch (error) {
+      console.error("크롤링 작업 실패:", error);
+      updateTaskStatus(
+        taskId,
+        "failed",
+        `크롤링 중 오류 발생: ${error.message}`,
+        0
+      );
+    }
+  }, 0);
+
+  return taskId;
 };
 
 module.exports = {

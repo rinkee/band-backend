@@ -1,5 +1,60 @@
 // src/middlewares/auth.middleware.js - 인증 관련 미들웨어
 const { getFirebaseDb } = require("../services/firebase.service");
+const jwt = require("jsonwebtoken");
+
+/**
+ * JWT 인증 미들웨어
+ * 개발 편의를 위해 항상 통과시키도록 임시 설정
+ */
+const authenticateJwt = (req, res, next) => {
+  // 개발 중에는 인증 검증을 건너뛰고 항상 통과
+  console.log("인증 미들웨어 통과 (개발 모드)");
+  next();
+
+  // 실제 JWT 인증 로직 (추후 활성화)
+  /*
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        message: "유효한 인증 토큰이 필요합니다.",
+        isAuthenticated: false,
+      });
+    }
+
+    const token = authHeader.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({
+        success: false, 
+        message: "토큰이 제공되지 않았습니다.",
+        isAuthenticated: false,
+      });
+    }
+
+    const secretKey = process.env.JWT_SECRET || 'band-manager-secret-key';
+    jwt.verify(token, secretKey, (err, decoded) => {
+      if (err) {
+        return res.status(401).json({
+          success: false,
+          message: "인증 토큰이 유효하지 않습니다: " + err.message,
+          isAuthenticated: false,
+        });
+      }
+
+      req.user = decoded;
+      next();
+    });
+  } catch (error) {
+    console.error("JWT 인증 오류:", error);
+    return res.status(500).json({
+      success: false,
+      message: "인증 처리 중 오류가 발생했습니다.",
+      error: error.message,
+    });
+  }
+  */
+};
 
 /**
  * 로그인 상태 확인 미들웨어
@@ -141,6 +196,7 @@ const requireActiveUser = async (req, res, next) => {
 };
 
 module.exports = {
+  authenticateJwt,
   requireAuth,
   requireAdmin,
   requireSelfOrAdmin,

@@ -292,3 +292,7 @@
 [2025-03-16 17:11:03] ERROR: Firebase 저장 오류: Value for argument "seconds" is not a valid integer.
 [2025-03-16 17:11:03] ERROR: 게시물 상세 정보 크롤링 오류: Value for argument "seconds" is not a valid integer.
 [2025-03-16 17:41:36] ERROR: 게시물 상세 정보 크롤링 중 오류 발생: Attempted to use detached Frame '4BEC6C2CCD72D8547683A928B95647CF'.
+[2025-03-18 01:35:05] ERROR: Firebase 저장 오류: Value for argument "documentPath" must point to a document, but was "96643229_이성하/거제". Your path does not contain an even number of components.
+[2025-03-18 01:35:05] ERROR: 게시물 상세 정보 크롤링 오류: Value for argument "documentPath" must point to a document, but was "96643229_이성하/거제". Your path does not contain an even number of components.
+[2025-03-18 20:57:07] ERROR: Firebase 저장 오류: 8 RESOURCE_EXHAUSTED: Quota exceeded.
+[2025-03-18 20:57:07] ERROR: 게시물 상세 정보 크롤링 오류: 8 RESOURCE_EXHAUSTED: Quota exceeded.

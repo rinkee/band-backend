@@ -2,7 +2,6 @@
 const express = require("express");
 const cors = require("cors");
 const session = require("express-session");
-const { sequelize } = require("./models");
 const routes = require("./routes");
 const { initializeFirebase } = require("./services/firebase.service");
 
@@ -58,13 +57,13 @@ app.use((err, req, res, next) => {
 });
 
 // 데이터베이스 연결
-(async () => {
-  try {
-    await sequelize.sync({ alter: process.env.NODE_ENV === "development" });
-    console.log("데이터베이스 연결 및 동기화 완료");
-  } catch (error) {
-    console.error("초기화 실패:", error);
-  }
-})();
+// (async () => {
+//   try {
+//     await sequelize.sync({ alter: process.env.NODE_ENV === "development" });
+//     console.log("데이터베이스 연결 및 동기화 완료");
+//   } catch (error) {
+//     console.error("초기화 실패:", error);
+//   }
+// })();
 
 module.exports = app;
