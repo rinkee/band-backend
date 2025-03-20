@@ -5,3 +5,6 @@ logs/
 serviceAccount.json
 serviceAccountAsis.json
 cookies/
+firestore.rules
+firebaes
+.env.example
