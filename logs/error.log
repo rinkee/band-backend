@@ -296,3 +296,77 @@
 [2025-03-18 01:35:05] ERROR: 게시물 상세 정보 크롤링 오류: Value for argument "documentPath" must point to a document, but was "96643229_이성하/거제". Your path does not contain an even number of components.
 [2025-03-18 20:57:07] ERROR: Firebase 저장 오류: 8 RESOURCE_EXHAUSTED: Quota exceeded.
 [2025-03-18 20:57:07] ERROR: 게시물 상세 정보 크롤링 오류: 8 RESOURCE_EXHAUSTED: Quota exceeded.
+[2025-03-19 00:58:48] ERROR: 데이터베이스 연결 실패: connect ETIMEDOUT 172.31.21.21:5432
+[2025-03-19 01:06:14] ERROR: 데이터베이스 연결 실패: connect ETIMEDOUT 172.31.21.21:5432
+[2025-03-19 01:28:40] ERROR: 데이터베이스 연결 실패: connect ETIMEDOUT 172.31.21.21:5432
+[2025-03-19 01:35:56] ERROR: 데이터베이스 연결 실패: connect ETIMEDOUT 172.31.21.21:5432
+[2025-03-19 01:39:08] ERROR: 데이터베이스 연결 오류: Supabase 연결 실패: Invalid API key
+[2025-03-19 01:39:41] ERROR: 데이터베이스 연결 오류: Supabase 연결 실패: Invalid API key
+[2025-03-19 02:23:43] ERROR: JWT 토큰 생성 실패: invalid expiresIn option for string payload
+[2025-03-19 02:40:16] ERROR: 네이버 로그인 실패: BaseCrawler is not a constructor
+[2025-03-19 02:42:48] ERROR: 네이버 로그인 실패: BaseCrawler is not a constructor
+[2025-03-19 02:45:50] ERROR: 사용자 조회 오류 (7e693f86-5ac2-4b63-81a4-3dbd4ec54331): column users.id does not exist
+[2025-03-19 02:48:08] ERROR: 게시물 상세 정보 크롤링 오류: No element found for selector: a.login
+[2025-03-19 02:49:12] ERROR: 게시물 상세 정보 크롤링 오류: No element found for selector: a.login
+[2025-03-19 03:03:09] ERROR: 브라우저 초기화 또는 로그인 실패: bibimember
+[2025-03-19 16:38:53] ERROR: 게시물 상세 정보 크롤링 실패: 로드된 게시물이 없습니다.
+[2025-03-19 16:44:11] ERROR: 브라우저 초기화 또는 로그인 실패: bibimember
+[2025-03-19 16:50:55] ERROR: 브라우저 초기화 또는 로그인 실패: bibimember
+[2025-03-19 16:52:31] ERROR: Supabase 저장 오류: Could not find the 'images' column of 'products' in the schema cache
+[2025-03-19 16:55:48] ERROR: Supabase 저장 오류: Could not find the 'images' column of 'products' in the schema cache
+[2025-03-19 16:58:57] ERROR: Supabase 저장 오류: Could not find the 'product_name' column of 'products' in the schema cache
+[2025-03-19 17:04:49] ERROR: Supabase 저장 오류: Could not find the 'comment_count' column of 'products' in the schema cache
+[2025-03-19 17:08:54] ERROR: Supabase 저장 오류: Could not find the 'original_content' column of 'products' in the schema cache
+[2025-03-19 17:11:14] ERROR: Supabase 저장 오류: there is no unique or exclusion constraint matching the ON CONFLICT specification
+[2025-03-19 17:14:01] ERROR: Supabase 저장 오류: there is no unique or exclusion constraint matching the ON CONFLICT specification
+[2025-03-19 17:14:02] ERROR: Supabase 저장 오류: there is no unique or exclusion constraint matching the ON CONFLICT specification
+[2025-03-19 17:15:07] ERROR: Supabase 저장 오류: invalid input syntax for type uuid: "1456"
+[2025-03-19 17:21:19] ERROR: Supabase 저장 오류: invalid input syntax for type uuid: "1456"
+[2025-03-19 17:51:25] ERROR: 사용자 조회 오류 (test1): column users.user_id does not exist
+[2025-03-19 17:54:49] ERROR: 사용자 조회 오류 (test1): column users.user_id does not exist
+[2025-03-19 17:57:18] ERROR: Supabase 저장 오류: Could not find the 'post_id' column of 'products' in the schema cache
+[2025-03-19 17:58:40] ERROR: Supabase 저장 오류: Could not find the 'post_id' column of 'products' in the schema cache
+[2025-03-19 18:03:54] ERROR: Supabase 저장 오류: Could not find the 'post_id' column of 'products' in the schema cache
+[2025-03-20 00:19:05] ERROR: 상품 저장 오류: Could not find the 'comment_count' column of 'products' in the schema cache
+[2025-03-20 00:19:05] ERROR: 상품 저장 오류: Could not find the 'comment_count' column of 'products' in the schema cache
+[2025-03-20 00:19:05] ERROR: 상품 저장 오류: Could not find the 'comment_count' column of 'products' in the schema cache
+[2025-03-20 00:19:05] ERROR: 상품 저장 오류: Could not find the 'comment_count' column of 'products' in the schema cache
+[2025-03-20 00:19:05] ERROR: 상품 저장 오류: Could not find the 'comment_count' column of 'products' in the schema cache
+[2025-03-20 00:19:05] ERROR: Supabase 저장 오류: post is not defined
+[2025-03-20 00:19:05] ERROR: 게시물 상세 정보 크롤링 오류: post is not defined
+[2025-03-20 00:23:20] ERROR: 게시글 저장 오류: Could not find the 'created_at' column of 'posts' in the schema cache, 데이터: {"user_id":"bc954180-08b9-49ca-af41-9e4b8d84ee7f","band_id":96643229,"band_post_id":1456,"author_name":"키위마켓✌️","title":"키위마켓✌️","content":"🟣목요일 선예약 상품요거트 초초초행사💕💕💕😍매일 바이오 요거트😍딱 꺽어서 먹는 바이오 요거트매장 판매가 보다 착한 가격~💡💡LGG유산균 세계최다 압도적 연구결과유산균 독점 공급하는 매일유업의 식품✔체크포인트LGG유산균 세계최다 압도적 매일유업의 넘버 1 셀렉스와 콜라보 단백질 7g 함유(프로틴볼 함유)유산균 610억 함유건강한 유산균 함유!!달콤한 초코링에 바삭바삭한 프로틴볼까지더욱 건강하고 더욱 맛있게~~👏👏우리 아이들 최애 먹거리~~👏👏매일 바이오 요거트초코링&프로틴볼 (130g*6팩)1세트(6개입) 📣📣 5,500원🥳🥳","posted_at":"2025-03-19T08:00:00.000Z","comment_count":10,"view_count":0,"crawled_at":"2025-03-19T15:23:20.526Z","is_product":true,"band_post_url":"https://band.us/band/96643229/post/1456","media_urls":[],"status":"활성","created_at":"2025-03-19T15:23:20.526Z","updated_at":"2025-03-19T15:23:20.526Z"}
+[2025-03-20 00:23:20] ERROR: 게시글 저장 오류: Could not find the 'created_at' column of 'posts' in the schema cache, 데이터: {"user_id":"bc954180-08b9-49ca-af41-9e4b8d84ee7f","band_id":96643229,"band_post_id":1455,"author_name":"키위마켓✌️","title":"키위마켓✌️","content":"🥳🥳 목요일 선예약 상품....진심 맛있다‼️ 외치실겁니다‼️쫄깃쫄깃 옹심이 ~~~~~~~만두국 끓여도 불지않고  감자전분으로 만들어서 쫄깃한 식감에  소가 만두소라서 진짜 만두의 신세계입니다 ㅎㅎ국산감자로 만두피를 사용하고국내산 돼지고기와 풍부한 야채가 들어있습니다.아이들도 한입에 먹을수있는 새알 옹심이 진심 맛나요!!라면이나 떡국 찌개에도 어디에든 다양하게 활용가능한 새알옹심이 드세요~❤️ 담두 새알 만두옹심이 1kg 대용량1봉지📣📣 8,900원 냉동보관.소비기한 좋아요~","posted_at":"2025-03-19T07:49:00.000Z","comment_count":11,"view_count":0,"crawled_at":"2025-03-19T15:23:20.599Z","is_product":true,"band_post_url":"https://band.us/band/96643229/post/1455","media_urls":[],"status":"활성","created_at":"2025-03-19T15:23:20.599Z","updated_at":"2025-03-19T15:23:20.599Z"}
+[2025-03-20 00:23:20] ERROR: 게시글 저장 오류: Could not find the 'created_at' column of 'posts' in the schema cache, 데이터: {"user_id":"bc954180-08b9-49ca-af41-9e4b8d84ee7f","band_id":96643229,"band_post_id":1454,"author_name":"키위마켓✌️","title":"키위마켓✌️","content":"🥳🥳목요일 선예약 상품야구르트 1위!!생유산균수 100억 남양이오 🎉🎉🎉진한 요구르트 맛온 가족이 함께 즐기기 좋은 이오 요구르트~😆✨깔끔하고 청량한 풍미의 이오한 모금 맛보면 은은하고 부드러운 요구르트 특유의 단맛이 입안을 촉촉하게 채워주죠✨ 생유산균 100억 CFU를 함유✨ 23가지 영양성분 든든하게 챙길 수 있어요!🫢상큼하고 산뜻한 맛이 훌륭해 매운 음식에 곁들여 먹어도, 다양한 디저트로 활용해도 좋답니다.❤️ 남양 이오 요구르트 80ml 5입 *2총 10개!!!! 👉👉👉2,900원소비기한 7일 정도","posted_at":"2025-03-19T07:15:00.000Z","comment_count":6,"view_count":0,"crawled_at":"2025-03-19T15:23:20.673Z","is_product":true,"band_post_url":"https://band.us/band/96643229/post/1454","media_urls":[],"status":"활성","created_at":"2025-03-19T15:23:20.673Z","updated_at":"2025-03-19T15:23:20.673Z"}
+[2025-03-20 00:23:20] ERROR: 게시글 저장 오류: Could not find the 'created_at' column of 'posts' in the schema cache, 데이터: {"user_id":"bc954180-08b9-49ca-af41-9e4b8d84ee7f","band_id":96643229,"band_post_id":1453,"author_name":"키위마켓✌️","title":"키위마켓✌️","content":"목요일 야채😘이제 막 낙찰받은 신상신상‼️‼️오이취청 오이😙😙😙품질ㆍ가격 다 좋네요그냥 생으로 드셔도 맛있고,반찬ㆍ오이김치 담그셔도 좋아요향긋하고 아삭달콤 취청오이최저가로 만나보세요❤️❤️경매가 무시가격🔥🔥🔥오이 2개. 👉👉👉 2,500원❤️","posted_at":"2025-03-19T07:09:00.000Z","comment_count":17,"view_count":0,"crawled_at":"2025-03-19T15:23:20.745Z","is_product":true,"band_post_url":"https://band.us/band/96643229/post/1453","media_urls":[],"status":"활성","created_at":"2025-03-19T15:23:20.745Z","updated_at":"2025-03-19T15:23:20.745Z"}
+[2025-03-20 00:23:20] ERROR: 게시글 저장 오류: Could not find the 'created_at' column of 'posts' in the schema cache, 데이터: {"user_id":"bc954180-08b9-49ca-af41-9e4b8d84ee7f","band_id":96643229,"band_post_id":1452,"author_name":"키위마켓✌️","title":"키위마켓✌️","content":"🟣🟣 목요일 수령으로 오세욥💥💥💥💥💥💥💥💥💥💥💥유통기한 임박😭😭 이라 할인가요. 놓치고 있었어요😭빠르게 드실분오세욥득템찬스‼️ 냉동보관해두었어요👋👋1+1 👉👉 1개가격으로 2팩씩 챙기세요🌈알록달록한 5색 꽃떡국떡 500g단호박, 녹차, 자색고구마, 홍미 등자연 재료를 사용해 화학 첨가물 없이건강한 색감을 담은 떡국떡 입니다~🌈알록달록한 5색 꽃떡국떡 500g한팩 6,500원  👉👉 2팩 6,500원","posted_at":"2025-03-19T05:54:00.000Z","comment_count":8,"view_count":0,"crawled_at":"2025-03-19T15:23:20.815Z","is_product":true,"band_post_url":"https://band.us/band/96643229/post/1452","media_urls":[],"status":"활성","created_at":"2025-03-19T15:23:20.815Z","updated_at":"2025-03-19T15:23:20.815Z"}
+[2025-03-20 00:23:20] ERROR: Supabase 저장 오류: post is not defined
+[2025-03-20 00:23:20] ERROR: 게시물 상세 정보 크롤링 오류: post is not defined
+[2025-03-20 00:29:14] ERROR: Supabase 저장 오류: Could not find the 'created_at' column of 'orders' in the schema cache
+[2025-03-20 00:29:14] ERROR: 게시물 상세 정보 크롤링 오류: Could not find the 'created_at' column of 'orders' in the schema cache
+[2025-03-20 00:36:01] ERROR: 상품 일괄 저장 오류: Could not find the 'comment_count' column of 'products' in the schema cache
+[2025-03-20 00:36:01] ERROR: 주문 일괄 저장 오류: Could not find the 'created_at' column of 'orders' in the schema cache
+[2025-03-20 00:36:01] ERROR: 고객 일괄 저장 오류: Could not find the 'created_at' column of 'customers' in the schema cache
+[2025-03-20 00:36:01] ERROR: 크롤링 히스토리 저장 오류: Could not find the 'band_id' column of 'crawl_history' in the schema cache
+[2025-03-20 00:36:01] ERROR: Supabase 저장 오류: Could not find the 'band_id' column of 'crawl_history' in the schema cache
+[2025-03-20 00:36:01] ERROR: 게시물 상세 정보 크롤링 오류: Could not find the 'band_id' column of 'crawl_history' in the schema cache
+[2025-03-20 00:44:46] ERROR: 상품 일괄 저장 오류: Could not find the 'comment_count' column of 'products' in the schema cache
+[2025-03-20 00:44:46] ERROR: 주문 일괄 저장 오류: Could not find the 'created_at' column of 'orders' in the schema cache
+[2025-03-20 00:44:46] ERROR: 고객 일괄 저장 오류: Could not find the 'created_at' column of 'customers' in the schema cache
+[2025-03-20 00:45:55] ERROR: 상품 일괄 저장 오류: Could not find the 'comment_count' column of 'products' in the schema cache
+[2025-03-20 00:45:55] ERROR: 주문 일괄 저장 오류: Could not find the 'original_product_id' column of 'orders' in the schema cache
+[2025-03-20 00:45:55] ERROR: 고객 일괄 저장 오류: Could not find the 'created_at' column of 'customers' in the schema cache
+[2025-03-20 00:47:41] ERROR: 상품 일괄 저장 오류: Could not find the 'comment_count' column of 'products' in the schema cache
+[2025-03-20 00:47:41] ERROR: 주문 일괄 저장 오류: there is no unique or exclusion constraint matching the ON CONFLICT specification
+[2025-03-20 00:47:41] ERROR: 고객 일괄 저장 오류: Could not find the 'created_at' column of 'customers' in the schema cache
+[2025-03-20 00:54:22] ERROR: 상품 일괄 저장 오류: Could not find the 'comment_count' column of 'products' in the schema cache
+[2025-03-20 00:54:22] ERROR: 주문 일괄 저장 오류: there is no unique or exclusion constraint matching the ON CONFLICT specification
+[2025-03-20 00:54:22] ERROR: 고객 일괄 저장 오류: invalid input syntax for type uuid: "96643229_customer_2lgb2ifqw8"
+[2025-03-20 00:59:41] ERROR: 상품 일괄 저장 오류: Could not find the 'comment_count' column of 'products' in the schema cache
+[2025-03-20 00:59:41] ERROR: 주문 일괄 저장 오류: there is no unique or exclusion constraint matching the ON CONFLICT specification
+[2025-03-20 00:59:42] ERROR: 고객 일괄 저장 오류: duplicate key value violates unique constraint "customers_user_id_band_user_id_key"
+[2025-03-20 01:06:51] ERROR: 트랜잭션 오류: Error saving data: column "user_id" is of type uuid but expression is of type text
+[2025-03-20 01:06:51] ERROR: Supabase 저장 오류: Error saving data: column "user_id" is of type uuid but expression is of type text
+[2025-03-20 01:06:51] ERROR: 게시물 상세 정보 크롤링 오류: Error saving data: column "user_id" is of type uuid but expression is of type text
+[2025-03-20 12:18:55] ERROR: 트랜잭션 오류: Error saving data: column "user_id" is of type uuid but expression is of type text
+[2025-03-20 12:18:55] ERROR: Supabase 저장 오류: Error saving data: column "user_id" is of type uuid but expression is of type text
+[2025-03-20 12:18:55] ERROR: 게시물 상세 정보 크롤링 오류: Error saving data: column "user_id" is of type uuid but expression is of type text

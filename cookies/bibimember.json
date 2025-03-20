@@ -2,7 +2,7 @@
   "cookies": [
     {
       "name": "oauthVerifyToken",
-      "value": "\"356f234d:JJ85BXY3WBrEq+jRI43IPe1yOV0CNnGrcrNxS0/kDXQ=\"",
+      "value": "\"4cd2f02a:GYSXTMKrybVLuO5+us6W7jZf+tG8VOPpp0Q7a/+tuRU=\"",
       "domain": ".band.us",
       "path": "/oauth2/authorize",
       "expires": -1,
@@ -17,7 +17,7 @@
     },
     {
       "name": "secretKey",
-      "value": "\"J1AF4MvcCXbQWAeVwCL5JTR8wMLDDCqyPsowXhicXS4=\"",
+      "value": "\"BDBJ8LQstN9zWxA3k60sMimURV4ti97AwK4rgvne8x0=\"",
       "domain": ".band.us",
       "path": "/s/login/getKey",
       "expires": -1,
@@ -32,10 +32,10 @@
     },
     {
       "name": "BBC",
-      "value": "74CQ8LqMkubaB973K3HmLA",
+      "value": "2TsC4c71kqL8_DNplbgNgQ",
       "domain": ".band.us",
       "path": "/",
-      "expires": 1776847772.668735,
+      "expires": 1776930418.835517,
       "size": 25,
       "httpOnly": false,
       "secure": false,
@@ -47,10 +47,10 @@
     },
     {
       "name": "di",
-      "value": "web-AAAAABgkW8209gGMgJLAZWocgl7NIUAyTe5pORoryn6qxosg66JABeJNNo29OFzFmIWx9s",
+      "value": "web-AAAAABgl3Ue09gGMm75AZWtXw56MsNXb_v-zUFqujEJD0zORIbGNnUXaEBcoTRkMHzN_Ew",
       "domain": ".band.us",
       "path": "/",
-      "expires": 1776847800.743573,
+      "expires": 1776930443.000903,
       "size": 76,
       "httpOnly": false,
       "secure": false,
@@ -62,7 +62,7 @@
     },
     {
       "name": "band_session",
-      "value": "ZQIAAHAj7w82b6YeE_ikdWtg6g9VIq9qF9YWwyi5JEgLqvwnV_PY6LxkCOWCLOeozylSgyOGVhkdIuolW9GFaSCrry597EU_Zpx4bJ12znJAPSta",
+      "value": "ZQIAAJLbc1GIjrNBItzSGExiZopFrMpWhgE6RlseZqwliOyz7uJrvJMMZgebkGvH1y_-C2Zcx03HLsRMq61kGR-SPtWKiCOGYGIbm84iAAHJVwop",
       "domain": ".band.us",
       "path": "/",
       "expires": -1,
@@ -77,7 +77,7 @@
     },
     {
       "name": "as",
-      "value": "\"356f234d:JJ85BXY3WBrEq+jRI43IPe1yOV0CNnGrcrNxS0/kDXQ=\"",
+      "value": "\"4cd2f02a:GYSXTMKrybVLuO5+us6W7jZf+tG8VOPpp0Q7a/+tuRU=\"",
       "domain": ".band.us",
       "path": "/",
       "expires": -1,
@@ -92,7 +92,7 @@
     },
     {
       "name": "ai",
-      "value": "\"7efc699,195b2bec208\"",
+      "value": "\"7efc699,195b7abc70f\"",
       "domain": ".band.us",
       "path": "/",
       "expires": -1,
@@ -107,7 +107,7 @@
     },
     {
       "name": "rt",
-      "value": "\"ZQIAAKFpFw1-N2cDqFfGZfLzpNyZVLmCVKextqcfpJqDgAc9RGx4SfRYsqULHUb-ZOYfbptMKmxQvQL5y7YNvrspF-q0FMb8IUDUAe51843q8Zoi,s\"",
+      "value": "\"ZQIAAP8HfA7nzvvP9h9UqnETlG9y4efLbn35jGTKwpRGya9wcLlD669DwjTDwZtnqRUO0R8HcSdtqqjIrCz9vEX767hD_Ig_FY8tgsPwKq0cbQET,s\"",
       "domain": ".auth.band.us",
       "path": "/",
       "expires": -1,
@@ -122,7 +122,7 @@
     },
     {
       "name": "SESSION",
-      "value": "1YbLoccH1FRuHN5eKl0oE99nH+btdnW61hz++5ql0lcJiy0NuF8PN9JZda8qGBTI",
+      "value": "PTOkcdJhO0/Gw7a94AhxBaghsn3LWhGzPJO3uR4ZO54ozIXJnm3IRnAGz90eMX3r",
       "domain": "auth.band.us",
       "path": "/",
       "expires": -1,
@@ -136,23 +136,8 @@
       "sourcePort": 443
     },
     {
-      "name": "language",
-      "value": "ko",
-      "domain": ".band.us",
-      "path": "/",
-      "expires": 1776847812.792129,
-      "size": 10,
-      "httpOnly": false,
-      "secure": false,
-      "session": false,
-      "priority": "Medium",
-      "sameParty": false,
-      "sourceScheme": "Secure",
-      "sourcePort": 443
-    },
-    {
       "name": "JSESSIONID",
-      "value": "6FE84BCD79A573D4D210A8B903A95872",
+      "value": "2B5092ACEE104FFF88319F30F49BB1CE",
       "domain": "www.band.us",
       "path": "/",
       "expires": -1,
@@ -164,7 +149,22 @@
       "sameParty": false,
       "sourceScheme": "Secure",
       "sourcePort": 443
+    },
+    {
+      "name": "language",
+      "value": "ko",
+      "domain": ".band.us",
+      "path": "/",
+      "expires": 1776930446.848669,
+      "size": 10,
+      "httpOnly": false,
+      "secure": false,
+      "session": false,
+      "priority": "Medium",
+      "sameParty": false,
+      "sourceScheme": "Secure",
+      "sourcePort": 443
     }
   ],
-  "timestamp": 1742287829553
+  "timestamp": 1742370459552
 }

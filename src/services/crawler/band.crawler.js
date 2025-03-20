@@ -1,8 +1,13 @@
 const BaseCrawler = require("./base.crawler");
 const logger = require("../../config/logger");
-const { getFirebaseDb } = require("../firebase.service");
+const { createClient } = require("@supabase/supabase-js");
 const crypto = require("crypto");
 const cheerio = require("cheerio");
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
 // 한국어 날짜 형식 파싱 함수 추가
 function parseKoreanDate(dateString) {
@@ -166,63 +171,53 @@ class BandCrawler extends BaseCrawler {
     };
   }
 
-  async savePostsToFirebase(posts) {
+  async savePostsToSupabase(posts) {
     try {
-      this.updateTaskStatus("processing", "상품 정보 Firebase 저장 중", 85);
-      const db = getFirebaseDb();
-      const batch = db.batch();
+      this.updateTaskStatus("processing", "상품 정보 Supabase 저장 중", 85);
 
       // 현재 밴드에 연결된 userId 찾기 (임시로 생성하거나 기존 유저 조회)
       let userId = await this._getOrCreateUserIdForBand();
 
-      // 수정: stores 컬렉션 대신 products 컬렉션에 직접 저장
-      const productsRef = db.collection("products");
+      // 상품 데이터 준비
+      const products = posts.map((post) => ({
+        user_id: userId,
+        title: post.postTitle || "제목 없음",
+        description: post.postContent || "",
+        price: 0,
+        original_price: 0,
+        status: "판매중",
+        band_post_id: post.postId,
+        band_post_url: `https://band.us/band/${this.bandId}/post/${post.postId}`,
+        category: "기타",
+        tags: [],
+        order_summary: {
+          total_orders: 0,
+          pending_orders: 0,
+          confirmed_orders: 0,
+        },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }));
 
-      for (const post of posts) {
-        // postId를 productId로 사용
-        const productId =
-          post.postId ||
-          `product_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-        const docRef = productsRef.doc(productId);
+      // Supabase에 상품 저장
+      const { data, error } = await supabase.from("products").upsert(products, {
+        onConflict: "band_post_id",
+        ignoreDuplicates: false,
+      });
 
-        // 게시물 정보를 상품 정보로 변환
-        batch.set(
-          docRef,
-          {
-            userId: userId, // 소유자 참조 추가
-            title: post.postTitle || "제목 없음", // postTitle → title
-            description: post.postContent || "", // postContent → description
-            price: 0, // 초기 가격은 0으로 설정
-            originalPrice: 0, // 원가 정보 추가
-            images: post.imageUrls || [], // imageUrls → images
-            status: "판매중", // 상태 기본값
-            bandPostId: post.postId, // 원본 게시물 ID 저장
-            bandPostUrl: `https://band.us/band/${this.bandId}/post/${post.postId}`, // 밴드 URL 생성
-            category: "기타", // 기본 카테고리
-            tags: [], // 빈 태그 배열
-            orderSummary: {
-              // 주문 요약 정보 추가
-              totalOrders: 0,
-              pendingOrders: 0,
-              confirmedOrders: 0,
-            },
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          },
-          { merge: true }
-        );
+      if (error) {
+        throw error;
       }
 
-      await batch.commit();
       this.updateTaskStatus(
         "processing",
-        `${posts.length}개의 상품이 Firebase에 저장되었습니다.`,
+        `${posts.length}개의 상품이 Supabase에 저장되었습니다.`,
         90
       );
     } catch (error) {
       this.updateTaskStatus(
         "failed",
-        `Firebase에 상품 저장 중 오류 발생: ${error.message}`,
+        `Supabase에 상품 저장 중 오류 발생: ${error.message}`,
         85
       );
       throw error;
@@ -484,48 +479,29 @@ class BandCrawler extends BaseCrawler {
     }
   }
 
-  async saveDetailPostsToFirebase(detailedPosts) {
+  async saveDetailPostsToSupabase(detailedPosts) {
     try {
       this.updateTaskStatus(
         "processing",
-        "상품 상세 정보 및 주문 정보 Firebase 저장 중",
+        "상품 상세 정보 및 주문 정보 Supabase 저장 중",
         93
       );
-      const db = getFirebaseDb();
-      let batch = db.batch();
-
-      // 현재 밴드에 연결된 userId 찾기
-      let userId = await this._getOrCreateUserIdForBand();
-
-      // 수정: 직접 products 컬렉션과 orders 컬렉션에 저장
-      const productsRef = db.collection("products");
-      const ordersRef = db.collection("orders");
-      const postsRef = db.collection("posts");
-      const customersRef = db.collection("customers");
-
-      // 추가: 중복 저장 방지를 위해 기존 주문 데이터 확인
-      // 현재 밴드 ID와 연관된 모든 주문을 한 번만 조회
-      const existingOrdersQuery = await ordersRef
-        .where("bandId", "==", this.bandId)
-        .get();
-
-      // 빠른 검색을 위해 Map 객체에 저장
-      const existingOrdersMap = new Map();
-      existingOrdersQuery.forEach((doc) => {
-        // bandId_postId_timestamp 형식의 ID를 키로 사용
-        const orderData = doc.data();
-        if (orderData.bandCommentId) {
-          existingOrdersMap.set(orderData.bandCommentId, doc.id);
-        }
-      });
-
-      logger.info(`기존 주문 ${existingOrdersMap.size}개 로드 완료`);
 
       let totalCommentCount = 0;
       let postsWithComments = 0;
       let newOrdersCount = 0;
       let updatedOrdersCount = 0;
 
+      // user_id 가져오기
+      const userId = await this._getOrCreateUserIdForBand();
+
+      // 전체 데이터 준비
+      const productsToInsert = [];
+      const postsToInsert = [];
+      const ordersToInsert = [];
+      const customersToInsert = [];
+
+      // 데이터 변환 (for문 사용)
       for (const post of detailedPosts) {
         if (!post.postId || post.postId === "undefined") {
           post.postId = `unknown_${Date.now()}_${Math.random()
@@ -539,74 +515,68 @@ class BandCrawler extends BaseCrawler {
         const { comments, ...postData } = post;
         const commentCount = comments?.length || 0;
 
-        // 문서 ID 형식 변경 - 밴드ID_product_포스트번호
-        const productId = `${this.bandId}_product_${post.postId}`;
-
         // 가격 추출 - 게시물 내용에서 가격 추출
         const extractedPrice = extractPriceFromContent(post.postContent || "");
 
         if (commentCount > 0) {
           postsWithComments++;
           logger.info(
-            `상품 ID: ${productId} - 주문 ${commentCount}개 저장 시도 중`
+            `상품 ID: ${post.postId} - 주문 ${commentCount}개 저장 준비 중`
           );
         }
         totalCommentCount += commentCount;
 
-        // 상품 정보 저장 - 가격 정보 및 전체 내용 포함
-        const productDocRef = productsRef.doc(productId);
-        batch.set(
-          productDocRef,
-          {
-            userId: userId,
-            title: post.postTitle || "제목 없음",
-            description: post.postContent || "",
-            originalContent: post.postContent || "",
-            price: extractedPrice,
-            originalPrice: extractedPrice,
-            images: post.imageUrls || [],
-            status: "판매중",
-            bandPostId: post.postId,
-            bandId: this.bandId,
-            bandPostUrl: `https://band.us/band/${this.bandId}/post/${post.postId}`,
-            category: "기타",
-            tags: [],
-            commentCount: commentCount,
-            orderSummary: {
-              totalOrders: commentCount,
-              pendingOrders: commentCount,
-              confirmedOrders: 0,
-            },
-            createdAt: new Date(),
-            updatedAt: new Date(),
+        // 상품 정보 준비
+        const productData = {
+          user_id: userId,
+          title: post.postTitle || "제목 없음",
+          description: post.postContent || "",
+          original_content: post.postContent || "",
+          price: extractedPrice,
+          original_price: extractedPrice,
+          status: "판매중",
+          band_post_id: parseInt(post.postId, 10) || 0,
+          band_id: parseInt(this.bandId, 10) || 0,
+          band_post_url: `https://band.us/band/${this.bandId}/post/${post.postId}`,
+          category: "기타",
+          tags: [],
+          comment_count: commentCount,
+          order_summary: {
+            total_orders: commentCount,
+            pending_orders: commentCount,
+            confirmed_orders: 0,
           },
-          { merge: true }
-        );
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
 
-        // 게시글 정보 저장 - Posts 컬렉션에 저장
-        const postDocRef = postsRef.doc(`${this.bandId}_post_${post.postId}`);
-        batch.set(
-          postDocRef,
-          {
-            userId: userId,
-            title: post.postTitle || "제목 없음",
-            content: post.postContent || "",
-            images: post.imageUrls || [],
-            bandPostId: post.postId,
-            bandId: this.bandId,
-            bandPostUrl: `https://band.us/band/${this.bandId}/post/${post.postId}`,
-            commentCount: commentCount,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          },
-          { merge: true }
-        );
+        // 상품 데이터 추가
+        productsToInsert.push(productData);
 
-        // 댓글을 주문으로 변환하여 저장
+        // 게시글 정보 준비
+        const postDataToInsert = {
+          user_id: userId,
+          band_id: parseInt(this.bandId, 10) || 0,
+          band_post_id: parseInt(post.postId, 10) || 0,
+          author_name: post.authorName || "",
+          title: post.postTitle || "제목 없음",
+          content: post.postContent || "",
+          posted_at: post.postTime ? safeParseDate(post.postTime) : new Date(),
+          comment_count: commentCount,
+          view_count: post.readCount || 0,
+          crawled_at: new Date(),
+          is_product: true,
+          band_post_url: `https://band.us/band/${this.bandId}/post/${post.postId}`,
+          media_urls: post.imageUrls || [],
+          status: "활성",
+          updated_at: new Date(),
+        };
+
+        // 게시글 데이터 추가
+        postsToInsert.push(postDataToInsert);
+
+        // 댓글을 주문으로 변환하여 준비
         if (comments && comments.length > 0) {
-          // 배치 크기 제한에 도달하면 커밋 후 새 배치 생성
-          let currentBatchSize = 2; // 이미 product와 post 2개를 추가했으므로 2부터 시작
-
           for (let index = 0; index < comments.length; index++) {
             const comment = comments[index];
 
@@ -616,128 +586,101 @@ class BandCrawler extends BaseCrawler {
             // 댓글 식별자
             const bandCommentId = `${post.postId}_comment_${index}`;
 
-            // 중복 확인: 이미 저장된 주문인지 확인
-            const existingOrderId = existingOrdersMap.get(bandCommentId);
-
             // 시간 정보를 기반으로 orderId 생성
-            const orderId =
-              existingOrderId ||
-              `${this.bandId}_${post.postId}_${orderTime.getTime()}`;
+            const orderId = `${this.bandId}_${
+              post.postId
+            }_${orderTime.getTime()}`;
             const customerName = comment.author || "익명";
 
             // 수량 추출
             const quantity = extractQuantityFromComment(comment.content);
 
-            // 주문 정보 저장
-            const orderDocRef = ordersRef.doc(orderId);
-
+            // 주문 정보 준비
             const orderData = {
-              userId: userId,
-              productId: productId,
-              originalProductId: post.postId,
-              customerName: customerName,
-              customerBandId: "",
-              customerProfile: "",
+              user_id: userId,
+              product_id: post.postId,
+              customer_name: customerName,
+              customer_band_id: "",
+              customer_profile: "",
               quantity: quantity,
               price: extractedPrice,
-              totalAmount: extractedPrice * quantity,
+              total_amount: extractedPrice * quantity,
               comment: comment.content || "",
-              status: "주문완료", // 상태 변경
-              orderedAt: orderTime,
-              bandCommentId: bandCommentId,
-              bandId: this.bandId,
-              bandCommentUrl: `https://band.us/band/${this.bandId}/post/${post.postId}#comment`,
-              updatedAt: new Date(),
+              status: "주문완료",
+              ordered_at: orderTime,
+              band_comment_id: bandCommentId,
+              band_id: this.bandId,
+              band_comment_url: `https://band.us/band/${this.bandId}/post/${post.postId}#comment`,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
             };
 
-            // 신규 주문인 경우에만 createdAt 추가
-            if (!existingOrderId) {
-              orderData.createdAt = new Date();
-              newOrdersCount++;
-            } else {
-              updatedOrdersCount++;
-            }
+            // 주문 데이터 추가
+            ordersToInsert.push(orderData);
+            newOrdersCount++;
 
-            batch.set(orderDocRef, orderData, { merge: true });
-            currentBatchSize++;
+            // 고객 정보 준비
+            const customerData = {
+              user_id: userId,
+              name: customerName,
+              band_user_id: "",
+              band_id: this.bandId,
+              total_orders: 1,
+              first_order_at: orderTime,
+              last_order_at: orderTime,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
 
-            // 고객 정보 추가 또는 업데이트 (단순화된 ID 사용)
-            const customerId = generateSimpleId(`${this.bandId}_customer`, 10);
-            const customerDocRef = customersRef.doc(customerId);
-
-            batch.set(
-              customerDocRef,
-              {
-                userId: userId,
-                name: customerName,
-                bandUserId: "",
-                bandId: this.bandId,
-                totalOrders: 1,
-                firstOrderAt: orderTime,
-                lastOrderAt: orderTime,
-                createdAt: new Date(),
-                updatedAt: new Date(),
-              },
-              { merge: true }
-            );
-            currentBatchSize++;
-
-            // Firestore 배치 크기 제한(500)에 도달하면 커밋하고 새 배치 생성
-            if (currentBatchSize >= 450) {
-              await batch.commit();
-              logger.info(`배치 처리 완료 (${currentBatchSize}개 작업)`);
-              batch = db.batch();
-              currentBatchSize = 0;
-            }
+            // 고객 데이터 추가
+            customersToInsert.push(customerData);
           }
         }
       }
 
       if (detailedPosts.length === 0) {
-        logger.warn("Firebase에 저장할 상품이 없습니다.");
+        logger.warn("Supabase에 저장할 상품이 없습니다.");
         this.updateTaskStatus("processing", "저장할 상품이 없습니다.", 94);
         return;
       }
 
-      // 남은 작업이 있으면 커밋
-      if (batch._mutations && batch._mutations.length > 0) {
-        await batch.commit();
+      // 트랜잭션 시작
+      const { error: functionError } = await supabase.rpc("save_crawled_data", {
+        products_data: productsToInsert,
+        posts_data: postsToInsert,
+        orders_data: ordersToInsert,
+        customers_data: customersToInsert,
+      });
+
+      if (functionError) {
+        logger.error(`트랜잭션 오류: ${functionError.message}`);
+        this.updateTaskStatus(
+          "failed",
+          `데이터 저장 중 오류 발생: ${functionError.message}`,
+          93
+        );
+        throw functionError;
       }
 
       logger.info(
         `총 ${detailedPosts.length}개의 상품 중 ${postsWithComments}개의 상품에 주문이 있음`
       );
       logger.info(
-        `총 ${totalCommentCount}개의 댓글 중 ${newOrdersCount}개의 새 주문, ${updatedOrdersCount}개의 업데이트된 주문 처리됨`
+        `Supabase 저장 완료: ${productsToInsert.length}개 상품, ${postsToInsert.length}개 게시글, ${ordersToInsert.length}개 주문, ${customersToInsert.length}개 고객 정보`
       );
-
-      // 고객 정보 업데이트 (별도 트랜잭션)
-      if (totalCommentCount > 0) {
-        await this._updateCustomersTotalOrders(userId);
-      }
 
       this.updateTaskStatus(
         "processing",
-        `${detailedPosts.length}개의 상품 정보와 ${newOrdersCount}개의 새 주문이 Firebase에 저장되었습니다.`,
-        94
+        `${detailedPosts.length}개 상품, ${newOrdersCount}개 주문이 저장되었습니다.`,
+        95
       );
-
-      logger.info(
-        `Firebase 저장 완료: ${detailedPosts.length}개 상품, ${newOrdersCount}개 새 주문, ${updatedOrdersCount}개 업데이트된 주문`
-      );
-
-      // 크롤링 히스토리 저장
-      await this._saveCrawlHistory(userId, {
-        newPosts: detailedPosts.length,
-        newComments: newOrdersCount,
-      });
     } catch (error) {
       this.updateTaskStatus(
         "failed",
-        `Firebase에 상품 상세 정보 저장 중 오류 발생: ${error.message}`,
+        `Supabase에 상품 상세 정보 저장 중 오류 발생: ${error.message}`,
         93
       );
-      logger.error(`Firebase 저장 오류: ${error.message}`);
+      logger.error(`Supabase 저장 오류: ${error.message}`);
       throw error;
     }
   }
@@ -1129,399 +1072,225 @@ class BandCrawler extends BaseCrawler {
 
   async _loadAllComments() {
     try {
-      logger.info("모든 댓글 로드 시작");
+      this.updateTaskStatus("processing", "모든 댓글 로드 중", 60);
 
-      // 페이지가 완전히 로드될 때까지 조금 더 대기
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-
-      // 댓글 섹션 로드 대기 (여러 가능한 선택자 시도)
-      try {
-        await Promise.race([
-          this.page.waitForSelector(".dPostCommentMainView", {
-            visible: true,
-            timeout: 10000,
-          }),
-          this.page.waitForSelector(".cComment", {
-            visible: true,
-            timeout: 10000,
-          }),
-          this.page.waitForSelector(".cCommentList", {
-            visible: true,
-            timeout: 10000,
-          }),
-        ]);
-      } catch (err) {
-        logger.warn(`댓글 섹션 선택자 대기 실패: ${err.message}`);
-      }
-
-      // 현재 표시된 댓글 수 확인 (정확한 선택자 사용)
-      const initialCommentCount = await this.page.evaluate(() => {
-        // 가능한 모든 댓글 선택자 시도
-        const commentsByClass = document.querySelectorAll(
-          ".cComment .itemWrap"
-        );
-        if (commentsByClass.length > 0) return commentsByClass.length;
-
-        const commentsByAlt = document.querySelectorAll(".commentItem, .cmt");
-        if (commentsByAlt.length > 0) return commentsByAlt.length;
-
-        return document.querySelectorAll("[data-uiselector='authorNameButton']")
-          .length;
+      // 댓글이 있는지 확인
+      const hasComments = await this.page.evaluate(() => {
+        const commentElement =
+          document.querySelector(".commentBox") ||
+          document.querySelector(".cmt_area") ||
+          document.querySelector("[class*='comment']");
+        return !!commentElement;
       });
 
-      logger.info(`초기 표시된 댓글 수: ${initialCommentCount}`);
-
-      // 댓글 수가 20개 미만이면 이전 댓글 버튼이 없을 가능성이 높음
-      if (initialCommentCount < 20) {
-        logger.info("댓글 수가 20개 미만이므로 이전 댓글 로드를 건너뜁니다.");
-        return;
+      if (!hasComments) {
+        this.updateTaskStatus(
+          "processing",
+          "댓글이 없거나 댓글 영역을 찾을 수 없습니다",
+          65
+        );
+        return false;
       }
 
-      // 이전 댓글 버튼 확인 및 표시
-      await this.page.evaluate(() => {
-        // 숨겨진 더보기 댓글 박스가 있다면 표시
-        const moreComment = document.querySelector(
-          ".moreComment.-commentHidden"
-        );
-        if (moreComment) {
-          moreComment.classList.remove("-commentHidden");
-          console.log("숨겨진 이전 댓글 버튼을 표시로 변경했습니다");
-        }
-      });
+      // 댓글 더보기 버튼 클릭 (다양한 선택자 시도)
+      const commentSelectors = [
+        ".viewMoreComments",
+        ".cmtMore",
+        ".more_comment",
+        ".btn_cmt_more",
+        "a[class*='more']",
+        "button[class*='more']",
+        "a[class*='comment']",
+        "button[class*='comment']",
+        "[class*='comment'][class*='more']",
+      ];
 
-      // 잠시 대기하여 DOM 업데이트 허용
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      // 이전 댓글 버튼 찾기 및 클릭
-      let clickCount = 0;
-      let lastCommentCount = initialCommentCount;
+      let totalComments = 0;
+      let prevCommentCount = -1;
+      let attemptCount = 0;
+      const MAX_ATTEMPTS = 30; // 최대 시도 횟수
+      const MAX_NO_CHANGE_ATTEMPTS = 5; // 변화 없는 최대 시도 횟수
       let noChangeCount = 0;
 
-      while (clickCount < 10) {
-        // 최대 10번 시도로 제한
-        // 이전 댓글 버튼 확인
-        const buttonInfo = await this.page.evaluate(() => {
-          // 모든 가능한 이전 댓글 버튼 선택자 시도
-          const selectors = [
-            '[data-uiselector="previousCommentButton"]',
-            ".prevComment",
-            ".moreComment button:first-child",
-            'button:contains("이전 댓글")',
-          ];
-
-          for (const selector of selectors) {
-            let buttons;
-            try {
-              if (selector.includes(":contains")) {
-                // JQuery 스타일 선택자 처리
-                const text = selector.match(/:contains\("([^"]+)"\)/)[1];
-                buttons = Array.from(
-                  document.querySelectorAll("button")
-                ).filter((button) => button.textContent.includes(text));
-              } else {
-                buttons = document.querySelectorAll(selector);
-              }
-
-              for (const button of buttons) {
-                // 버튼이 보이는지 확인
-                const style = window.getComputedStyle(button);
-                const isHidden =
-                  style.display === "none" || style.visibility === "hidden";
-                const rect = button.getBoundingClientRect();
-                const isVisible =
-                  !isHidden && rect.width > 0 && rect.height > 0;
-
-                if (isVisible) {
-                  return {
-                    found: true,
-                    selector,
-                    text: button.textContent.trim(),
-                    visible: isVisible,
-                  };
-                }
-              }
-            } catch (e) {
-              console.error(`선택자 ${selector} 확인 중 오류:`, e);
-            }
-          }
-
-          return { found: false };
-        });
-
-        logger.info(`이전 댓글 버튼 상태: ${JSON.stringify(buttonInfo)}`);
-
-        if (!buttonInfo.found) {
-          logger.info(
-            "이전 댓글 버튼을 찾을 수 없습니다. 모든 댓글이 로드되었거나 버튼이 없습니다."
-          );
-          break;
-        }
-
-        // 이전 댓글 버튼 클릭
+      // 댓글이 더 이상 로드되지 않을 때까지 더보기 버튼 클릭
+      while (attemptCount < MAX_ATTEMPTS) {
         try {
-          const clicked = await this.page.evaluate(() => {
-            // 모든 가능한 이전 댓글 버튼 선택자 시도
-            const selectors = [
-              '[data-uiselector="previousCommentButton"]',
-              ".prevComment",
-              ".moreComment button:first-child",
-            ];
-
-            for (const selector of selectors) {
-              const buttons = document.querySelectorAll(selector);
-              for (const button of buttons) {
-                const style = window.getComputedStyle(button);
-                const isHidden =
-                  style.display === "none" || style.visibility === "hidden";
-
-                if (!isHidden && button.offsetParent !== null) {
-                  try {
-                    button.click();
-                    return true;
-                  } catch (e) {
-                    console.error("버튼 클릭 실패:", e);
-                  }
-                }
-              }
-            }
-
-            // 텍스트가 "이전 댓글"인 버튼 찾기
-            const allButtons = document.querySelectorAll("button");
-            for (const button of allButtons) {
-              if (
-                button.textContent.includes("이전 댓글") &&
-                button.offsetParent !== null
-              ) {
-                try {
-                  button.click();
-                  return true;
-                } catch (e) {
-                  console.error("텍스트로 찾은 버튼 클릭 실패:", e);
-                }
-              }
-            }
-
-            return false;
+          // 현재 댓글 수 확인
+          const currentCommentCount = await this.page.evaluate(() => {
+            const comments = document.querySelectorAll(
+              '.comment, .cmt_item, [class*="comment-item"]'
+            );
+            return comments.length;
           });
 
-          if (clicked) {
-            clickCount++;
-            logger.info(`이전 댓글 버튼 클릭 (${clickCount}번째)`);
+          this.updateTaskStatus(
+            "processing",
+            `현재 로드된 댓글 수: ${currentCommentCount}`,
+            65
+          );
 
-            // 새 댓글이 로드될 때까지 충분히 대기
-            await new Promise((resolve) => setTimeout(resolve, 3000));
-
-            // 현재 댓글 수 확인
-            const currentCommentCount = await this.page.evaluate(() => {
-              const commentsByClass = document.querySelectorAll(
-                ".cComment .itemWrap"
-              );
-              if (commentsByClass.length > 0) return commentsByClass.length;
-
-              const commentsByAlt =
-                document.querySelectorAll(".commentItem, .cmt");
-              if (commentsByAlt.length > 0) return commentsByAlt.length;
-
-              return document.querySelectorAll(
-                "[data-uiselector='authorNameButton']"
-              ).length;
-            });
-
-            logger.info(
-              `현재 댓글 수: ${currentCommentCount} (이전: ${lastCommentCount})`
-            );
-
-            // 댓글 수가 변하지 않으면 카운트 증가
-            if (currentCommentCount === lastCommentCount) {
-              noChangeCount++;
-
-              // 2번 연속으로 변화가 없으면 종료
-              if (noChangeCount >= 2) {
-                logger.warn(
-                  `${noChangeCount}번 연속으로 댓글 수 변화가 없어 종료합니다.`
-                );
-                break;
-              }
-            } else {
-              // 댓글 수가 변했으면 카운트 초기화
-              noChangeCount = 0;
-              lastCommentCount = currentCommentCount;
-            }
-          } else {
-            logger.warn("이전 댓글 버튼을 찾았지만 클릭할 수 없습니다.");
+          // 댓글 수가 변하지 않으면 카운터 증가
+          if (currentCommentCount === prevCommentCount) {
             noChangeCount++;
-
-            if (noChangeCount >= 2) {
+            // 여러 번 시도해도 댓글 수가 변하지 않으면 더 이상 댓글이 없다고 판단
+            if (noChangeCount >= MAX_NO_CHANGE_ATTEMPTS) {
+              this.updateTaskStatus(
+                "processing",
+                "더 이상 댓글을 로드할 수 없습니다",
+                75
+              );
               break;
             }
-
-            // 페이지가 업데이트될 때까지 대기
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+          } else {
+            // 댓글 수가 변했다면 카운터 초기화
+            noChangeCount = 0;
+            prevCommentCount = currentCommentCount;
           }
-        } catch (e) {
-          logger.error(`이전 댓글 버튼 클릭 중 오류 발생: ${e.message}`);
-          noChangeCount++;
 
-          if (noChangeCount >= 2) {
+          // 더보기 버튼 찾기 및 클릭 시도
+          let buttonClicked = false;
+
+          for (const selector of commentSelectors) {
+            try {
+              const isVisible = await this.page.evaluate((sel) => {
+                const btn = document.querySelector(sel);
+                if (!btn) return false;
+
+                const rect = btn.getBoundingClientRect();
+                return (
+                  rect.width > 0 &&
+                  rect.height > 0 &&
+                  window.getComputedStyle(btn).display !== "none" &&
+                  window.getComputedStyle(btn).visibility !== "hidden"
+                );
+              }, selector);
+
+              if (isVisible) {
+                // 버튼이 보이면 클릭
+                await this.page.click(selector).catch(() => {});
+                buttonClicked = true;
+
+                // 클릭 후 데이터 로드 대기
+                await this.page.waitForTimeout(1000);
+
+                // 스크롤을 조금 내려 댓글 영역이 보이도록 함
+                await this.page.evaluate(() => {
+                  const commentArea =
+                    document.querySelector(".commentBox") ||
+                    document.querySelector(".cmt_area") ||
+                    document.querySelector("[class*='comment']");
+                  if (commentArea) {
+                    commentArea.scrollIntoView({
+                      behavior: "smooth",
+                      block: "center",
+                    });
+                  }
+                });
+
+                // 네트워크 요청 완료 대기
+                await this.page.waitForTimeout(500);
+                break;
+              }
+            } catch (btnError) {
+              // 이 선택자에 대한 오류는 무시하고 다음 선택자 시도
+              continue;
+            }
+          }
+
+          // 더 이상 더보기 버튼이 없으면 완료
+          if (!buttonClicked) {
+            this.updateTaskStatus(
+              "processing",
+              "더 이상 더보기 버튼이 없습니다",
+              75
+            );
             break;
           }
 
-          // 잠시 대기 후 재시도
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          attemptCount++;
+        } catch (loopError) {
+          this.updateTaskStatus(
+            "processing",
+            `댓글 로드 중 오류 발생: ${loopError.message}`,
+            70
+          );
+          attemptCount++;
+          // 오류가 발생해도 계속 시도
+          await this.page.waitForTimeout(1000);
         }
       }
 
       // 최종 댓글 수 확인
-      const finalCommentCount = await this.page.evaluate(() => {
-        const commentsByClass = document.querySelectorAll(
-          ".cComment .itemWrap"
+      totalComments = await this.page.evaluate(() => {
+        const comments = document.querySelectorAll(
+          '.comment, .cmt_item, [class*="comment-item"]'
         );
-        if (commentsByClass.length > 0) return commentsByClass.length;
-
-        const commentsByAlt = document.querySelectorAll(".commentItem, .cmt");
-        if (commentsByAlt.length > 0) return commentsByAlt.length;
-
-        return document.querySelectorAll("[data-uiselector='authorNameButton']")
-          .length;
+        return comments.length;
       });
 
-      logger.info(
-        `댓글 로드 완료: 총 ${finalCommentCount}개 댓글 로드됨 (초기: ${initialCommentCount}, 클릭: ${clickCount}회)`
+      this.updateTaskStatus(
+        "processing",
+        `총 ${totalComments}개의 댓글을 로드했습니다`,
+        80
       );
-    } catch (e) {
-      logger.error(`모든 댓글 로드 중 오류 발생: ${e.message}`);
+      return true;
+    } catch (error) {
+      this.updateTaskStatus(
+        "processing",
+        `댓글 로드 중 오류 발생: ${error.message}`,
+        60
+      );
+      logger.error(`댓글 로드 오류: ${error.message}`);
+      // 오류가 발생해도 프로세스 계속 진행
+      return false;
     }
   }
 
   async _getOrCreateUserIdForBand() {
-    const db = getFirebaseDb();
-
-    // 이 밴드 ID와 연결된 사용자 찾기
-    const usersSnapshot = await db
-      .collection("users")
-      .where("bandId", "==", this.bandId)
-      .limit(1)
-      .get();
-
-    if (!usersSnapshot.empty) {
-      // 이미 존재하는 사용자를 찾았을 경우
-      return usersSnapshot.docs[0].id;
-    }
-
-    // 존재하지 않는 경우 새 사용자 생성
-    const newUserRef = db.collection("users").doc();
-    await newUserRef.set({
-      bandId: this.bandId,
-      storeName: `밴드 ${this.bandId}`,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      lastCrawlAt: new Date(),
-      role: "store",
-      settings: {
-        notificationEnabled: true,
-        autoConfirmOrders: false,
-        theme: "default",
-      },
-    });
-
-    return newUserRef.id;
-  }
-
-  async _updateCustomersTotalOrders(userId) {
     try {
-      const db = getFirebaseDb();
+      // 밴드 ID로 사용자 찾기
+      const { data: users, error } = await supabase
+        .from("users")
+        .select("id")
+        .eq("band_id", this.bandId)
+        .single();
 
-      // 최적화: 고객별로 개별 쿼리를 실행하는 대신, 한 번에 모든 주문을 가져옴
-      // 모든 주문을 메모리에서 처리하여 읽기 수를 대폭 줄임
-      const ordersSnapshot = await db
-        .collection("orders")
-        .where("userId", "==", userId)
-        .get();
+      if (error && error.code !== "PGRST116") {
+        // PGRST116는 결과가 없을 때
+        throw error;
+      }
 
-      // 고객별 주문 수를 집계하는 객체 생성
-      const customerOrderCounts = {};
-      const customerFirstOrders = {};
-      const customerLastOrders = {};
+      if (users) {
+        return users.id;
+      }
 
-      // 메모리에서 주문 데이터 처리
-      ordersSnapshot.forEach((doc) => {
-        const orderData = doc.data();
-        const customerName = orderData.customerName;
+      // 사용자가 없으면 새로 생성
+      const { data: newUser, error: createError } = await supabase
+        .from("users")
+        .insert([
+          {
+            band_id: this.bandId,
+            login_id: `band_${this.bandId}`,
+            login_password: crypto.randomBytes(16).toString("hex"),
+            store_name: `밴드 ${this.bandId}`,
+            is_active: true,
+            role: "user",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ])
+        .select("id")
+        .single();
 
-        if (!customerName) return;
+      if (createError) {
+        throw createError;
+      }
 
-        // 주문 수 집계
-        if (!customerOrderCounts[customerName]) {
-          customerOrderCounts[customerName] = 0;
-          customerFirstOrders[customerName] = new Date(8640000000000000); // 최대 날짜로 초기화
-          customerLastOrders[customerName] = new Date(0); // 최소 날짜로 초기화
-        }
-
-        customerOrderCounts[customerName]++;
-
-        // 첫 주문 및 마지막 주문 날짜 업데이트
-        const orderDate =
-          orderData.orderedAt instanceof Date
-            ? orderData.orderedAt
-            : new Date(orderData.orderedAt);
-
-        if (orderDate < customerFirstOrders[customerName]) {
-          customerFirstOrders[customerName] = orderDate;
-        }
-
-        if (orderDate > customerLastOrders[customerName]) {
-          customerLastOrders[customerName] = orderDate;
-        }
-      });
-
-      // 고객 데이터 업데이트를 위한 배치 생성
-      const batch = db.batch();
-      const customersSnapshot = await db
-        .collection("customers")
-        .where("userId", "==", userId)
-        .get();
-
-      // 각 고객 문서 업데이트
-      customersSnapshot.forEach((doc) => {
-        const customerData = doc.data();
-        const customerName = customerData.name;
-
-        if (customerOrderCounts[customerName]) {
-          batch.update(doc.ref, {
-            totalOrders: customerOrderCounts[customerName],
-            firstOrderAt: customerFirstOrders[customerName],
-            lastOrderAt: customerLastOrders[customerName],
-            updatedAt: new Date(),
-          });
-        }
-      });
-
-      // 배치 커밋
-      await batch.commit();
-      logger.info(`${customersSnapshot.size}명의 고객 주문 정보 업데이트 완료`);
+      return newUser.id;
     } catch (error) {
-      logger.error(`고객 주문 정보 업데이트 중 오류 발생: ${error.message}`);
+      logger.error("사용자 생성/조회 오류:", error);
+      throw error;
     }
-  }
-
-  async _saveCrawlHistory(userId, stats) {
-    const db = getFirebaseDb();
-
-    await db.collection("crawlHistory").add({
-      userId: userId,
-      timestamp: new Date(),
-      status: "success",
-      newPosts: stats.newPosts,
-      newComments: stats.newComments,
-      processingTime: Date.now() - this.crawlStartTime,
-      totalPostsProcessed: stats.newPosts,
-      totalCommentsProcessed: stats.newComments,
-    });
-
-    // 마지막 크롤링 시간 업데이트
-    await db.collection("users").doc(userId).update({
-      lastCrawlAt: new Date(),
-    });
   }
 }
 

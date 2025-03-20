@@ -1,0 +1,7 @@
+.env
+node_modules/
+logs/
+.DS_Store
+serviceAccount.json
+serviceAccountAsis.json
+cookies/

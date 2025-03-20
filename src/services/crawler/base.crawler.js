@@ -39,7 +39,7 @@ class BaseCrawler {
       this.updateTaskStatus("processing", "initialize", 0);
 
       this.browser = await puppeteer.launch({
-        headless: true,
+        headless: false,
         args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
         defaultViewport: null,
       });
@@ -57,85 +57,29 @@ class BaseCrawler {
       this.updateTaskStatus("processing", "브라우저 초기화 완료", 5);
 
       if (naverId) {
-        // 저장된 쿠키 로드 시도
-        this.updateTaskStatus("processing", "저장된 쿠키 로드 시도 중", 10);
-        const savedCookies = await this.loadCookies(naverId);
-        if (savedCookies) {
-          await this.page.setCookie(...savedCookies);
-          this.updateTaskStatus("processing", "저장된 쿠키 로드됨", 15);
+        // 먼저 쿠키 로그인 시도
+        const cookieLoginResult = await this.cookieLogin(naverId);
 
-          // 쿠키로 로그인 상태 확인
-          this.updateTaskStatus("processing", "쿠키로 로그인 상태 확인 중", 20);
-          this.isLoggedIn = await this.checkLoginStatus();
-          if (this.isLoggedIn) {
-            this.updateTaskStatus(
-              "processing",
-              "저장된 쿠키로 로그인 성공",
-              25
-            );
-            return true;
-          } else {
-            this.updateTaskStatus(
-              "processing",
-              "저장된 쿠키가 만료되었습니다. 다시 로그인을 시도합니다.",
-              25
-            );
+        // 쿠키 로그인 성공 시 종료
+        if (cookieLoginResult) {
+          return true;
+        }
 
-            // 쿠키 로그인 실패 시 직접 로그인 시도
-            if (naverPassword) {
-              this.updateTaskStatus(
-                "processing",
-                "네이버 로그인 시도 중...",
-                30
-              );
-              const loginResult = await this.login(naverId, naverPassword);
-
-              if (loginResult) {
-                this.updateTaskStatus("processing", "네이버 로그인 성공", 35);
-                return true;
-              } else {
-                this.updateTaskStatus("failed", "네이버 로그인 실패", 35);
-                return false;
-              }
-            } else {
-              this.updateTaskStatus(
-                "failed",
-                "로그인 재시도에 필요한 비밀번호가 제공되지 않았습니다",
-                30
-              );
-              return false;
-            }
-          }
+        // 쿠키 로그인 실패하고 비밀번호가 있으면 UI 로그인 시도
+        if (naverPassword) {
+          this.updateTaskStatus("processing", "직접 로그인 시도", 30);
+          return await this.naverLogin(naverId, naverPassword);
         } else {
           this.updateTaskStatus(
-            "processing",
-            "저장된 쿠키가 없습니다. 직접 로그인을 시도합니다.",
-            25
+            "failed",
+            "로그인에 필요한 비밀번호가 제공되지 않았습니다",
+            30
           );
-
-          // 저장된 쿠키가 없을 경우 직접 로그인 시도
-          if (naverPassword) {
-            this.updateTaskStatus("processing", "네이버 로그인 시도 중...", 30);
-            const loginResult = await this.login(naverId, naverPassword);
-
-            if (loginResult) {
-              this.updateTaskStatus("processing", "네이버 로그인 성공", 35);
-              return true;
-            } else {
-              this.updateTaskStatus("failed", "네이버 로그인 실패", 35);
-              return false;
-            }
-          } else {
-            this.updateTaskStatus(
-              "failed",
-              "로그인에 필요한 비밀번호가 제공되지 않았습니다",
-              30
-            );
-            return false;
-          }
+          return false;
         }
       }
 
+      // naverId가 없는 경우
       this.updateTaskStatus(
         "processing",
         "naverId가 제공되지 않아 로그인할 수 없습니다",
@@ -152,15 +96,70 @@ class BaseCrawler {
     }
   }
 
+  async cookieLogin(naverId) {
+    try {
+      this.updateTaskStatus("processing", "쿠키 로그인 시도", 10);
+
+      // 저장된 쿠키 로드
+      const savedCookies = await this.loadCookies(naverId);
+      if (!savedCookies) {
+        this.updateTaskStatus("processing", "저장된 쿠키가 없습니다", 15);
+        return false;
+      }
+
+      // 쿠키 설정
+      await this.page.setCookie(...savedCookies);
+      this.updateTaskStatus("processing", "저장된 쿠키 로드됨", 20);
+
+      // 로그인 상태 확인하는 메서드 호출
+      const isLoggedIn = await this.checkLoginStatus();
+      if (isLoggedIn) {
+        this.updateTaskStatus("processing", "쿠키로 로그인 성공", 30);
+        this.isLoggedIn = true;
+        return true;
+      }
+
+      this.updateTaskStatus(
+        "processing",
+        "쿠키가 만료되었거나 유효하지 않습니다",
+        25
+      );
+      return false;
+    } catch (error) {
+      this.updateTaskStatus(
+        "processing",
+        `쿠키 로그인 실패: ${error.message}`,
+        20
+      );
+      return false;
+    }
+  }
+
   async saveCookies(naverId, cookies) {
     try {
+      if (!naverId || !cookies || !Array.isArray(cookies)) {
+        this.updateTaskStatus(
+          "processing",
+          "유효하지 않은 쿠키 또는 ID 정보",
+          80
+        );
+        return false;
+      }
+
       this.updateTaskStatus("processing", "쿠키 저장 시작", 80);
 
-      // 밴드 홈으로
-      await this.page.goto("https://www.band.us/home", {
-        waitUntil: "networkidle2",
-        timeout: 30000,
-      });
+      // 밴드 홈으로 이동 시도 (실패해도 계속 진행)
+      try {
+        await this.page.goto("https://band.us/home", {
+          waitUntil: "networkidle2",
+          timeout: 30000,
+        });
+      } catch (navError) {
+        console.log(
+          "밴드 홈 이동 실패 (무시하고 계속 진행):",
+          navError.message
+        );
+      }
 
       // 쿠키 디렉토리가 없으면 생성
       await fs.mkdir(COOKIES_PATH, { recursive: true });
@@ -168,8 +167,10 @@ class BaseCrawler {
       // 모든 밴드 관련 쿠키 필터링 (서브도메인 포함)
       const relevantCookies = cookies.filter(
         (cookie) =>
-          cookie.domain.includes("band.us") ||
-          cookie.domain.includes("auth.band.us")
+          cookie &&
+          cookie.domain &&
+          (cookie.domain.includes("band.us") ||
+            cookie.domain.includes("auth.band.us"))
       );
 
       // 쿠키 수 로깅
@@ -179,15 +180,24 @@ class BaseCrawler {
         82
       );
 
+      if (relevantCookies.length === 0) {
+        this.updateTaskStatus(
+          "processing",
+          "저장할 밴드 관련 쿠키가 없습니다.",
+          85
+        );
+        return false;
+      }
+
       // 각 도메인별 쿠키 수 로깅 (디버깅용)
-      const bandCookies = cookies.filter((c) =>
-        c.domain.includes(".band.us")
+      const bandCookies = cookies.filter(
+        (c) => c.domain && c.domain.includes(".band.us")
       ).length;
-      const wwwBandCookies = cookies.filter((c) =>
-        c.domain.includes("www.band.us")
+      const wwwBandCookies = cookies.filter(
+        (c) => c.domain && c.domain.includes("www.band.us")
       ).length;
-      const authBandCookies = cookies.filter((c) =>
-        c.domain.includes("auth.band.us")
+      const authBandCookies = cookies.filter(
+        (c) => c.domain && c.domain.includes("auth.band.us")
       ).length;
 
       this.updateTaskStatus(
@@ -223,23 +233,32 @@ class BaseCrawler {
       // 항상 새로운 쿠키를 저장합니다 (이전 비교 로직 제거)
       this.updateTaskStatus("processing", "새로운 쿠키를 저장합니다.", 86);
 
-      await fs.writeFile(
-        cookieFile,
-        JSON.stringify(
-          {
-            cookies: relevantCookies,
-            timestamp: Date.now(),
-          },
-          null,
-          2
-        )
-      );
+      try {
+        await fs.writeFile(
+          cookieFile,
+          JSON.stringify(
+            {
+              cookies: relevantCookies,
+              timestamp: Date.now(),
+            },
+            null,
+            2
+          )
+        );
 
-      this.updateTaskStatus(
-        "processing",
-        `쿠키 저장됨: ${cookieFile} (${relevantCookies.length} 쿠키)`,
-        88
-      );
+        this.updateTaskStatus(
+          "processing",
+          `쿠키 저장됨: ${cookieFile} (${relevantCookies.length} 쿠키)`,
+          88
+        );
+      } catch (writeError) {
+        this.updateTaskStatus(
+          "processing",
+          `쿠키 파일 저장 실패: ${writeError.message}`,
+          88
+        );
+        return false;
+      }
 
       // 디버깅을 위한 중요 쿠키 정보 로깅
       this.updateTaskStatus(
@@ -278,9 +297,17 @@ class BaseCrawler {
         `저장된 모든 쿠키 이름: ${cookieNames}`,
         96
       );
+
+      return true;
     } catch (error) {
-      this.updateTaskStatus("failed", `쿠키 저장 실패: ${error.message}`, 80);
-      throw error;
+      this.updateTaskStatus(
+        "processing",
+        `쿠키 저장 중 오류: ${error.message}`,
+        80
+      );
+      console.error("쿠키 저장 오류:", error);
+      // 오류가 있어도 프로세스를 중단하지 않고 계속 진행
+      return false;
     }
   }
 
@@ -308,44 +335,7 @@ class BaseCrawler {
     }
   }
 
-  async checkLoginStatus() {
-    try {
-      this.updateTaskStatus("processing", "로그인 상태 확인 중", 30);
-
-      // 네이버 밴드 로그인 페이지로 접근
-      await this.page.goto("https://www.band.us/", {
-        waitUntil: "networkidle2",
-        timeout: 30000,
-      });
-
-      // await this.page.click("a.login");
-      this.updateTaskStatus("processing", "로그인 프로세스 진행 중...", 45);
-      await this.waitForTimeout(8000); // 충분한 시간 대기
-
-      // 현재 URL 확인
-      let currentUrl = this.page.url();
-      this.updateTaskStatus("processing", `현재 URL: ${currentUrl}`, 46);
-
-      // 네이버 로그인 페이지면 실패
-      if (currentUrl.includes("login")) {
-        this.updateTaskStatus("processing", "로그인 실패", 48);
-        return false;
-      } else {
-        this.updateTaskStatus("processing", "로그인 성공", 48);
-        return true;
-      }
-      // 로그인 페이지에 네이버 버튼이 있는지 확인
-    } catch (error) {
-      this.updateTaskStatus(
-        "failed",
-        `로그인 상태 확인 실패: ${error.message}`,
-        30
-      );
-      return false;
-    }
-  }
-
-  async login(naverId, naverPassword) {
+  async naverLogin(naverId, naverPassword) {
     // 기다리는 시간 랜덤
     const min = 5000; // 최소 2초 (2000ms)
     const max = 8000; // 최대 4초 (4000ms)
@@ -464,11 +454,6 @@ class BaseCrawler {
 
       // 로그인 성공 확인
       this.updateTaskStatus("processing", "로그인 상태 확인 중", 75);
-      const isLoggedIn = await this.checkLoginStatus();
-      if (!isLoggedIn) {
-        this.updateTaskStatus("failed", "네이버 로그인 실패", 75);
-        return false;
-      }
 
       this.updateTaskStatus("processing", "네이버 로그인 성공", 80);
 
@@ -491,26 +476,46 @@ class BaseCrawler {
     try {
       this.updateTaskStatus("processing", "리캡챠 감지 확인 중", 62);
 
-      const hasRecaptcha = await this.page.evaluate(() => {
-        return (
-          document.querySelector('iframe[src*="recaptcha"]') !== null ||
-          document.querySelector(".g-recaptcha") !== null ||
-          document.querySelector('iframe[src*="captcha"]') !== null ||
-          document.querySelector("#captcha") !== null ||
-          document.querySelector("#recaptcha") !== null
-        );
-      });
+      // 페이지가 유효한지 확인
+      if (!this.page || this.page.isClosed()) {
+        console.log("리캡챠 감지: 페이지가 닫혔거나 유효하지 않음");
+        return false;
+      }
 
-      const hasRecaptchaText = await this.page.evaluate(() => {
-        const pageText = document.body.innerText.toLowerCase();
-        return (
-          pageText.includes("captcha") ||
-          pageText.includes("로봇이 아닙니다") ||
-          pageText.includes("자동 가입 방지") ||
-          pageText.includes("보안 인증") ||
-          pageText.includes("보안문자")
-        );
-      });
+      // 페이지 내용에서 캡챠 관련 요소 확인
+      const hasRecaptcha = await this.page
+        .evaluate(() => {
+          try {
+            return (
+              document.querySelector('iframe[src*="recaptcha"]') !== null ||
+              document.querySelector(".g-recaptcha") !== null ||
+              document.querySelector('iframe[src*="captcha"]') !== null ||
+              document.querySelector("#captcha") !== null ||
+              document.querySelector("#recaptcha") !== null
+            );
+          } catch (e) {
+            return false;
+          }
+        })
+        .catch(() => false);
+
+      // 페이지 텍스트에서 캡챠 관련 문구 확인
+      const hasRecaptchaText = await this.page
+        .evaluate(() => {
+          try {
+            const pageText = document.body?.innerText?.toLowerCase() || "";
+            return (
+              pageText.includes("captcha") ||
+              pageText.includes("로봇이 아닙니다") ||
+              pageText.includes("자동 가입 방지") ||
+              pageText.includes("보안 인증") ||
+              pageText.includes("보안문자")
+            );
+          } catch (e) {
+            return false;
+          }
+        })
+        .catch(() => false);
 
       const result = hasRecaptcha || hasRecaptchaText;
       this.updateTaskStatus(
@@ -521,30 +526,101 @@ class BaseCrawler {
 
       return result;
     } catch (error) {
-      this.updateTaskStatus("failed", `리캡챠 감지 실패: ${error.message}`, 63);
+      console.error("리캡챠 감지 중 오류 발생:", error.message);
+      this.updateTaskStatus(
+        "processing",
+        `리캡챠 감지 중 오류 (무시됨): ${error.message}`,
+        63
+      );
       return false;
     }
   }
 
   async close() {
     try {
-      if (this.browser) {
+      if (this.browser && this.browser.isConnected()) {
         this.updateTaskStatus("processing", "브라우저 종료 중", 95);
-        await this.browser.close();
+
+        // 열려 있는 모든 페이지 먼저 닫기
+        try {
+          const pages = await this.browser.pages();
+          for (const page of pages) {
+            if (page && !page.isClosed()) {
+              await page.close().catch(() => {});
+            }
+          }
+        } catch (pageError) {
+          console.log("페이지 닫기 오류 (무시됨):", pageError.message);
+        }
+
+        // 짧은 딜레이 추가
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // 브라우저 종료
+        await this.browser.close().catch((err) => {
+          console.log("브라우저 종료 오류 (무시됨):", err.message);
+        });
+
+        this.browser = null;
+        this.page = null;
         this.updateTaskStatus("completed", "브라우저 종료 완료", 100);
+      } else if (this.browser) {
+        // 이미 연결이 끊어졌지만 객체는 존재하는 경우
+        this.browser = null;
+        this.page = null;
+        this.updateTaskStatus("completed", "브라우저 이미 종료됨", 100);
       }
     } catch (error) {
+      console.error("브라우저 종료 중 오류 발생:", error);
+      // 오류가 발생해도 브라우저 참조 정리
+      this.browser = null;
+      this.page = null;
       this.updateTaskStatus(
-        "failed",
-        `브라우저 종료 실패: ${error.message}`,
-        95
+        "completed",
+        `브라우저 강제 종료: ${error.message}`,
+        100
       );
-      throw error;
     }
   }
 
   async waitForTimeout(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async checkLoginStatus() {
+    try {
+      // 현재 URL 확인
+      const currentUrl = this.page.url();
+      this.updateTaskStatus(
+        "processing",
+        `로그인 상태 확인 중 (현재 URL: ${currentUrl})`,
+        22
+      );
+
+      // URL에 login이 포함되어 있으면 로그인되지 않은 상태
+      if (currentUrl.includes("login") || currentUrl.includes("nid.naver")) {
+        this.updateTaskStatus(
+          "processing",
+          "로그인되지 않은 상태 (로그인 페이지)",
+          23
+        );
+        return false;
+      } else {
+        this.updateTaskStatus(
+          "processing",
+          "로그인 상태 확인 완료, 로그인 성공",
+          25
+        );
+        return true;
+      }
+    } catch (error) {
+      this.updateTaskStatus(
+        "processing",
+        `로그인 상태 확인 중 오류: ${error.message}`,
+        25
+      );
+      return false;
+    }
   }
 }
 

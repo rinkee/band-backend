@@ -1,6 +1,11 @@
 // src/middlewares/auth.middleware.js - 인증 관련 미들웨어
-const { getFirebaseDb } = require("../services/firebase.service");
+const { createClient } = require("@supabase/supabase-js");
 const jwt = require("jsonwebtoken");
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
 /**
  * JWT 인증 미들웨어
@@ -86,17 +91,19 @@ const requireAdmin = async (req, res, next) => {
     }
 
     const { userId } = req.session.userInfo;
-    const db = getFirebaseDb();
-    const userDoc = await db.collection("users").doc(userId).get();
+    const { data: userData, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", userId)
+      .single();
 
-    if (!userDoc.exists) {
+    if (error) {
       return res.status(404).json({
         success: false,
         message: "사용자 정보를 찾을 수 없습니다.",
       });
     }
 
-    const userData = userDoc.data();
     if (userData.role !== "admin") {
       return res.status(403).json({
         success: false,
@@ -166,18 +173,20 @@ const requireActiveUser = async (req, res, next) => {
     }
 
     const { userId } = req.session.userInfo;
-    const db = getFirebaseDb();
-    const userDoc = await db.collection("users").doc(userId).get();
+    const { data: userData, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", userId)
+      .single();
 
-    if (!userDoc.exists) {
+    if (error) {
       return res.status(404).json({
         success: false,
         message: "사용자 정보를 찾을 수 없습니다.",
       });
     }
 
-    const userData = userDoc.data();
-    if (userData.isActive !== true) {
+    if (userData.is_active !== true) {
       return res.status(403).json({
         success: false,
         message: "비활성화된 계정입니다. 관리자에게 문의하세요.",

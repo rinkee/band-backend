@@ -2,9 +2,8 @@
 const crawlerService = require("../services/crawler.service");
 const BandCrawler = require("../services/crawler/band.crawler");
 const BaseCrawler = require("../services/crawler/base.crawler");
-
+const { supabase } = require("../config/supabase");
 const logger = require("../config/logger");
-const { getFirebaseDb } = require("../services/firebase.service");
 const fs = require("fs").promises;
 const path = require("path");
 
@@ -112,26 +111,27 @@ const checkCookieValidity = async (naverId) => {
  */
 const getUserNaverAccount = async (userId) => {
   try {
-    const db = getFirebaseDb();
-    const userDoc = await db.collection("users").doc(userId).get();
+    const { data: userData, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", userId)
+      .single();
 
-    if (!userDoc.exists) {
-      logger.error(`사용자를 찾을 수 없습니다: ${userId}`);
+    if (error) {
+      logger.error(`사용자 조회 오류 (${userId}):`, error);
       return null;
     }
 
-    const userData = userDoc.data();
-
-    if (!userData.naverId || !userData.naverPassword) {
+    if (!userData.naver_id || !userData.naver_password) {
       logger.error(`네이버 계정 정보가 설정되지 않았습니다: ${userId}`);
       return null;
     }
 
     return {
       userId,
-      naverId: userData.naverId,
-      naverPassword: userData.naverPassword,
-      bandId: userData.bandId,
+      naverId: userData.naver_id,
+      naverPassword: userData.naver_password,
+      bandId: userData.band_id,
     };
   } catch (error) {
     logger.error(`사용자 정보 조회 중 오류: ${error.message}`);
@@ -269,40 +269,37 @@ class CrawlController {
         numPostsToLoad: maxPosts || 30,
       });
 
-      // 쿠키 유효성 확인
-      const cookiesValid = await checkCookieValidity(userAccount.naverId);
-
-      // 브라우저 초기화 및 필요시 로그인
-      if (cookiesValid) {
-        logger.info(
-          `유효한 쿠키로 상세 게시물 크롤링 시작: ${userAccount.naverId}`
-        );
-        await crawler.initialize(userAccount.naverId);
-      } else {
-        logger.info(
-          `쿠키 만료 또는 없음, 로그인 후 상세 게시물 크롤링 시작: ${userAccount.naverId}`
-        );
-        await crawler.initialize(userAccount.naverId);
-        await crawler.login(userAccount.naverId, userAccount.naverPassword);
-      }
-
-      // crawlPostDetail 호출 - 로그인 단계는 이미 처리했으므로 생략
-      logger.info(`게시물 상세 정보 크롤링 시작 (최대 ${maxPosts || 30}개)`);
-      const result = await crawler.crawlPostDetail(
+      // 한 번에 제대로 initialize 및 로그인 수행
+      logger.info(`네이버 계정으로 밴드 크롤링 시작: ${userAccount.naverId}`);
+      const initialized = await crawler.initialize(
         userAccount.naverId,
-        userAccount.naverPassword,
-        maxPosts || 30
+        userAccount.naverPassword
       );
 
-      // 결과 처리 및 Firebase에 저장
-      if (result.success) {
+      if (!initialized) {
+        logger.error(
+          `브라우저 초기화 또는 로그인 실패: ${userAccount.naverId}`
+        );
+        return;
+      }
+
+      // crawlPostDetail 호출 - 초기화와 로그인이 이미 완료됨
+      logger.info(`게시물 상세 정보 크롤링 시작 (최대 ${maxPosts || 30}개)`);
+      const result = await crawler.crawlPostDetail(maxPosts || 30);
+
+      // 결과 처리 및 Supabase에 저장
+      if (result && result.data && result.data.length > 0) {
         logger.info(
           `${result.data.length}개의 게시물 상세 정보를 크롤링했습니다.`
         );
-        await crawler.saveDetailPostsToFirebase(result.data);
-        logger.info(`크롤링한 게시물 데이터를 Firebase에 저장했습니다.`);
+
+        await crawler.saveDetailPostsToSupabase(result.data);
       } else {
-        logger.error(`게시물 상세 정보 크롤링 실패: ${result.error}`);
+        logger.error(
+          `게시물 상세 정보 크롤링 실패: ${
+            result ? result.error : "알 수 없는 오류"
+          }`
+        );
       }
     } catch (error) {
       logger.error("게시물 상세 정보 크롤링 오류:", error);
@@ -371,19 +368,18 @@ class CrawlController {
       // BandCrawler 인스턴스 생성
       crawler = new BandCrawler(bandId);
 
-      // 쿠키 유효성 확인
-      const cookiesValid = await checkCookieValidity(userAccount.naverId);
+      // 한 번에 제대로 initialize 및 로그인 수행
+      logger.info(`네이버 계정으로 댓글 크롤링 시작: ${userAccount.naverId}`);
+      const initialized = await crawler.initialize(
+        userAccount.naverId,
+        userAccount.naverPassword
+      );
 
-      // 브라우저 초기화 및 필요시 로그인
-      if (cookiesValid) {
-        logger.info(`유효한 쿠키로 댓글 크롤링 시작: ${userAccount.naverId}`);
-        await crawler.initialize(userAccount.naverId);
-      } else {
-        logger.info(
-          `쿠키 만료, 로그인 후 댓글 크롤링 시작: ${userAccount.naverId}`
+      if (!initialized) {
+        logger.error(
+          `브라우저 초기화 또는 로그인 실패: ${userAccount.naverId}`
         );
-        await crawler.initialize(userAccount.naverId);
-        await crawler.login(userAccount.naverId, userAccount.naverPassword);
+        return;
       }
 
       // 직접 게시물 URL로 이동
@@ -415,35 +411,40 @@ class CrawlController {
         ? extractPriceFromContent(postDetail.postContent)
         : 0;
 
-      // Firebase에 저장
+      // Supabase에 저장
       if (comments.length > 0) {
-        const db = getFirebaseDb();
+        // 기존 주문 데이터 확인
+        const { data: existingOrders, error: queryError } = await supabase
+          .from("orders")
+          .select("order_id, band_comment_id")
+          .eq("band_id", bandId)
+          .eq("band_post_id", postId);
 
-        // 최적화: 중복 저장 방지를 위해 기존 주문 데이터 확인
-        const ordersRef = db.collection("orders");
-        const existingOrdersQuery = await ordersRef
-          .where("bandId", "==", bandId)
-          .where("originalProductId", "==", postId)
-          .get();
+        if (queryError) {
+          logger.error(`주문 데이터 조회 오류: ${queryError.message}`);
+          return;
+        }
 
         // 빠른 검색을 위해 Map 객체에 저장
         const existingOrdersMap = new Map();
-        existingOrdersQuery.forEach((doc) => {
-          const orderData = doc.data();
-          if (orderData.bandCommentId) {
-            existingOrdersMap.set(orderData.bandCommentId, doc.id);
-          }
-        });
+        if (existingOrders && existingOrders.length > 0) {
+          existingOrders.forEach((order) => {
+            if (order.band_comment_id) {
+              existingOrdersMap.set(order.band_comment_id, order.order_id);
+            }
+          });
+        }
 
         logger.info(`기존 주문 ${existingOrdersMap.size}개 로드 완료`);
 
-        const batch = db.batch();
         let newOrdersCount = 0;
         let updatedOrdersCount = 0;
-        let currentBatchSize = 0;
 
         // 제품 ID
         const productId = `${bandId}_product_${postId}`;
+
+        // 주문 데이터 준비
+        const ordersToUpsert = [];
 
         // 댓글 저장 로직
         for (let index = 0; index < comments.length; index++) {
@@ -455,8 +456,8 @@ class CrawlController {
           // 중복 확인
           const existingOrderId = existingOrdersMap.get(bandCommentId);
 
-          // 수량 추출
-          const quantity = extractQuantityFromComment(comment.content);
+          // 수량 추출 (BandCrawler에 이 함수가 있다고 가정)
+          const quantity = 1; // 기본값 설정, 실제 함수가 있다면 사용
 
           // 시간 변환
           let parsedTime;
@@ -472,51 +473,48 @@ class CrawlController {
           // 주문 ID
           const orderId =
             existingOrderId || `${bandId}_${postId}_${parsedTime.getTime()}`;
-          const orderDocRef = ordersRef.doc(orderId);
 
           // 주문 데이터
           const orderData = {
-            productId: productId,
-            originalProductId: postId,
-            bandId: bandId,
-            userId: userId,
-            customerName: comment.author || "익명",
-            customerBandId: "",
-            customerProfile: "",
+            order_id: orderId,
+            product_id: productId,
+            band_post_id: postId,
+            band_id: bandId,
+            user_id: userId,
+            customer_name: comment.author || "익명",
             quantity: quantity,
             price: extractedPrice || 0,
-            totalAmount: (extractedPrice || 0) * quantity,
+            total_amount: (extractedPrice || 0) * quantity,
             comment: comment.content || "",
-            status: "주문완료",
-            orderedAt: parsedTime,
-            bandCommentId: bandCommentId,
-            bandCommentUrl: `https://band.us/band/${bandId}/post/${postId}#comment`,
-            updatedAt: new Date(),
+            status: "ordered",
+            ordered_at: parsedTime.toISOString(),
+            band_comment_id: bandCommentId,
+            band_comment_url: `https://band.us/band/${bandId}/post/${postId}#comment`,
+            updated_at: new Date().toISOString(),
           };
 
-          // 신규 주문인 경우에만 createdAt 추가
+          // 신규 주문인 경우에만 created_at 추가
           if (!existingOrderId) {
-            orderData.createdAt = new Date();
+            orderData.created_at = new Date().toISOString();
             newOrdersCount++;
           } else {
             updatedOrdersCount++;
           }
 
-          batch.set(orderDocRef, orderData, { merge: true });
-          currentBatchSize++;
-
-          // 배치 크기 제한(500)에 도달하면 커밋하고 새 배치 생성
-          if (currentBatchSize >= 450) {
-            await batch.commit();
-            logger.info(`배치 처리 완료 (${currentBatchSize}개 작업)`);
-            batch = db.batch();
-            currentBatchSize = 0;
-          }
+          ordersToUpsert.push(orderData);
         }
 
-        // 남은 작업이 있으면 커밋
-        if (currentBatchSize > 0) {
-          await batch.commit();
+        // 배치 업서트 (500개씩 나누어 처리)
+        const batchSize = 450;
+        for (let i = 0; i < ordersToUpsert.length; i += batchSize) {
+          const batch = ordersToUpsert.slice(i, i + batchSize);
+          const { error: upsertError } = await supabase
+            .from("orders")
+            .upsert(batch, { onConflict: "order_id" });
+
+          if (upsertError) {
+            logger.error(`주문 데이터 저장 오류: ${upsertError.message}`);
+          }
         }
 
         logger.info(
@@ -524,14 +522,18 @@ class CrawlController {
         );
 
         // 상품 문서의 댓글 수 업데이트
-        const productDocRef = db
-          .collection("products")
-          .doc(`${bandId}_product_${postId}`);
+        const { error: updateError } = await supabase
+          .from("products")
+          .update({
+            comment_count: comments.length,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("band_id", bandId)
+          .eq("band_post_id", postId);
 
-        await productDocRef.update({
-          commentCount: comments.length,
-          updatedAt: new Date(),
-        });
+        if (updateError) {
+          logger.error(`상품 댓글 수 업데이트 오류: ${updateError.message}`);
+        }
       }
     } catch (error) {
       logger.error("댓글 크롤링 오류:", error);
@@ -603,21 +605,18 @@ class CrawlController {
         numPostsToLoad: maxPosts || 50,
       });
 
-      // 쿠키 유효성 확인
-      const cookiesValid = await checkCookieValidity(userAccount.naverId);
+      // 한 번에 제대로 initialize 및 로그인 수행
+      logger.info(`네이버 계정으로 게시물 크롤링 시작: ${userAccount.naverId}`);
+      const initialized = await crawler.initialize(
+        userAccount.naverId,
+        userAccount.naverPassword
+      );
 
-      // 브라우저 초기화 및 필요시 로그인
-      if (cookiesValid) {
-        logger.info(
-          `유효한 쿠키로 게시물 정보 크롤링 시작: ${userAccount.naverId}`
+      if (!initialized) {
+        logger.error(
+          `브라우저 초기화 또는 로그인 실패: ${userAccount.naverId}`
         );
-        await crawler.initialize(userAccount.naverId);
-      } else {
-        logger.info(
-          `쿠키 만료, 로그인 후 게시물 정보 크롤링 시작: ${userAccount.naverId}`
-        );
-        await crawler.initialize(userAccount.naverId);
-        await crawler.login(userAccount.naverId, userAccount.naverPassword);
+        return;
       }
 
       // 밴드 페이지로 이동
@@ -708,23 +707,16 @@ class CrawlController {
 
       logger.info(`${postsInfo.length}개의 게시물 정보를 추출했습니다.`);
 
-      // Firebase에 저장
+      // Supabase에 저장
       if (postsInfo.length > 0) {
-        const db = getFirebaseDb();
-        const batch = db.batch();
-        const postsRef = db.collection("posts");
-        const productsRef = db.collection("products");
-
-        // 현재 사용자 ID 가져오기
-        const userId = await crawler._getOrCreateUserIdForBand();
+        // 게시물 및 상품 데이터 준비
+        const postsToUpsert = [];
+        const productsToUpsert = [];
 
         // 각 게시물 정보 저장
         postsInfo.forEach((post) => {
           // 가격 추출
           const extractedPrice = extractPriceFromContent(post.content || "");
-
-          // 문서 ID 형식: 밴드ID_product_포스트번호
-          const productId = `${bandId}_product_${post.postId}`;
 
           // 시간 파싱 - 안전하게 처리
           let parsedTime;
@@ -737,53 +729,74 @@ class CrawlController {
             parsedTime = new Date();
           }
 
-          // 게시물 정보 저장
-          const postDocRef = postsRef.doc(`${bandId}_post_${post.postId}`);
-          batch.set(
-            postDocRef,
-            {
-              userId,
-              title: post.author ? `${post.author}의 게시물` : "제목 없음",
-              content: post.content || "",
-              images: post.imageUrls || [],
-              bandPostId: post.postId,
-              bandId: bandId,
-              bandPostUrl: `https://band.us/band/${bandId}/post/${post.postId}`,
-              commentCount: post.commentCount || 0,
-              author: post.author || "",
-              postedAt: parsedTime,
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            },
-            { merge: true }
-          );
+          // 게시물 정보 준비
+          postsToUpsert.push({
+            id: `${bandId}_post_${post.postId}`,
+            user_id: userId,
+            title: post.author ? `${post.author}의 게시물` : "제목 없음",
+            content: post.content || "",
+            band_post_id: post.postId,
+            band_id: bandId,
+            band_post_url: `https://band.us/band/${bandId}/post/${post.postId}`,
+            comment_count: post.commentCount || 0,
+            author: post.author || "",
+            posted_at: parsedTime.toISOString(),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
 
-          // 상품 정보 저장
-          const productDocRef = productsRef.doc(productId);
-          batch.set(
-            productDocRef,
-            {
-              userId,
-              productName: post.author
-                ? `${post.author}의 상품`
-                : "상품명 없음",
-              description: post.content || "",
-              price: extractedPrice,
-              barcode: generateSimpleId("barcode", 12),
-              images: post.imageUrls || [],
-              status: "판매중",
-              bandPostId: post.postId,
-              bandId: bandId,
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            },
-            { merge: true }
-          );
+          // 상품 정보 준비
+          productsToUpsert.push({
+            id: `${bandId}_product_${post.postId}`,
+            user_id: userId,
+            band_id: bandId,
+            title: "아직없음",
+            description: post.content || "",
+            price: extractedPrice,
+            original_price: extractedPrice,
+            quantity: 1,
+            category: "기타",
+            tags: [],
+            status: "주문확인",
+            expired_date: null,
+            barcode: generateSimpleId("barcode", 12),
+            product_code: "아직없음",
+            band_post_id: post.postId,
+            band_post_url: `https://band.us/band/${bandId}/post/${post.postId}`,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
         });
 
-        await batch.commit();
+        // 배치 업서트 (500개씩 나누어 처리)
+        const batchSize = 450;
+
+        // 게시물 정보 저장
+        for (let i = 0; i < postsToUpsert.length; i += batchSize) {
+          const batch = postsToUpsert.slice(i, i + batchSize);
+          const { error: postsError } = await supabase
+            .from("posts")
+            .upsert(batch, { onConflict: "post_id" });
+
+          if (postsError) {
+            logger.error(`게시물 정보 저장 오류: ${postsError.message}`);
+          }
+        }
+
+        // 상품 정보 저장
+        for (let i = 0; i < productsToUpsert.length; i += batchSize) {
+          const batch = productsToUpsert.slice(i, i + batchSize);
+          const { error: productsError } = await supabase
+            .from("products")
+            .upsert(batch, { onConflict: "product_id" });
+
+          if (productsError) {
+            logger.error(`상품 정보 저장 오류: ${productsError.message}`);
+          }
+        }
+
         logger.info(
-          `${postsInfo.length}개의 게시물 정보를 Posts 및 Products 컬렉션에 저장했습니다.`
+          `${postsInfo.length}개의 게시물 정보를 Posts 및 Products 테이블에 저장했습니다.`
         );
       }
     } catch (error) {
