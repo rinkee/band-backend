@@ -76,7 +76,7 @@ const getUserNaverAccount = async (userId) => {
     const { data: userData, error } = await supabase
       .from("users")
       .select("*")
-      .eq("id", userId)
+      .eq("user_id", userId)
       .single();
 
     if (error) {
@@ -177,7 +177,7 @@ class CrawlController {
       }
 
       // 사용자의 네이버 계정 정보 조회
-      userAccount = await getUserNaverAccount(userId);
+      const userAccount = await getUserNaverAccount(userId);
       if (!userAccount) {
         return res.status(400).json({
           success: false,
@@ -207,7 +207,7 @@ class CrawlController {
       });
 
       // BandPosts 인스턴스 생성 (모듈화된 코드 사용)
-      crawler = new BandPosts(bandId, {
+      const crawler = new BandPosts(bandId, {
         numPostsToLoad: maxPosts || 30,
       });
 

@@ -160,16 +160,18 @@ const register = async (req, res) => {
         message: "이미 사용 중인 아이디입니다.",
       });
     }
-
+    const userId = crypto.randomUUID();
     // 사용자 정보 저장
     const { data: userData, error: userError } = await supabase
       .from("users")
       .insert([
         {
+          user_id: userId,
           login_id: loginId,
           login_password: loginPassword,
           naver_id: naverId || null,
           naver_password: naverPassword || null,
+          is_active: true,
           store_name: storeName,
           store_address: storeAddress || null,
           owner_name: ownerName || loginId,
@@ -266,7 +268,7 @@ const login = async (req, res) => {
 
     // JWT 토큰 생성
     const token = generateToken({
-      userId: userData.id,
+      userId: userData.userId,
       loginId: userData.login_id,
       role: userData.role,
     });
@@ -277,7 +279,7 @@ const login = async (req, res) => {
       message: "로그인 성공",
       token,
       user: {
-        id: userData.id,
+        userId: userData.user_id,
         loginId: userData.login_id,
         storeName: userData.store_name,
         storeAddress: userData.store_address,

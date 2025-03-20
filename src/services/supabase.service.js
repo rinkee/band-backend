@@ -16,7 +16,7 @@ async function getUserById(userId) {
   const { data, error } = await supabase
     .from("users")
     .select("*")
-    .eq("id", userId)
+    .eq("user_id", userId)
     .single();
 
   if (error) {
@@ -47,7 +47,7 @@ async function getProductById(productId) {
   const { data, error } = await supabase
     .from("products")
     .select("*")
-    .eq("id", productId)
+    .eq("product_id", productId)
     .single();
 
   if (error) {

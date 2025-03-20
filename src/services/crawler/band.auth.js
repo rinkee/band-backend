@@ -58,7 +58,7 @@ class BandAuth {
       this.updateTaskStatus("processing", "initialize", 0);
 
       this.browser = await puppeteer.launch({
-        headless: false,
+        headless: true,
         args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
         defaultViewport: null,
       });
@@ -705,7 +705,7 @@ class BandAuth {
       // 밴드 ID로 사용자 찾기
       const { data: users, error } = await this.supabase
         .from("users")
-        .select("id")
+        .select("user_id")
         .eq("band_id", this.bandId)
         .single();
 
@@ -715,8 +715,8 @@ class BandAuth {
       }
 
       if (users) {
-        logger.info(`get User Id : ${users.id}`);
-        return users.id;
+        logger.info(`get User Id : ${users.user_id}`);
+        return users.user_id;
       }
 
       // 사용자가 없으면 새로 생성
