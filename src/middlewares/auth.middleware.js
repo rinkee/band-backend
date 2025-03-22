@@ -11,7 +11,7 @@ const supabase = createClient(
  * JWT 인증 미들웨어
  * 개발 편의를 위해 항상 통과시키도록 임시 설정
  */
-const authenticateJwt = (req, res, next) => {
+const authMiddleware = (req, res, next) => {
   // 개발 중에는 인증 검증을 건너뛰고 항상 통과
   console.log("인증 미들웨어 통과 (개발 모드)");
   next();
@@ -205,7 +205,8 @@ const requireActiveUser = async (req, res, next) => {
 };
 
 module.exports = {
-  authenticateJwt,
+  authMiddleware,
+  authenticateJwt: authMiddleware, // 이전 이름과의 호환성을 위해 유지
   requireAuth,
   requireAdmin,
   requireSelfOrAdmin,

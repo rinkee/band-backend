@@ -16,6 +16,67 @@ const supabase = createClient(
  */
 const naverLoginStatus = new Map();
 
+const getUserData = async (req, res) => {
+  try {
+    // URL 파라미터에서 유저 ID 추출
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "유저 ID가 필요합니다.",
+      });
+    }
+
+    // Supabase에서 특정 유저 정보 조회
+    const { data, error } = await supabase
+      .from("users")
+      .select(
+        `
+        user_id,
+        login_id,
+          naver_id,
+        store_name,
+        store_address,
+        owner_name,
+        phone_number,
+        band_url,
+        band_id,
+        is_active,
+        created_at,
+        last_login_at,
+        last_crawl_at,
+        product_count
+      `
+      )
+      .eq("user_id", id)
+      .single();
+
+    // 오류 처리
+    if (error) {
+      if (error.code === "PGRST116") {
+        return res.status(404).json({
+          success: false,
+          error: "해당 ID의 유저를 찾을 수 없습니다.",
+        });
+      }
+      throw error;
+    }
+
+    // 민감한 정보 제거
+    const { login_password, naver_password, ...safeUserData } = data;
+
+    // 응답 반환
+    return res.status(200).json(safeUserData);
+  } catch (error) {
+    logger.error(`유저 정보 조회 오류 (ID: ${req.params.id}):`, error);
+    return res.status(500).json({
+      success: false,
+      error: "유저 정보를 불러오는 중 오류가 발생했습니다.",
+    });
+  }
+};
+
 /**
  * 네이버 로그인 상태 조회
  * @param {Object} req - 요청 객체
@@ -843,6 +904,7 @@ const checkNaverLoginStatus = async (req, res) => {
 };
 
 module.exports = {
+  getUserData,
   register,
   login,
   updateNaverCredentials,

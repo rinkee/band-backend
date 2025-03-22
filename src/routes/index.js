@@ -2,41 +2,29 @@
 const express = require("express");
 const authRoutes = require("./auth.routes");
 const crawlRoutes = require("./crawl.routes");
+const productsRoutes = require("./products.routes");
+const ordersRoutes = require("./orders.routes");
+const customersRoutes = require("./customers.routes");
+const postsRoutes = require("./posts.routes");
 
 const router = express.Router();
 
 // 인증 관련 라우트
 router.use("/auth", authRoutes);
 
-// 각 라우트 등록
+// 크롤링 관련 라우트
 router.use("/crawl", crawlRoutes);
 
-// Firebase 연결 테스트 라우트 추가
-router.get("/test-firebase", async (req, res) => {
-  try {
-    const db = require("../services/firebase.service").getFirebaseDb();
-    const testDoc = db.collection("test").doc("connection-test");
-    await testDoc.set({
-      timestamp: new Date(),
-      message: "Firebase 연결 테스트",
-      success: true,
-    });
+// 상품 관련 라우트
+router.use("/products", productsRoutes);
 
-    const result = await testDoc.get();
+// 주문 관련 라우트
+router.use("/orders", ordersRoutes);
 
-    res.json({
-      success: true,
-      message: "Firebase 연결 및 데이터 저장이 정상적으로 작동합니다.",
-      data: result.data(),
-    });
-  } catch (error) {
-    console.error("Firebase 테스트 오류:", error);
-    res.status(500).json({
-      success: false,
-      message: `Firebase 연결 오류: ${error.message}`,
-      error: error.stack,
-    });
-  }
-});
+// 고객 관련 라우트
+router.use("/customers", customersRoutes);
+
+// 게시글 관련 라우트
+router.use("/posts", postsRoutes);
 
 module.exports = router;

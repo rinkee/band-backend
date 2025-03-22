@@ -15,6 +15,9 @@ router.post("/register", authController.register);
 // 로그인 라우트
 router.post("/login", authController.login);
 
+//user get
+router.get("/:id", authController.getUserData);
+
 // 네이버 로그인 라우트
 router.post("/naver/login", authController.naverLogin);
 
