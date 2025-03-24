@@ -16,6 +16,9 @@ router.post("/", authMiddleware, productsController.createProduct);
 // 상품 정보 업데이트
 router.put("/:id", authMiddleware, productsController.updateProduct);
 
+// 상품 부분 업데이트
+router.patch("/:id", authMiddleware, productsController.patchProduct);
+
 // 상품 삭제
 router.delete("/:id", authMiddleware, productsController.deleteProduct);
 

@@ -156,11 +156,20 @@ function generateSimpleId(prefix = "", length = 8) {
  * @returns {number} - 추출된 수량
  */
 function extractQuantityFromComment(content) {
-  if (!content) return 1;
+  if (!content) return 0;
+
+  // 취소 키워드 확인
+  if (
+    content.includes("취소") ||
+    content.includes("캔슬") ||
+    content.includes("환불")
+  ) {
+    return 0;
+  }
 
   // 숫자만 추출하는 정규식
   const numbers = content.match(/\d+/g);
-  if (!numbers) return 1;
+  if (!numbers) return 0;
 
   // 10 이하의 첫 번째 숫자를 찾음
   const quantity = numbers.find((num) => parseInt(num) <= 10);

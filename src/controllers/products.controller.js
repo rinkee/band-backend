@@ -1,6 +1,7 @@
 // src/controllers/products.controller.js - 상품 관련 컨트롤러
 const { createClient } = require("@supabase/supabase-js");
 const logger = require("../config/logger");
+const { extractProductInfo } = require("../services/ai.service");
 
 // Supabase 클라이언트 초기화
 const supabase = createClient(
@@ -281,10 +282,169 @@ const deleteProduct = async (req, res) => {
   }
 };
 
+/**
+ * 크롤링한 콘텐츠로부터 상품 정보 추출 및 저장
+ * @param {Object} crawledData - 크롤링된 데이터
+ * @param {string} userId - 사용자 ID
+ * @returns {Promise<Object>} - 저장된 상품 정보
+ */
+async function processAndSaveProduct(crawledData, userId) {
+  try {
+    logger.info(`크롤링 데이터 처리 시작: ${crawledData.title}`);
+
+    // 콘텐츠 텍스트에서 AI를 이용해 상품 정보 추출
+    const productInfo = await extractProductInfo(crawledData.content);
+
+    // 상품 ID 생성 (밴드 ID와 게시물 ID 조합)
+    const productId = `${crawledData.bandId}_product_${crawledData.postId}`;
+
+    // 데이터베이스에 저장할 상품 객체 생성
+    const product = {
+      product_id: productId,
+      user_id: userId,
+      band_id: crawledData.bandId,
+      title: productInfo.title || crawledData.title,
+      content: crawledData.content,
+      price: productInfo.price || 0,
+      original_price: productInfo.price || 0,
+      quantity: 1,
+      category: productInfo.category || "기타",
+      tags: productInfo.tags || [],
+      status: productInfo.status || "판매중",
+      band_post_id: crawledData.postId,
+      band_post_url: crawledData.url,
+    };
+
+    logger.info(
+      `상품 정보 생성 완료: ${product.title}, 가격: ${product.price}원`
+    );
+
+    // 데이터베이스에 저장
+    const { data, error } = await supabase
+      .from("products")
+      .upsert(product, { onConflict: "product_id" })
+      .select();
+
+    if (error) {
+      logger.error("상품 정보 저장 중 오류 발생:", error);
+      throw error;
+    }
+
+    logger.info(`상품 정보 저장 완료: ${product.product_id}`);
+    return data[0];
+  } catch (error) {
+    logger.error("상품 정보 처리 및 저장 중 오류 발생:", error);
+    throw error;
+  }
+}
+
+/**
+ * 상품 정보 부분 업데이트 (바코드 등)
+ * @param {Object} req - 요청 객체
+ * @param {Object} res - 응답 객체
+ */
+const patchProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId } = req.query;
+    const updateData = req.body;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "상품 ID가 필요합니다.",
+      });
+    }
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "사용자 ID가 필요합니다.",
+      });
+    }
+
+    // 업데이트할 필드 확인
+    const fieldsToUpdate = {};
+
+    // 바코드 업데이트
+    if (updateData.barcode !== undefined) {
+      fieldsToUpdate.barcode = updateData.barcode;
+      logger.info(
+        `상품 ID ${id}의 바코드를 업데이트합니다: ${updateData.barcode}`
+      );
+    }
+
+    // 다른 부분 업데이트 필드가 있다면 여기에 추가
+
+    // 업데이트 시간 추가
+    fieldsToUpdate.updated_at = new Date().toISOString();
+
+    // 업데이트할 내용이 없으면 에러 반환
+    if (Object.keys(fieldsToUpdate).length === 1 && fieldsToUpdate.updated_at) {
+      return res.status(400).json({
+        success: false,
+        message: "업데이트할 정보가 없습니다.",
+      });
+    }
+
+    // 사용자 ID 확인 (권한 체크)
+    const { data: productData, error: productError } = await supabase
+      .from("products")
+      .select("user_id")
+      .eq("product_id", id)
+      .single();
+
+    if (productError) {
+      if (productError.code === "PGRST116") {
+        return res.status(404).json({
+          success: false,
+          message: "해당 ID의 상품을 찾을 수 없습니다.",
+        });
+      }
+      throw productError;
+    }
+
+    if (productData.user_id !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: "이 상품을 수정할 권한이 없습니다.",
+      });
+    }
+
+    // 상품 정보 업데이트
+    const { data, error } = await supabase
+      .from("products")
+      .update(fieldsToUpdate)
+      .eq("product_id", id)
+      .eq("user_id", userId)
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "상품 정보가 업데이트되었습니다.",
+      data,
+    });
+  } catch (error) {
+    logger.error(`상품 정보 부분 업데이트 오류 (ID: ${req.params.id}):`, error);
+    return res.status(500).json({
+      success: false,
+      message: "상품 정보 업데이트 중 오류가 발생했습니다.",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getAllProducts,
   getProductById,
   createProduct,
   updateProduct,
   deleteProduct,
+  patchProduct,
+  processAndSaveProduct,
 };

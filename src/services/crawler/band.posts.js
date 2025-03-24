@@ -494,8 +494,9 @@ class BandPosts extends BandAuth {
   /**
    * 게시물 상세 정보 Supabase 저장
    * @param {Array} detailedPosts - 저장할 게시물 목록
+   * @param {boolean} processProducts - 게시물에서 상품 정보를 추출할지 여부
    */
-  async saveDetailPostsToSupabase(detailedPosts) {
+  async saveDetailPostsToSupabase(detailedPosts, processProducts = false) {
     try {
       this.updateTaskStatus(
         "processing",
@@ -513,6 +514,23 @@ class BandPosts extends BandAuth {
       const postsToInsert = [];
       const ordersToInsert = [];
       const customersToInsert = [];
+
+      // AI 서비스 가져오기 (processProducts가 true인 경우에만)
+      let extractProductInfo;
+      if (processProducts) {
+        try {
+          // extractProductInfo 함수 가져오기
+          extractProductInfo =
+            require("../../services/ai.service").extractProductInfo;
+          logger.info(
+            `ChatGPT API를 사용하여 ${detailedPosts.length}개의 게시물에서 상품 정보를 추출합니다.`
+          );
+        } catch (error) {
+          logger.error(`AI 서비스 로드 중 오류: ${error.message}`);
+          // 오류가 발생해도 계속 진행
+          extractProductInfo = null;
+        }
+      }
 
       for (const post of detailedPosts) {
         // 새 ID 생성: 기존 추출된 post.postId를 사용
@@ -552,12 +570,9 @@ class BandPosts extends BandAuth {
           quantity: 1,
           category: "기타",
           tags: [],
-
           status: "판매중",
           band_post_id: parseInt(post.postId, 10) || 0,
-
           band_post_url: `https://band.us/band/${this.bandId}/post/${post.postId}`,
-
           comment_count: post.commentCount,
           order_summary: {
             total_orders: post.commentCount,
@@ -567,6 +582,42 @@ class BandPosts extends BandAuth {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
+
+        // ChatGPT API를 사용하여 상품 정보 추출 (processProducts가 true이고 extractProductInfo가 로드된 경우)
+        if (
+          processProducts &&
+          extractProductInfo &&
+          post.postContent &&
+          post.postContent.trim() !== ""
+        ) {
+          try {
+            logger.info(`게시물 ID ${post.postId} - ChatGPT API 호출 중...`);
+            const productInfo = await extractProductInfo(post.postContent);
+            logger.info(
+              `게시물 ID ${post.postId} - 추출된 상품 정보:`,
+              JSON.stringify(productInfo, null, 2)
+            );
+
+            // 추출된 정보로 제품 데이터 업데이트
+            productData.title = productInfo.title || productData.title;
+            productData.price = productInfo.price || productData.price;
+            productData.original_price =
+              productInfo.price || productData.original_price;
+            productData.category = productInfo.category || productData.category;
+            productData.tags = productInfo.tags || productData.tags;
+            productData.status = productInfo.status || productData.status;
+
+            logger.info(
+              `게시물 ID ${post.postId} - AI 분석 완료: 상품명=${productData.title}, 가격=${productData.price}`
+            );
+          } catch (aiError) {
+            logger.error(
+              `게시물 ID ${post.postId} - AI 분석 중 오류: ${aiError.message}`
+            );
+            // 오류가 발생해도 계속 진행
+          }
+        }
+
         productsToInsert.push(productData);
 
         // 게시글 데이터 준비
@@ -612,6 +663,7 @@ class BandPosts extends BandAuth {
             const quantity = extractQuantityFromComment(
               comments[index].content
             );
+            // 주문 데이터 생성 시 productData.price 사용 (ChatGPT가 업데이트한 값)
             const orderData = {
               order_id: orderId,
               user_id: userId,
@@ -622,8 +674,8 @@ class BandPosts extends BandAuth {
               customer_band_id: "",
               customer_profile: "",
               quantity: quantity,
-              price: extractedPrice,
-              total_amount: extractedPrice * quantity,
+              price: productData.price, // extractedPrice 대신 ChatGPT로 업데이트된 가격 사용
+              total_amount: productData.price * quantity, // 총 금액도 업데이트된 가격으로 계산
               comment: comments[index].content || "",
               status: "주문완료",
               ordered_at: orderTime,

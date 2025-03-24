@@ -6,6 +6,7 @@ const productsRoutes = require("./products.routes");
 const ordersRoutes = require("./orders.routes");
 const customersRoutes = require("./customers.routes");
 const postsRoutes = require("./posts.routes");
+const schedulerRoutes = require("./scheduler.routes");
 
 const router = express.Router();
 
@@ -26,5 +27,8 @@ router.use("/customers", customersRoutes);
 
 // 게시글 관련 라우트
 router.use("/posts", postsRoutes);
+
+// 스케줄러 관련 라우트
+router.use("/scheduler", schedulerRoutes);
 
 module.exports = router;

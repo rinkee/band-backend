@@ -22,6 +22,12 @@ const boundGetCommentsOnly =
 const boundGetPostsInfoOnly =
   crawlController.getPostsInfoOnly.bind(crawlController);
 
+// 상품 정보 추출 기능의 바인딩
+const boundExtractProductInfo =
+  crawlController.extractProductInfo.bind(crawlController);
+const boundTestProductExtraction =
+  crawlController.testProductExtraction.bind(crawlController);
+
 // JWT 인증 미들웨어 추가
 router.use(authenticateJwt);
 
@@ -36,5 +42,11 @@ router.post("/:bandId/post/:postId/comments", boundGetCommentsOnly);
 
 // 게시물 목록 정보 크롤링
 router.post("/:bandId/posts", boundGetPostsInfoOnly);
+
+// 게시물에서 상품 정보 추출 (기존 밴드 게시물)
+router.post("/:bandId/extract-products", boundExtractProductInfo);
+
+// 테스트용 상품 정보 추출 (직접 콘텐츠 입력)
+router.post("/test-extract", boundTestProductExtraction);
 
 module.exports = router;

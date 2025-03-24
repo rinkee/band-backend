@@ -49,7 +49,7 @@ const getAllOrders = async (req, res) => {
     }
 
     if (req.query.search && req.query.search !== "undefined") {
-      query = query.ilike("title", `%${req.query.search}%`);
+      query = query.ilike("customer_name", `%${req.query.search}%`);
     }
 
     if (req.query.startDate && req.query.endDate) {
@@ -154,6 +154,16 @@ const updateOrderStatus = async (req, res) => {
       });
     }
 
+    // 허용된 상태 값인지 확인
+    const allowedStatuses = ["주문완료", "주문취소", "수령완료"];
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "허용되지 않은 주문 상태입니다. 주문완료, 주문취소, 수령완료 중 하나를 선택해주세요.",
+      });
+    }
+
     const updateData = {
       status,
       updated_at: new Date().toISOString(),
@@ -164,11 +174,11 @@ const updateOrderStatus = async (req, res) => {
       updateData.shipping_info = shippingInfo;
     }
 
-    // 주문 상태에 따라 확인/완료 시간 설정
-    if (status === "확인완료") {
-      updateData.confirmed_at = new Date().toISOString();
-    } else if (status === "배송완료" || status === "수령완료") {
+    // 주문 상태에 따라 완료 시간 설정
+    if (status === "수령완료") {
       updateData.completed_at = new Date().toISOString();
+    } else if (status === "주문취소") {
+      updateData.canceled_at = new Date().toISOString();
     }
 
     const { data, error } = await supabase
