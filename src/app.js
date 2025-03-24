@@ -24,11 +24,23 @@ app.use(
 ); // CORS 설정
 app.use(express.json()); // JSON 파싱
 app.use(express.urlencoded({ extended: true })); // URL 인코딩된 데이터 파싱
-app.use(
-  morgan("combined", {
-    stream: { write: (message) => logger.info(message.trim()) },
-  })
-); // 로깅
+
+// morgan 로깅 설정 수정 - 개발 환경에서만 사용하고 간략한 형식으로 변경
+if (process.env.NODE_ENV === "development") {
+  app.use(
+    morgan("dev", {
+      skip: (req, res) => res.statusCode < 400, // 성공 응답은 로깅하지 않음
+    })
+  );
+} else {
+  // 프로덕션 환경에서는 HTTP 오류만 로깅
+  app.use(
+    morgan("combined", {
+      skip: (req, res) => res.statusCode < 400,
+      stream: { write: (message) => logger.error(message.trim()) },
+    })
+  );
+}
 
 // 라우터 설정
 const apiRouter = require("./routes");

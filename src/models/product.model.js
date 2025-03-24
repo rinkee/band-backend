@@ -35,11 +35,29 @@ const Product = sequelize.define(
       type: DataTypes.TEXT,
       allowNull: true,
     },
-    // 가격
-    price: {
+    // 기본 가격 (가장 저렴한 옵션의 가격)
+    basePrice: {
       type: DataTypes.INTEGER,
       allowNull: false,
       defaultValue: 0,
+    },
+    // 가격 옵션 배열 (JSON 형태로 저장)
+    priceOptions: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: [],
+    },
+    // 판매 단위 수량 (정수)
+    quantity: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 1,
+    },
+    // 용량/개수 정보 텍스트 (예: 400g, 10개입)
+    quantityText: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      field: "quantity_text",
     },
     // 원래 가격
     originalPrice: {
@@ -49,6 +67,12 @@ const Product = sequelize.define(
     },
     // 이미지 URL 배열 (JSON 형태로 저장)
     images: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: [],
+    },
+    // 상품 특징 정보 배열
+    features: {
       type: DataTypes.JSONB,
       allowNull: true,
       defaultValue: [],
@@ -86,6 +110,21 @@ const Product = sequelize.define(
       allowNull: true,
       defaultValue: [],
     },
+    // 픽업/수령 정보 원문
+    pickupInfo: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    // 픽업/수령 예정 날짜
+    pickupDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    // 픽업/수령 유형 (수령, 픽업, 도착 등)
+    pickupType: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
     // 댓글 수
     commentCount: {
       type: DataTypes.INTEGER,
@@ -119,6 +158,12 @@ const Product = sequelize.define(
       {
         fields: ["bandId", "bandPostId"],
         unique: true,
+      },
+      {
+        fields: ["basePrice"],
+      },
+      {
+        fields: ["pickupDate"],
       },
     ],
   }

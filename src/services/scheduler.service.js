@@ -66,7 +66,7 @@ const createJob = (jobId, cronExpression, jobFunction, description = "") => {
     // 크론 작업 생성
     const task = cron.schedule(cronExpression, async () => {
       try {
-        logger.info(`작업 실행 시작: ${jobId} - ${description}`);
+        logger.info(`작업 실행: ${jobId}`);
 
         // 작업 상태 업데이트
         const job = scheduledJobs.get(jobId);
@@ -82,7 +82,7 @@ const createJob = (jobId, cronExpression, jobFunction, description = "") => {
         job.status = "idle";
         scheduledJobs.set(jobId, job);
 
-        logger.info(`작업 실행 완료: ${jobId}`);
+        logger.info(`작업 완료: ${jobId}`);
       } catch (error) {
         // 오류 발생 시 상태 업데이트
         const job = scheduledJobs.get(jobId);
@@ -90,7 +90,7 @@ const createJob = (jobId, cronExpression, jobFunction, description = "") => {
         job.error = error.message;
         scheduledJobs.set(jobId, job);
 
-        logger.error(`작업 실행 오류 (${jobId}): ${error.message}`);
+        logger.error(`작업 오류 (${jobId}): ${error.message}`);
       }
     });
 
@@ -104,9 +104,7 @@ const createJob = (jobId, cronExpression, jobFunction, description = "") => {
       task,
     });
 
-    logger.info(
-      `작업 등록 완료: ${jobId} - ${description} (${cronExpression})`
-    );
+    logger.info(`작업 등록: ${jobId} (${cronExpression})`);
     return true;
   } catch (error) {
     logger.error(`작업 생성 중 오류: ${error.message}`);

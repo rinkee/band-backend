@@ -43,12 +43,23 @@ const processAndSaveProduct = async (postData, userId) => {
       band_id: postData.bandId,
       title: productInfo.title || postData.title || "제목 없음",
       content: postData.content,
-      price: productInfo.price || 0,
-      original_price: productInfo.price || 0,
-      quantity: 1,
+      base_price: productInfo.basePrice || 0,
+      price_options: productInfo.priceOptions || [
+        {
+          quantity: 1,
+          price: productInfo.basePrice || 0,
+          description: "기본가",
+        },
+      ],
+      quantity: productInfo.quantity || null,
+      original_price: productInfo.basePrice || 0,
       category: productInfo.category || "기타",
       tags: productInfo.tags || [],
+      features: productInfo.features || [],
       status: productInfo.status || "판매중",
+      delivery_info: productInfo.deliveryInfo || null,
+      delivery_date: productInfo.deliveryDate || null,
+      delivery_type: productInfo.deliveryType || null,
       band_post_id: postData.postId,
       band_post_url:
         postData.url ||

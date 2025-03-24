@@ -366,15 +366,51 @@ const patchProduct = async (req, res) => {
     // 업데이트할 필드 확인
     const fieldsToUpdate = {};
 
-    // 바코드 업데이트
-    if (updateData.barcode !== undefined) {
-      fieldsToUpdate.barcode = updateData.barcode;
-      logger.info(
-        `상품 ID ${id}의 바코드를 업데이트합니다: ${updateData.barcode}`
-      );
-    }
+    // 프론트엔드 필드명과 백엔드 필드명 매핑
+    const fieldMapping = {
+      title: "title",
+      price: "base_price", // 프론트엔드의 price는 백엔드의 base_price에 매핑
+      status: "status",
+      barcode: "barcode",
+      description: "content", // 프론트엔드의 description은 백엔드의 content에 매핑
+      pickup_info: "pickup_info",
+      pickup_date: "pickup_date",
+      quantity: "quantity",
+    };
 
-    // 다른 부분 업데이트 필드가 있다면 여기에 추가
+    // 요청에 포함된 필드들을 매핑에 따라 업데이트 대상에 추가
+    Object.keys(updateData).forEach((frontendField) => {
+      if (
+        updateData[frontendField] !== undefined &&
+        fieldMapping[frontendField]
+      ) {
+        const backendField = fieldMapping[frontendField];
+        let value = updateData[frontendField];
+
+        // 특별 필드 처리
+        if (frontendField === "pickup_date" && value) {
+          // 날짜가 ISO 형식이 아닌 경우 변환
+          if (!value.includes("T")) {
+            try {
+              // YYYY-MM-DD 형식을 ISO 형식으로 변환
+              const dateObj = new Date(value);
+              if (!isNaN(dateObj.getTime())) {
+                value = dateObj.toISOString();
+              }
+            } catch (error) {
+              logger.error(`날짜 변환 오류: ${error.message}`);
+            }
+          }
+        }
+
+        fieldsToUpdate[backendField] = value;
+        logger.info(
+          `상품 ID ${id}의 ${backendField}를 업데이트합니다: ${JSON.stringify(
+            value
+          )}`
+        );
+      }
+    });
 
     // 업데이트 시간 추가
     fieldsToUpdate.updated_at = new Date().toISOString();
