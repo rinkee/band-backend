@@ -209,8 +209,8 @@ quantity는 반드시 숫자로만 설정하세요. 용량 정보는 quantityTex
         }
       }
 
-      logger.info(`가공 완료된 제품명: "${productInfo.title}"`);
-      logger.info("가공 완료된 데이터:", JSON.stringify(productInfo, null, 2));
+      // logger.info(`가공 완료된 제품명: "${productInfo.title}"`);
+      // logger.info("가공 완료된 데이터:", JSON.stringify(productInfo, null, 2));
 
       // 처리된 객체 반환
       return productInfo;

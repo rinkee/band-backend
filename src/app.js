@@ -89,20 +89,24 @@ const startApp = async () => {
 const initializeServer = async () => {
   logger.info("서버 초기화 중...");
 
-  // 여기에 서버 초기화 작업 추가
+  // 데이터베이스 연결 테스트
+  try {
+    await testConnection();
+    logger.info("데이터베이스 연결 성공");
+  } catch (error) {
+    logger.error("데이터베이스 연결 실패:", error.message);
+  }
 
-  // 예시: 테스트용 자동 크롤링 작업 (실제 환경에서는 주석 처리 또는 삭제)
-  if (process.env.NODE_ENV === "development") {
-    // 매 시간마다 실행되는 테스트 크롤링 작업 (개발 환경에서만)
-    schedulerService
-      .scheduleBandCrawling
-      // 'test-user-id',
-      // 'test-band-id',
-      // '0 * * * *'
-      ();
-    logger.info(
-      "개발 환경에서 자동 크롤링 작업을 설정하려면 app.js의 주석을 해제하세요."
-    );
+  // 자동 크롤링 초기화
+  try {
+    const result = await schedulerService.initializeAutoCrawling();
+    if (result) {
+      logger.info("자동 크롤링 서비스가 초기화되었습니다.");
+    } else {
+      logger.warn("자동 크롤링 서비스 초기화 실패");
+    }
+  } catch (error) {
+    logger.error(`자동 크롤링 서비스 초기화 오류: ${error.message}`);
   }
 
   logger.info("서버 초기화 완료!");

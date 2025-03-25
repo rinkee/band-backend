@@ -57,6 +57,18 @@ const User = sequelize.define(
       type: DataTypes.DATE,
       allowNull: true,
     },
+    // 자동 크롤링 설정
+    autoCrawl: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    // 자동 크롤링 간격 (분)
+    crawlInterval: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 10, // 기본값 10분
+    },
   },
   {
     tableName: "users",

@@ -382,6 +382,34 @@ function extractQuantityFromComment(comment) {
   return 1; // 기본값
 }
 
+/**
+ * 댓글에 마감 또는 종료 키워드가 있는지 확인하는 함수
+ * @param {string} comment - 댓글 내용
+ * @returns {boolean} - 마감 또는 종료 키워드가 있는지 여부
+ */
+function hasClosingKeywords(comment) {
+  if (!comment) return false;
+
+  const closingKeywords = [
+    "마감",
+    "종료",
+    "완판",
+    "품절",
+    "완료",
+    "주문마감",
+    "주문종료",
+    "판매마감",
+    "판매종료",
+    "sold out",
+    "soldout",
+  ];
+
+  // 소문자로 변환하여 검사
+  const lowerComment = comment.toLowerCase();
+
+  return closingKeywords.some((keyword) => lowerComment.includes(keyword));
+}
+
 module.exports = {
   parseKoreanDate,
   safeParseDate,
@@ -389,4 +417,5 @@ module.exports = {
   extractPriceOptions,
   generateSimpleId,
   extractQuantityFromComment,
+  hasClosingKeywords,
 };

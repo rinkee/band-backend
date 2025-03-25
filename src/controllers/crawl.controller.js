@@ -289,11 +289,54 @@ class CrawlController {
       // 브라우저 리소스 정리
       try {
         if (crawler && crawler.close) {
+          logger.info("크롤링 완료 후 브라우저 리소스 정리 시작");
           await crawler.close();
-          logger.info("브라우저 리소스 정리 완료");
+
+          // 브라우저가 종료되었는지 확인
+          if (!crawler.browser) {
+            logger.info("브라우저 리소스 정리 완료");
+
+            // 작업 상태 업데이트
+            const currentStatus = this.taskStatusMap.get(taskId);
+            if (currentStatus) {
+              this.taskStatusMap.set(taskId, {
+                ...currentStatus,
+                message: currentStatus.message + " (브라우저 종료됨)",
+              });
+            }
+          } else {
+            logger.warn(
+              "브라우저가 여전히 종료되지 않았습니다. 강제 종료 시도..."
+            );
+
+            // 강제 종료 시도
+            try {
+              if (
+                crawler.browser &&
+                typeof crawler.browser.close === "function"
+              ) {
+                await crawler.browser.close().catch(() => {});
+                crawler.browser = null;
+                crawler.page = null;
+                logger.info("브라우저 강제 종료 성공");
+              }
+            } catch (forceCloseError) {
+              logger.error(
+                `브라우저 강제 종료 중 오류: ${forceCloseError.message}`
+              );
+              crawler.browser = null;
+              crawler.page = null;
+            }
+          }
         }
       } catch (closeError) {
-        logger.error("브라우저 종료 오류:", closeError);
+        logger.error(`브라우저 종료 오류: ${closeError.message}`);
+
+        // 오류가 발생해도 참조는 정리
+        if (crawler) {
+          crawler.browser = null;
+          crawler.page = null;
+        }
       }
     }
   }
@@ -435,11 +478,54 @@ class CrawlController {
       // 브라우저 리소스 정리
       try {
         if (crawler && crawler.close) {
+          logger.info("크롤링 완료 후 브라우저 리소스 정리 시작");
           await crawler.close();
-          logger.info("브라우저 리소스 정리 완료");
+
+          // 브라우저가 종료되었는지 확인
+          if (!crawler.browser) {
+            logger.info("브라우저 리소스 정리 완료");
+
+            // 작업 상태 업데이트
+            const currentStatus = this.taskStatusMap.get(taskId);
+            if (currentStatus) {
+              this.taskStatusMap.set(taskId, {
+                ...currentStatus,
+                message: currentStatus.message + " (브라우저 종료됨)",
+              });
+            }
+          } else {
+            logger.warn(
+              "브라우저가 여전히 종료되지 않았습니다. 강제 종료 시도..."
+            );
+
+            // 강제 종료 시도
+            try {
+              if (
+                crawler.browser &&
+                typeof crawler.browser.close === "function"
+              ) {
+                await crawler.browser.close().catch(() => {});
+                crawler.browser = null;
+                crawler.page = null;
+                logger.info("브라우저 강제 종료 성공");
+              }
+            } catch (forceCloseError) {
+              logger.error(
+                `브라우저 강제 종료 중 오류: ${forceCloseError.message}`
+              );
+              crawler.browser = null;
+              crawler.page = null;
+            }
+          }
         }
       } catch (closeError) {
-        logger.error("브라우저 종료 오류:", closeError);
+        logger.error(`브라우저 종료 오류: ${closeError.message}`);
+
+        // 오류가 발생해도 참조는 정리
+        if (crawler) {
+          crawler.browser = null;
+          crawler.page = null;
+        }
       }
     }
   }
@@ -488,7 +574,7 @@ class CrawlController {
       });
 
       // 응답을 먼저 보내고 백그라운드에서 크롤링 진행
-      res.json({
+      res.status(200).json({
         success: true,
         message: "게시물 목록 크롤링이 시작되었습니다.",
         data: {
@@ -501,7 +587,7 @@ class CrawlController {
 
       // BandPosts 인스턴스 생성 (모듈화된 코드 사용)
       crawler = new BandPosts(bandId, {
-        numPostsToLoad: maxPosts || 50,
+        numPostsToLoad: maxPosts || 20,
       });
 
       // 상태 업데이트 함수 추가
@@ -522,19 +608,37 @@ class CrawlController {
         updatedAt: new Date().toISOString(),
       });
 
-      // 게시물 목록만 크롤링 (게시물 상세 정보는 제외)
-      // 기존 band.crawler.js의 기능을 가져와서 구현
-      // 게시물 목록만 추출하는 메소드를 새로 구현하거나
-      // 기존 메소드를 수정하여 사용
+      // 실제 크롤링 실행
+      const result = await crawler.crawlPostDetail(
+        userAccount.naverId,
+        userAccount.naverPassword,
+        maxPosts || 20
+      );
 
-      this.taskStatusMap.set(taskId, {
-        status: "completed",
-        message: "게시물 목록 크롤링 완료",
-        progress: 100,
-        completedAt: new Date().toISOString(),
-      });
-
-      // 구현 필요...
+      // 결과 처리
+      if (result && result.success && result.data) {
+        this.taskStatusMap.set(taskId, {
+          status: "completed",
+          message: `게시물 목록 크롤링 완료: ${result.data.length}개 게시물`,
+          progress: 100,
+          completedAt: new Date().toISOString(),
+        });
+        logger.info(`게시물 목록 크롤링 완료: ${result.data.length}개 게시물`);
+      } else {
+        this.taskStatusMap.set(taskId, {
+          status: "failed",
+          message: `게시물 목록 크롤링 실패: ${
+            result ? result.error : "알 수 없는 오류"
+          }`,
+          progress: 0,
+          updatedAt: new Date().toISOString(),
+        });
+        logger.error(
+          `게시물 목록 크롤링 실패: ${
+            result ? result.error : "알 수 없는 오류"
+          }`
+        );
+      }
     } catch (error) {
       logger.error("게시물 목록 크롤링 오류:", error);
 
@@ -549,11 +653,54 @@ class CrawlController {
       // 브라우저 리소스 정리
       try {
         if (crawler && crawler.close) {
+          logger.info("크롤링 완료 후 브라우저 리소스 정리 시작");
           await crawler.close();
-          logger.info("브라우저 리소스 정리 완료");
+
+          // 브라우저가 종료되었는지 확인
+          if (!crawler.browser) {
+            logger.info("브라우저 리소스 정리 완료");
+
+            // 작업 상태 업데이트
+            const currentStatus = this.taskStatusMap.get(taskId);
+            if (currentStatus) {
+              this.taskStatusMap.set(taskId, {
+                ...currentStatus,
+                message: currentStatus.message + " (브라우저 종료됨)",
+              });
+            }
+          } else {
+            logger.warn(
+              "브라우저가 여전히 종료되지 않았습니다. 강제 종료 시도..."
+            );
+
+            // 강제 종료 시도
+            try {
+              if (
+                crawler.browser &&
+                typeof crawler.browser.close === "function"
+              ) {
+                await crawler.browser.close().catch(() => {});
+                crawler.browser = null;
+                crawler.page = null;
+                logger.info("브라우저 강제 종료 성공");
+              }
+            } catch (forceCloseError) {
+              logger.error(
+                `브라우저 강제 종료 중 오류: ${forceCloseError.message}`
+              );
+              crawler.browser = null;
+              crawler.page = null;
+            }
+          }
         }
       } catch (closeError) {
-        logger.error("브라우저 종료 오류:", closeError);
+        logger.error(`브라우저 종료 오류: ${closeError.message}`);
+
+        // 오류가 발생해도 참조는 정리
+        if (crawler) {
+          crawler.browser = null;
+          crawler.page = null;
+        }
       }
     }
   }

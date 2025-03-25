@@ -1,6 +1,11 @@
 // src/services/crawler/band.comments.js
 const BandPosts = require("./band.posts");
-const { safeParseDate, extractQuantityFromComment } = require("./band.utils");
+const {
+  safeParseDate,
+  extractQuantityFromComment,
+  hasClosingKeywords,
+} = require("./band.utils");
+const { extractPriceFromContent } = require("./band.utils");
 const logger = require("../../config/logger");
 
 /**
@@ -14,6 +19,11 @@ class BandComments extends BandPosts {
   async loadAllComments() {
     try {
       this.updateTaskStatus("processing", "모든 댓글 로드 중", 60);
+
+      // 크롤링 시작 시간
+      const startTime = Date.now();
+      // 최대 실행 시간 (10분)
+      const MAX_EXECUTION_TIME = 10 * 60 * 1000;
 
       // 댓글이 있는지 확인
       const hasComments = await this.page.evaluate(() => {
@@ -55,6 +65,17 @@ class BandComments extends BandPosts {
 
       // 댓글이 더 이상 로드되지 않을 때까지 더보기 버튼 클릭
       while (attemptCount < MAX_ATTEMPTS) {
+        // 실행 시간 체크 - 최대 실행 시간을 초과하면 종료
+        const currentTime = Date.now();
+        if (currentTime - startTime > MAX_EXECUTION_TIME) {
+          this.updateTaskStatus(
+            "processing",
+            `최대 실행 시간(10분)이 경과하여 댓글 로드를 중단합니다. 현재 ${prevCommentCount}개 로드됨.`,
+            75
+          );
+          break;
+        }
+
         try {
           // 현재 댓글 수 확인
           const currentCommentCount = await this.page.evaluate(() => {
@@ -367,6 +388,51 @@ class BandComments extends BandPosts {
         return { success: true, message: "저장할 댓글이 없습니다" };
       }
 
+      // 댓글에 마감/종료 키워드가 있는지 확인
+      let hasClosingKeyword = false;
+      for (const comment of postDetail.comments) {
+        if (hasClosingKeywords(comment.content)) {
+          hasClosingKeyword = true;
+          logger.info(
+            `게시물 ${postDetail.postId}에서 마감 키워드가 발견되었습니다: "${comment.content}"`
+          );
+          break;
+        }
+      }
+
+      // 마감 키워드가 있으면 상품 상태 업데이트
+      if (hasClosingKeyword) {
+        try {
+          logger.info(
+            `게시물 ${postDetail.postId}의 상태를 '마감'으로 업데이트합니다.`
+          );
+
+          // 상품 테이블 업데이트
+          await this.supabase
+            .from("products")
+            .update({
+              status: "마감",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("band_post_id", postDetail.postId);
+
+          // 게시글 테이블 업데이트
+          await this.supabase
+            .from("posts")
+            .update({
+              status: "마감",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("band_post_id", postDetail.postId);
+
+          logger.info(
+            `게시물 ${postDetail.postId}의 상태가 '마감'으로 업데이트되었습니다.`
+          );
+        } catch (error) {
+          logger.error(`상태 업데이트 오류: ${error.message}`);
+        }
+      }
+
       // 주문 데이터 준비
       const ordersToInsert = postDetail.comments.map((comment, index) => {
         // 수량 추출
@@ -402,6 +468,33 @@ class BandComments extends BandPosts {
         };
       });
 
+      // 고객 정보 준비
+      const customersToInsert = [];
+      const seenCustomerIds = new Set();
+
+      // 고객 정보 수집 (중복 제거)
+      for (const comment of postDetail.comments) {
+        const customerName = comment.name || "익명";
+        const customerId = `${this.bandId}_customer_${customerName.replace(
+          /\s+/g,
+          "_"
+        )}`;
+
+        if (!seenCustomerIds.has(customerId)) {
+          seenCustomerIds.add(customerId);
+          customersToInsert.push({
+            customer_id: customerId,
+            user_id: userId,
+            name: customerName,
+            band_user_id: customerName.replace(/\s+/g, "_"),
+            band_id: this.bandId,
+            total_orders: 1,
+            first_order_at: new Date().toISOString(),
+            last_order_at: new Date().toISOString(),
+          });
+        }
+      }
+
       // Supabase에 저장
       const { data, error } = await this.supabase
         .from("orders")
@@ -412,6 +505,30 @@ class BandComments extends BandPosts {
 
       if (error) {
         throw error;
+      }
+
+      // 고객 정보 저장 (있는 경우)
+      if (customersToInsert.length > 0) {
+        try {
+          logger.info(
+            `${customersToInsert.length}개의 고객 정보를 저장합니다.`
+          );
+          const { error: customerError } = await this.supabase
+            .from("customers")
+            .upsert(customersToInsert, {
+              onConflict: "customer_id",
+              ignoreDuplicates: true,
+            });
+
+          if (customerError) {
+            logger.error(`고객 정보 저장 중 오류: ${customerError.message}`);
+          } else {
+            logger.info(`${customersToInsert.length}개의 고객 정보 저장 완료`);
+          }
+        } catch (custError) {
+          logger.error(`고객 정보 저장 중 예외 발생: ${custError.message}`);
+          // 고객 정보 저장 실패는 크리티컬 오류가 아니므로 진행
+        }
       }
 
       // 게시물 댓글 수 업데이트

@@ -1,0 +1,4 @@
+
+v.1 - git "apply pickup date" 
+v.1.1
+- 크롤링 스크롤 없이 번호로만 이동하게 수정중

@@ -5,7 +5,8 @@ const {
   extractPriceFromContent,
   extractPriceOptions,
   generateSimpleId,
-  extractQuantityFromComment, // 이 줄 추가
+  extractQuantityFromComment,
+  hasClosingKeywords,
 } = require("./band.utils");
 const logger = require("../../config/logger");
 const cheerio = require("cheerio");
@@ -47,7 +48,12 @@ class BandPosts extends BandAuth {
     let lastPostsCount = 0;
     let scrollAttempts = 0;
 
-    while (loadedPostsCount < count && scrollAttempts < 20) {
+    // 더 많은 스크롤 시도 허용
+    const MAX_SCROLL_ATTEMPTS = 50;
+
+    // count 값을 매우 크게 설정하여 모든 게시물을 로드하려고 시도
+    // 스크롤을 계속해서 시도하다가 더 이상 새 게시물이 로드되지 않으면 종료
+    while (loadedPostsCount < count && scrollAttempts < MAX_SCROLL_ATTEMPTS) {
       loadedPostsCount = await this.page.evaluate(() => {
         return document.querySelectorAll(".cCard").length;
       });
@@ -55,9 +61,9 @@ class BandPosts extends BandAuth {
       if (loadedPostsCount >= count) break;
       if (loadedPostsCount === lastPostsCount) {
         scrollAttempts++;
-        if (scrollAttempts >= 5 && loadedPostsCount > 0) {
+        if (scrollAttempts >= 10 && loadedPostsCount > 0) {
           logger.warn(
-            `더 많은 게시물이 로드되지 않아 진행합니다 (${loadedPostsCount}개 로드됨).`
+            `더 이상 게시물이 로드되지 않는 것으로 판단됩니다 (${loadedPostsCount}개 로드됨).`
           );
           break;
         }
@@ -65,10 +71,14 @@ class BandPosts extends BandAuth {
         scrollAttempts = 0;
         lastPostsCount = loadedPostsCount;
       }
+
+      // 스크롤 다운
       await this.page.evaluate(() => {
         window.scrollTo(0, document.body.scrollHeight);
       });
-      await new Promise((r) => setTimeout(r, 2000));
+
+      // 조금 더 긴 대기 시간 설정
+      await new Promise((r) => setTimeout(r, 3000));
     }
 
     logger.info(`스크롤링 완료: ${loadedPostsCount}개 게시물 로드됨`);
@@ -283,10 +293,10 @@ class BandPosts extends BandAuth {
    * @param {number} maxPosts - 크롤링할 최대 게시물 수
    * @returns {Promise<Object>} - 크롤링 결과
    */
-  async crawlPostDetail(naverId, naverPassword, maxPosts = 5) {
+  async crawlPostDetail(naverId, naverPassword, maxPosts = 100) {
     try {
       this.crawlStartTime = Date.now();
-      logger.info("밴드 게시물 크롤링 시작");
+      logger.info(`밴드 게시물 크롤링 시작 (최대 ${maxPosts}개)`);
 
       // options.numPostsToLoad 갱신
       if (maxPosts) {
@@ -296,81 +306,64 @@ class BandPosts extends BandAuth {
       // 밴드 페이지 접속
       await this.accessBandPage(naverId, naverPassword);
 
-      // 게시물 로드를 위한 스크롤링
-      const totalLoadedPosts = await this.scrollToLoadPosts(
-        this.options.numPostsToLoad
-      );
-
-      if (totalLoadedPosts === 0) {
-        logger.warn("로드된 게시물이 없어 크롤링을 중단합니다.");
-        return { success: false, error: "로드된 게시물이 없습니다." };
-      }
-
-      // URL 수집 방식 개선 - 다양한 선택자 시도
-      let postUrls = await this.page.evaluate(() => {
-        // 모든 가능한 선택자를 시도
-        const cardLinks = Array.from(
-          document.querySelectorAll('.cCard a[href*="/post/"]')
-        )
-          .map((a) => a.href)
-          .filter((href) => href.includes("/post/"));
-
-        // 대체 선택자 (카드 내부의 모든 링크에서 post를 포함하는 것)
-        if (cardLinks.length === 0) {
-          const allLinks = Array.from(document.querySelectorAll(".cCard a"))
-            .map((a) => a.href)
-            .filter((href) => href.includes("/post/"));
-
-          if (allLinks.length > 0) {
-            return allLinks;
-          }
-        }
-
-        // 데이터 속성을 통한 선택
-        if (cardLinks.length === 0) {
-          return Array.from(document.querySelectorAll(".cCard[data-post-id]"))
-            .map((card) => {
-              const postId = card.getAttribute("data-post-id");
-              const bandId = window.location.pathname.split("/")[2];
-              if (postId && bandId) {
-                return `https://band.us/band/${bandId}/post/${postId}`;
-              }
-              return null;
-            })
-            .filter((url) => url !== null);
-        }
-
-        return cardLinks;
+      // 최신 게시물로 이동 (밴드 메인 페이지)
+      const bandMainUrl = `https://band.us/band/${this.bandId}`;
+      await this.page.goto(bandMainUrl, {
+        waitUntil: "networkidle2",
+        timeout: 60000,
       });
 
-      // 중복 URL 제거 및 유효한 URL만 필터링
-      postUrls = postUrls.filter(
-        (url) => url && typeof url === "string" && url.includes("/post/")
-      );
+      // 최신 게시물의 ID 가져오기
+      const latestPostId = await this.getLatestPostId();
 
-      logger.info(`크롤링할 총 게시물 URL 수: ${postUrls.length}`);
+      if (!latestPostId) {
+        logger.warn("최신 게시물 ID를 찾을 수 없어 크롤링을 중단합니다.");
+        return { success: false, error: "최신 게시물 ID를 찾을 수 없습니다." };
+      }
+
+      logger.info(`최신 게시물 ID: ${latestPostId}`);
 
       const results = [];
+      let currentPostId = parseInt(latestPostId, 10);
+      const endPostId = Math.max(1, currentPostId - maxPosts + 1);
 
-      // 각 URL에 대해 크롤링 시도
-      for (
-        let i = 0;
-        i < Math.min(postUrls.length, this.options.numPostsToLoad);
-        i++
-      ) {
-        const postUrl = postUrls[i];
+      // 크롤링 시작 시간 기록
+      const startTime = Date.now();
+      // 최대 실행 시간 (30분)
+      const MAX_EXECUTION_TIME = 30 * 60 * 1000;
 
-        // 각 URL 사이에 지연 시간 추가 (2-5초 랜덤)
-        if (i > 0) {
-          const delay = 2000 + Math.floor(Math.random() * 3000);
-          await new Promise((resolve) => setTimeout(resolve, delay));
+      // 게시물 ID를 순차적으로 감소시키며 크롤링
+      for (let i = 0; i < maxPosts && currentPostId >= endPostId; i++) {
+        // 실행 시간 체크 - 30분 이상 실행 시 종료
+        const currentTime = Date.now();
+        if (currentTime - startTime > MAX_EXECUTION_TIME) {
+          logger.warn(
+            `최대 실행 시간(30분)이 경과하여 크롤링을 중단합니다. 현재 ${results.length}개 수집됨.`
+          );
+          break;
         }
 
+        // 현재 진행률 업데이트
+        if (this.onStatusUpdate) {
+          const progress = Math.min(90, Math.floor((i / maxPosts) * 100));
+          this.onStatusUpdate(
+            "processing",
+            `게시물 크롤링 진행 중 (${i + 1}/${maxPosts})`,
+            progress
+          );
+        }
+
+        const postUrl = `https://band.us/band/${this.bandId}/post/${currentPostId}`;
+
         try {
-          // 재시도 로직 추가
+          logger.info(
+            `게시물 크롤링 시도 (${i + 1}/${maxPosts}): ID ${currentPostId}`
+          );
+
+          // 재시도 로직 수정 - 최대 1번만 재시도
           let success = false;
           let attemptCount = 0;
-          const maxAttempts = 3;
+          const maxAttempts = 2; // 3에서 2로 변경 (초기 시도 + 1번 재시도)
 
           while (!success && attemptCount < maxAttempts) {
             attemptCount++;
@@ -382,14 +375,30 @@ class BandPosts extends BandAuth {
             }
 
             try {
-              // 타임아웃 증가 (이미 60초로 설정되어 있음)
+              // 타임아웃 감소 (60초에서 30초로)
               await this.page.goto(postUrl, {
-                waitUntil: "networkidle2",
-                timeout: 60000,
+                waitUntil: "domcontentloaded", // networkidle2 대신 더 빠른 domcontentloaded 사용
+                timeout: 30000, // 타임아웃 시간 절반으로 감소
               });
 
-              // 추가 대기 시간으로 페이지 안정화
-              await new Promise((resolve) => setTimeout(resolve, 1500));
+              // 불필요한 대기 시간 감소 (1.5초에서 0.5초로)
+              await new Promise((resolve) => setTimeout(resolve, 500));
+
+              // 빠른 404 확인 - URL 확인 전에 먼저 수행
+              const is404 = await this.page.evaluate(() => {
+                return (
+                  document.body.textContent.includes("찾을 수 없는 페이지") ||
+                  document.body.textContent.includes("삭제된 게시글") ||
+                  document.body.textContent.includes("존재하지 않는 게시글")
+                );
+              });
+
+              if (is404) {
+                logger.warn(
+                  `존재하지 않는 게시물 ID: ${currentPostId}, 다음 게시물로 즉시 넘어갑니다.`
+                );
+                throw new Error("존재하지 않는 게시물");
+              }
 
               // URL 유효성 확인
               const currentUrl = await this.page.url();
@@ -403,13 +412,15 @@ class BandPosts extends BandAuth {
               success = true;
             } catch (navError) {
               if (attemptCount >= maxAttempts) {
+                logger.warn(
+                  `최대 재시도 횟수 도달, 다음 게시물로 넘어갑니다: ${currentPostId}`
+                );
                 throw navError;
               }
 
-              // 실패 시 대기 시간을 점점 늘림 (지수 백오프)
-              const waitTime = 3000 * Math.pow(2, attemptCount - 1);
-              logger.warn(`URL 접근 실패, ${waitTime}ms 후 재시도...`);
-              await new Promise((resolve) => setTimeout(resolve, waitTime));
+              // 실패 시 대기 시간도 줄임 (짧게 1초만 대기)
+              logger.warn(`URL 접근 실패, 1000ms 후 한 번만 재시도...`);
+              await new Promise((resolve) => setTimeout(resolve, 1000));
             }
           }
 
@@ -439,18 +450,85 @@ class BandPosts extends BandAuth {
           logger.error(
             `게시물 URL 처리 중 오류 발생: ${e.message}, URL: ${postUrl}`
           );
-          // 오류로 인한 지연 추가
-          await new Promise((resolve) => setTimeout(resolve, 5000));
+          // 오류로 인한 지연도 최소화 (2초에서 0.5초로)
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
+
+        // 다음 게시물 ID로 이동
+        currentPostId--;
+
+        // 게시물 간 지연 시간도 감소 (2-4초에서 0.5-1초로)
+        const delay = 500 + Math.floor(Math.random() * 500);
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
 
       logger.info(`총 ${results.length}개 게시물 크롤링 완료`);
+      // 마지막 상태 업데이트
+      if (this.onStatusUpdate) {
+        this.onStatusUpdate(
+          "processing",
+          `게시물 크롤링 완료: ${results.length}개 수집됨`,
+          95
+        );
+      }
+
       return { success: true, data: results };
     } catch (e) {
       logger.error(`게시물 상세 정보 크롤링 중 오류 발생: ${e.message}`);
       return { success: false, error: e.message };
     }
   }
+
+  /**
+   * 최신 게시물 ID 가져오기
+   * @returns {Promise<string|null>} - 최신 게시물 ID 또는 null
+   */
+  async getLatestPostId() {
+    try {
+      // 다양한 선택자로 최신 게시물 가져오기 시도
+      const latestPostId = await this.page.evaluate(() => {
+        // 우선 카드 형태의 게시물에서 href 속성 찾기
+        const cardLinks = Array.from(
+          document.querySelectorAll('.cCard a[href*="/post/"]')
+        );
+        if (cardLinks.length > 0) {
+          const href = cardLinks[0].href;
+          const match = href.match(/\/post\/(\d+)/);
+          if (match && match[1]) {
+            return match[1];
+          }
+        }
+
+        // 대체 선택자: data-post-id 속성이 있는 요소
+        const cardElements = Array.from(
+          document.querySelectorAll(".cCard[data-post-id]")
+        );
+        if (cardElements.length > 0) {
+          return cardElements[0].getAttribute("data-post-id");
+        }
+
+        // 기타 가능한 선택자들 시도
+        const postLinks = Array.from(
+          document.querySelectorAll('a[href*="/post/"]')
+        );
+        if (postLinks.length > 0) {
+          const href = postLinks[0].href;
+          const match = href.match(/\/post\/(\d+)/);
+          if (match && match[1]) {
+            return match[1];
+          }
+        }
+
+        return null;
+      });
+
+      return latestPostId;
+    } catch (error) {
+      logger.error(`최신 게시물 ID 가져오기 오류: ${error.message}`);
+      return null;
+    }
+  }
+
   /**
    * 게시물 상세 정보 Supabase 저장
    * @param {Array} detailedPosts - 저장할 게시물 목록
@@ -670,7 +748,25 @@ class BandPosts extends BandAuth {
 
         // 항상 모든 댓글(주문) 정보 저장 (중복검사 없음)
         if (comments && comments.length > 0) {
+          // 댓글에 마감/종료 키워드가 있는지 확인
+          let isClosedProduct = false;
+
           for (let index = 0; index < comments.length; index++) {
+            // 마감 키워드 확인
+            if (hasClosingKeywords(comments[index].content)) {
+              isClosedProduct = true;
+              logger.info(
+                `게시물 ID ${post.postId}에서 마감 키워드가 발견되었습니다: "${comments[index].content}"`
+              );
+
+              // 상품 정보와 게시글 정보의 상태 업데이트
+              productData.status = "마감";
+              postDataToInsert.status = "마감";
+
+              // 이미 상태를 업데이트했으므로 더 확인할 필요 없음
+              break;
+            }
+
             // 주문 ID: bandId_postId_commentIndex
             const orderId = `${this.bandId}_${post.postId}_${index}`;
             // 고객 ID: bandId_customer_{authorName}
@@ -913,246 +1009,61 @@ class BandPosts extends BandAuth {
         }
       }
 
-      // 4. 고객(customers) 테이블 저장
-      // 임의로 저장 막아둠
-      // if (customersToInsert.length > 0) {
-      //   try {
-      //     // 고객 정보 중복 제거
-      //     const uniqueCustomers = [];
-      //     const seenCustomerIds = new Set();
+      // 4. 고객(customers) 테이블 저장 - 항상 upsert
+      if (customersToInsert.length > 0) {
+        try {
+          // 중복된 고객 ID 제거
+          const uniqueCustomers = [];
+          const seenCustomerIds = new Set();
 
-      //     for (const customer of customersToInsert) {
-      //       if (!seenCustomerIds.has(customer.customer_id)) {
-      //         seenCustomerIds.add(customer.customer_id);
-      //         uniqueCustomers.push(customer);
-      //       }
-      //     }
-
-      //     logger.info(`고유 고객 정보 저장 (${uniqueCustomers.length}개)`);
-
-      //     const batchSize = 50;
-      //     let successCount = 0;
-
-      //     for (let i = 0; i < uniqueCustomers.length; i += batchSize) {
-      //       const batch = uniqueCustomers.slice(i, i + batchSize);
-      //       const { data, error } = await supabase
-      //         .from("customers")
-      //         .upsert(batch, {
-      //           onConflict: "customer_id",
-      //           ignoreDuplicates: true,
-      //         });
-      //       if (error) {
-      //         logger.error(`고객 저장 오류: ${error.message}`);
-      //       } else {
-      //         successCount += batch.length;
-      //       }
-      //     }
-
-      //     logger.info(`고객 정보 저장 완료 (${successCount}명)`);
-      //   } catch (customersError) {
-      //     logger.error(`고객 저장 오류: ${customersError.message}`);
-      //     this.updateTaskStatus(
-      //       "failed",
-      //       `고객 저장 실패: ${customersError.message}`,
-      //       93
-      //     );
-      //     throw customersError;
-      //   }
-      // }
-
-      logger.info(
-        `저장 완료: ${productsToInsert.length}개 제품, ${postsToInsert.length}개 게시글, ${ordersToInsert.length}개 주문, ${customersToInsert.length}개 고객`
-      );
-      this.updateTaskStatus(
-        "processing",
-        `${detailedPosts.length}개 상품, ${newOrdersCount}개 주문 저장 완료`,
-        95
-      );
-    } catch (error) {
-      this.updateTaskStatus("failed", `저장 중 오류: ${error.message}`, 93);
-      logger.error(`저장 오류: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * 밴드 멤버 목록 크롤링
-   * @param {string} naverId - 네이버 ID
-   * @param {string} naverPassword - 네이버 비밀번호
-   * @returns {Promise<Array>} - 멤버 정보 배열
-   */
-  async crawlMembersList(naverId, naverPassword) {
-    try {
-      logger.info(`밴드 ${this.bandId} 멤버 목록 크롤링 시작`);
-
-      // 브라우저 초기화 및 로그인
-      if (!this.browser) {
-        await this.initialize(naverId, naverPassword);
-      }
-
-      // 멤버 페이지로 이동
-      const memberPageUrl = `https://band.us/band/${this.bandId}/member`;
-      await this.page.goto(memberPageUrl, {
-        waitUntil: "networkidle2",
-        timeout: 30000,
-      });
-
-      // 페이지가 로드될 때까지 대기
-      await this.page.waitForSelector(".cMemberList", { timeout: 10000 });
-
-      // 모든 멤버가 로드될 때까지 스크롤
-      await this._scrollToLoadAllMembers();
-
-      // 멤버 데이터 추출
-      const members = await this.page.evaluate(() => {
-        const memberItems = document.querySelectorAll("li.uFlexItem");
-        const extractedMembers = [];
-
-        memberItems.forEach((member, index) => {
-          try {
-            // 이름 추출
-            const nameElement = member.querySelector(".body .text .ellipsis");
-            const name = nameElement
-              ? nameElement.textContent.trim()
-              : `익명_${index}`;
-
-            // 역할 추출 (리더, 공동리더 등)
-            const roleElement = member.querySelector(".body .text em.leader");
-            const role = roleElement ? roleElement.textContent.trim() : "";
-
-            // 프로필 이미지 URL 추출
-            const imgElement = member.querySelector(".uProfile img");
-            const profileImageUrl = imgElement ? imgElement.src : "";
-
-            // 닉네임 또는 메모 추출 (있는 경우)
-            const subTextElement = member.querySelector(".body .subText");
-            const nickname = subTextElement
-              ? subTextElement.textContent.trim()
-              : "";
-
-            // 밴드 사용자 ID는 프로필 클릭 시 URL에서 추출할 수 있으나
-            // 이 예시에서는 고유한 식별자로 이름 사용
-            const bandUserId = `member_${name.replace(/\s+/g, "_")}`;
-
-            extractedMembers.push({
-              bandUserId,
-              name,
-              role,
-              profileImageUrl,
-              nickname,
-              isActive: true,
-              lastActivityDate: new Date().toISOString(),
-            });
-          } catch (error) {
-            console.error(`멤버 ${index} 추출 중 오류:`, error.message);
+          for (const customer of customersToInsert) {
+            if (!seenCustomerIds.has(customer.customer_id)) {
+              seenCustomerIds.add(customer.customer_id);
+              uniqueCustomers.push(customer);
+            }
           }
-        });
 
-        return extractedMembers;
-      });
+          logger.info(
+            `중복 제거 후 고객 수: ${uniqueCustomers.length}/${customersToInsert.length}`
+          );
 
-      logger.info(`총 ${members.length}명의 멤버 추출 완료`);
-
-      // 저장 로직
-      await this._saveMembers(members);
-
-      return members;
-    } catch (error) {
-      logger.error(`멤버 목록 크롤링 중 오류: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * 모든 멤버가 로드될 때까지 스크롤
-   * @private
-   */
-  async _scrollToLoadAllMembers() {
-    try {
-      let previousMemberCount = 0;
-      let currentMemberCount = 0;
-      let scrollAttempts = 0;
-      const MAX_SCROLL_ATTEMPTS = 50;
-
-      do {
-        previousMemberCount = currentMemberCount;
-
-        // 페이지 아래로 스크롤
-        await this.page.evaluate(() => {
-          window.scrollTo(0, document.body.scrollHeight);
-        });
-
-        // 새 멤버가 로드될 때까지 대기
-        await this.page.waitForTimeout(2000);
-
-        // 현재 멤버 수 계산
-        currentMemberCount = await this.page.evaluate(() => {
-          return document.querySelectorAll("li.uFlexItem").length;
-        });
-
-        scrollAttempts++;
-
-        // 더 이상 새 멤버가 로드되지 않거나 최대 시도 횟수에 도달하면 종료
-      } while (
-        currentMemberCount > previousMemberCount &&
-        scrollAttempts < MAX_SCROLL_ATTEMPTS
-      );
-
-      logger.info(`멤버 ${currentMemberCount}명 로드 완료`);
-    } catch (error) {
-      logger.error(`멤버 스크롤링 중 오류: ${error.message}`);
-    }
-  }
-
-  /**
-   * 수집된 멤버 정보 저장
-   * @param {Array} members - 멤버 정보 배열
-   * @private
-   */
-  async _saveMembers(members) {
-    try {
-      // 모든 멤버 정보 저장 (중복 제거 없음)
-      const uniqueMembers = members;
-      const supabase = require("../../config/supabase").supabase;
-
-      // Supabase에 고객 정보 저장 (유저 ID와 관계 설정)
-      const userId = await this.getOrCreateUserIdForBand();
-
-      const customersToInsert = uniqueMembers.map((member) => ({
-        customer_id: `${this.bandId}_${member.bandUserId}`,
-        user_id: userId,
-        band_id: this.bandId,
-        name: member.name,
-        band_user_id: member.bandUserId,
-        profile_image: member.profileImageUrl,
-        tags: member.role ? [member.role] : [],
-        notes: member.nickname || "",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }));
-
-      // 작은 배치로 나누어 처리
-      const batchSize = 50;
-      let successCount = 0;
-
-      for (let i = 0; i < customersToInsert.length; i += batchSize) {
-        const batch = customersToInsert.slice(i, i + batchSize);
-
-        const { data, error } = await supabase.from("customers").upsert(batch, {
-          onConflict: "customer_id",
-          ignoreDuplicates: true,
-        });
-
-        if (error) {
-          logger.error(`멤버 저장 중 오류: ${error.message}`);
-        } else {
-          successCount += batch.length;
+          const batchSize = 50;
+          for (let i = 0; i < uniqueCustomers.length; i += batchSize) {
+            const batch = uniqueCustomers.slice(i, i + batchSize);
+            const { error: customersError } = await supabase
+              .from("customers")
+              .upsert(batch, {
+                onConflict: "customer_id", // 고객 ID 기준으로 중복 처리
+                returning: "minimal",
+              });
+            if (customersError) {
+              logger.error(`고객 저장 오류: ${customersError.message}`);
+              throw new Error(`고객 저장 실패: ${customersError.message}`);
+            }
+          }
+          logger.info(`고객 ${uniqueCustomers.length}개 저장 완료`);
+        } catch (customersError) {
+          logger.error(`고객 저장 오류: ${customersError.message}`);
+          this.updateTaskStatus(
+            "failed",
+            `고객 저장 실패: ${customersError.message}`,
+            93
+          );
+          throw customersError;
         }
       }
 
-      logger.info(`멤버 정보 저장 완료 (${successCount}명)`);
+      this.updateTaskStatus(
+        "processing",
+        `${detailedPosts.length}개의 상품 및 주문 정보가 DB에 저장되었습니다.`,
+        95
+      );
     } catch (error) {
-      logger.error(`멤버 정보 저장 중 오류: ${error.message}`);
+      this.updateTaskStatus(
+        "failed",
+        `상품 및 주문 정보 DB 저장 중 오류 발생: ${error.message}`,
+        93
+      );
       throw error;
     }
   }

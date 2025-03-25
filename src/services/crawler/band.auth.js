@@ -802,48 +802,25 @@ class BandAuth {
 
   async close() {
     try {
-      if (this.browser && this.browser.isConnected()) {
-        this.updateTaskStatus("processing", "브라우저 종료 중", 95);
+      if (this.browser) {
+        this.updateTaskStatus("processing", "브라우저 리소스 정리 중...", 95);
 
-        // 열려 있는 모든 페이지 먼저 닫기
-        try {
-          const pages = await this.browser.pages();
-          for (const page of pages) {
-            if (page && !page.isClosed()) {
-              await page.close().catch(() => {});
-            }
-          }
-        } catch (pageError) {
-          console.log("페이지 닫기 오류 (무시됨):", pageError.message);
-        }
-
-        // 짧은 딜레이 추가
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        // 브라우저 종료
-        await this.browser.close().catch((err) => {
-          console.log("브라우저 종료 오류 (무시됨):", err.message);
-        });
-
+        await this.browser.close();
+        logger.info("브라우저가 성공적으로 종료되었습니다");
+        // 브라우저 및 페이지 참조 제거
         this.browser = null;
         this.page = null;
-        this.updateTaskStatus("completed", "브라우저 종료 완료", 100);
-      } else if (this.browser) {
-        // 이미 연결이 끊어졌지만 객체는 존재하는 경우
-        this.browser = null;
-        this.page = null;
-        this.updateTaskStatus("completed", "브라우저 이미 종료됨", 100);
+
+        this.updateTaskStatus("processing", "브라우저 리소스 정리 완료", 95);
+      } else {
+        logger.info("브라우저 인스턴스가 없어 정리가 필요하지 않습니다");
       }
     } catch (error) {
-      console.error("브라우저 종료 중 오류 발생:", error);
-      // 오류가 발생해도 브라우저 참조 정리
+      logger.error(`브라우저 상태 확인 중 오류: ${error.message}`);
+
+      // 오류가 발생해도 참조는 정리
       this.browser = null;
       this.page = null;
-      this.updateTaskStatus(
-        "completed",
-        `브라우저 강제 종료: ${error.message}`,
-        100
-      );
     }
   }
 
@@ -1236,28 +1213,6 @@ class BandAuth {
       return newUser.id;
     } catch (error) {
       logger.error("사용자 생성/조회 오류:", error);
-      throw error;
-    }
-  }
-
-  /**
-   * 브라우저 자원 해제
-   */
-  async close() {
-    try {
-      if (this.browser) {
-        this.updateTaskStatus(
-          "processing",
-          "브라우저가 열린 상태로 유지됩니다. 수동으로 닫아주세요.",
-          95
-        );
-      }
-    } catch (error) {
-      this.updateTaskStatus(
-        "failed",
-        `브라우저 상태 확인 중 오류: ${error.message}`,
-        95
-      );
       throw error;
     }
   }
