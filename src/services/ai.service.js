@@ -13,7 +13,7 @@ const openai = new OpenAI({
  * 텍스트에서 상품 정보를 추출하는 함수
  * @param {string} content - 크롤링한 게시물 내용
  * @param {string|Date} postTime - 게시물 작성 시간 (선택적)
- * @returns {Promise<Object>} - 추출된 상품 정보
+ * @returns {Promise<Object|Array>} - 추출된 상품 정보 또는 상품 정보 배열
  */
 async function extractProductInfo(content, postTime = null) {
   try {
@@ -38,21 +38,23 @@ async function extractProductInfo(content, postTime = null) {
     logger.info("ChatGPT API 호출 시작");
 
     const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
           content:
-            "당신은 게시물 텍스트에서 상품 정보를 정확하게 추출하는 도우미입니다. 반드시 JSON 형식으로만 응답해야 합니다. 정보가 부족해도 최대한 추측하여 JSON 형식으로 응답하세요.",
+            "당신은 게시물 텍스트에서 상품 정보를 정확하게 추출하는 도우미입니다. 반드시 JSON 형식으로만 응답해야 합니다. 정보가 부족해도 최대한 추측하여 JSON 형식으로 응답하세요. 여러 상품이 있을 경우 모든 상품을 찾아내서 배열로 반환해야 합니다.",
         },
         {
           role: "user",
-          content: `다음 텍스트에서 상품 정보를 추출해주세요:
+          content: `다음 텍스트에서 모든 상품 정보를 추출해주세요. 여러 상품이 있는 경우 모든 상품을 추출해주세요:
                   
 텍스트: ${content}
 게시물 작성 시간: ${postTime}
 게시물 작성 시간과 픽업 정보를 비교해서 픽업 데이트 정보를 넣어주세요
-다음 정보를 추출하여 JSON 형식으로만 응답해주세요. 다른 텍스트는 포함하지 마세요:
+다음 형식으로 JSON 응답을 제공해주세요. 다른 텍스트는 포함하지 마세요:
+
+상품이 하나인 경우:
 {
   "title": "상품명",
   "basePrice": 숫자(가장 낮은 가격, 원단위),
@@ -67,8 +69,45 @@ async function extractProductInfo(content, postTime = null) {
   "features": ["특징1", "특징2", "특징3"],
   "pickupInfo": "픽업 정보 (예: 내일화요일수령, 오늘월요일오후2시도착)",
   "pickupDate": "픽업 날짜 (예: 2025-03-25)",
-  "pickupType": "픽업 유형 (예: 도착, 수령, 픽업, 전달)"
+  "pickupType": "픽업 유형 (예: 도착, 수령, 픽업, 전달)",
+  "multipleProducts": false
 }
+
+여러 상품이 있는 경우(여러 번호로 구분된 상품들, 또는 여러 상품이 나열된 경우):
+{
+  "multipleProducts": true,
+  "products": [
+    {
+      "title": "상품1명",
+      "basePrice": 숫자,
+      "priceOptions": [{"quantity": 수량, "price": 가격, "description": "설명"}],
+      "quantityText": "용량 정보",
+      "quantity": 수량,
+      "category": "카테고리",
+      "status": "판매중",
+      "tags": ["태그1"],
+      "features": ["특징1"],
+      "pickupInfo": "픽업 정보",
+      "pickupDate": "픽업 날짜",
+      "pickupType": "픽업 유형"
+    },
+    {
+      "title": "상품2명",
+      "basePrice": 숫자,
+      // ... 다른 상품2 정보
+    },
+    // ... 더 많은 상품들
+  ],
+  "commonPickupInfo": "모든 상품에 공통적인 픽업 정보",
+  "commonPickupDate": "모든 상품에 공통적인 픽업 날짜",
+  "commonPickupType": "모든 상품에 공통적인 픽업 유형"
+}
+
+상품이 여러 개인지 확인하려면 다음을 살펴보세요:
+1. 번호로 구분된 항목들 (1️⃣, 2️⃣, 1), 2), 1., 2. 등)
+2. 여러 가격이 다른 항목들이 나열된 경우
+3. 여러 제품명이 명확하게 구분되는 경우
+4. 게시물 내용에 "불발분"이라는 단어가 있으면 해당 게시물은 여러 상품을 포함할 가능성이 높습니다.
 
 여러 가격 옵션이 있는 경우 모두 추출하세요(예: 1팩 2900원, 2팩 5000원).
 상품 정보가 부족하더라도 반드시 위 형식의 JSON으로만 응답하세요.
@@ -98,122 +137,40 @@ quantity는 반드시 숫자로만 설정하세요. 용량 정보는 quantityTex
       }
 
       // JSON 문자열을 객체로 변환
-      let productInfo = JSON.parse(contentText);
+      let result = JSON.parse(contentText);
 
-      // 디버깅 로그 추가
-      logger.info(`추출된 타이틀: "${productInfo.title}"`);
-      logger.info(`추출된 가격: ${productInfo.basePrice}`);
-      logger.info(
-        `추출된 가격 옵션: ${JSON.stringify(productInfo.priceOptions)}`
-      );
-
-      // 필수 필드 검증 및 기본값 설정
-      productInfo.title = productInfo.title || "제목 없음";
-      productInfo.basePrice =
-        typeof productInfo.basePrice === "number" ? productInfo.basePrice : 0;
-      productInfo.priceOptions = Array.isArray(productInfo.priceOptions)
-        ? productInfo.priceOptions
-        : [];
-
-      // 가격 옵션 데이터 타입 확인 및 변환
-      productInfo.priceOptions = productInfo.priceOptions.map((option) => ({
-        quantity: typeof option.quantity === "number" ? option.quantity : 1,
-        price: typeof option.price === "number" ? option.price : 0,
-        description: option.description || "기본",
-      }));
-
-      // 가격 옵션이 없는 경우 기본 가격으로 옵션 생성
-      if (productInfo.priceOptions.length === 0 && productInfo.basePrice > 0) {
-        productInfo.priceOptions = [
-          { quantity: 1, price: productInfo.basePrice, description: "기본가" },
-        ];
-      }
-
-      // 수량 정보 처리
-      productInfo.quantityText = productInfo.quantityText || null;
-      productInfo.quantity =
-        typeof productInfo.quantity === "number" ? productInfo.quantity : 1;
-
-      productInfo.category = productInfo.category || "기타";
-      productInfo.status = productInfo.status || "판매중";
-      productInfo.tags = Array.isArray(productInfo.tags)
-        ? productInfo.tags
-        : [];
-      productInfo.features = Array.isArray(productInfo.features)
-        ? productInfo.features
-        : [];
-
-      // 픽업 정보 처리 - pickupDate가 이미 유효한 ISO 문자열인 경우 변환 생략
+      // 여러 상품이 있는지 확인
       if (
-        productInfo.pickupDate &&
-        typeof productInfo.pickupDate === "string" &&
-        productInfo.pickupDate.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+        result.multipleProducts &&
+        Array.isArray(result.products) &&
+        result.products.length > 0
       ) {
-        logger.info(`유효한 ISO 날짜 문자열 확인됨: ${productInfo.pickupDate}`);
-      } else if (
-        productInfo.pickupDate &&
-        typeof productInfo.pickupDate === "string" &&
-        productInfo.pickupDate.trim() !== ""
-      ) {
-        try {
-          // YYYY-MM-DD 형식인 경우 시간 추가
-          if (productInfo.pickupDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
-            productInfo.pickupDate = `${productInfo.pickupDate}T12:00:00.000Z`;
-          } else {
-            // 다른 형식이면 pickupInfo를 사용하여 추출
-            const pickupDateInfo = extractPickupDate(
-              productInfo.pickupInfo || productInfo.pickupDate,
-              postTime
-            );
-            productInfo.pickupDate = pickupDateInfo.date;
-            productInfo.pickupType =
-              pickupDateInfo.type || productInfo.pickupType;
-          }
-        } catch (error) {
-          logger.error(`pickupDate 변환 오류: ${error.message}`);
-          // 오류 발생 시 내일 날짜로 설정
-          const tomorrow = new Date();
-          tomorrow.setDate(tomorrow.getDate() + 1);
-          tomorrow.setHours(12, 0, 0, 0);
-          productInfo.pickupDate = tomorrow.toISOString();
-        }
-      } else if (productInfo.pickupInfo) {
-        try {
-          const pickupDateInfo = extractPickupDate(
-            productInfo.pickupInfo,
+        logger.info(
+          `여러 상품 감지: ${result.products.length}개의 상품이 추출되었습니다.`
+        );
+
+        // 각 상품에 공통 픽업 정보 적용
+        const processedProducts = result.products.map((product) => {
+          return processProduct(
+            {
+              ...product,
+              pickupInfo: product.pickupInfo || result.commonPickupInfo || null,
+              pickupDate: product.pickupDate || result.commonPickupDate || null,
+              pickupType: product.pickupType || result.commonPickupType || null,
+            },
             postTime
           );
-          productInfo.pickupDate = pickupDateInfo.date;
-          productInfo.pickupType = pickupDateInfo.type;
-        } catch (error) {
-          logger.error(`pickupInfo 처리 오류: ${error.message}`);
-          productInfo.pickupDate = null;
-          productInfo.pickupType = null;
-        }
-      } else {
-        // 본문에서 픽업 정보 추출 시도
-        try {
-          const pickupDateInfo = extractPickupDate(content, postTime);
-          if (pickupDateInfo.date) {
-            productInfo.pickupDate = pickupDateInfo.date;
-            productInfo.pickupType = pickupDateInfo.type;
-            productInfo.pickupInfo = pickupDateInfo.original || null;
-          } else {
-            productInfo.pickupDate = null;
-            productInfo.pickupType = null;
-          }
-        } catch (error) {
-          logger.error(`본문에서 픽업 정보 추출 오류: ${error.message}`);
-          productInfo.pickupDate = null;
-          productInfo.pickupType = null;
-        }
+        });
+
+        // 여러 상품 정보 반환
+        return {
+          multipleProducts: true,
+          products: processedProducts,
+        };
       }
 
-      // logger.info(`가공 완료된 제품명: "${productInfo.title}"`);
-      // logger.info("가공 완료된 데이터:", JSON.stringify(productInfo, null, 2));
-
-      // 처리된 객체 반환
-      return productInfo;
+      // 단일 상품인 경우
+      return processProduct(result, postTime);
     } catch (parseError) {
       logger.error("JSON 파싱 오류:", parseError);
       // 기본값 설정
@@ -230,6 +187,7 @@ quantity는 반드시 숫자로만 설정하세요. 용량 정보는 quantityTex
         pickupInfo: null,
         pickupDate: null,
         pickupType: null,
+        multipleProducts: false,
       };
 
       logger.info(
@@ -254,8 +212,101 @@ quantity는 반드시 숫자로만 설정하세요. 용량 정보는 quantityTex
       pickupInfo: null,
       pickupDate: null,
       pickupType: null,
+      multipleProducts: false,
     };
   }
+}
+
+/**
+ * 단일 상품 정보를 처리하는 내부 함수
+ * @param {Object} productInfo - 처리할 상품 정보
+ * @param {string|Date} postTime - 게시물 작성 시간
+ * @returns {Object} - 처리된 상품 정보
+ */
+function processProduct(productInfo, postTime) {
+  // 필수 필드 검증 및 기본값 설정
+  productInfo.title = productInfo.title || "제목 없음";
+  productInfo.basePrice =
+    typeof productInfo.basePrice === "number" ? productInfo.basePrice : 0;
+  productInfo.priceOptions = Array.isArray(productInfo.priceOptions)
+    ? productInfo.priceOptions
+    : [];
+
+  // 가격 옵션 데이터 타입 확인 및 변환
+  productInfo.priceOptions = productInfo.priceOptions.map((option) => ({
+    quantity: typeof option.quantity === "number" ? option.quantity : 1,
+    price: typeof option.price === "number" ? option.price : 0,
+    description: option.description || "기본",
+  }));
+
+  // 가격 옵션이 없는 경우 기본 가격으로 옵션 생성
+  if (productInfo.priceOptions.length === 0 && productInfo.basePrice > 0) {
+    productInfo.priceOptions = [
+      { quantity: 1, price: productInfo.basePrice, description: "기본가" },
+    ];
+  }
+
+  // 수량 정보 처리
+  productInfo.quantityText = productInfo.quantityText || null;
+  productInfo.quantity =
+    typeof productInfo.quantity === "number" ? productInfo.quantity : 1;
+
+  productInfo.category = productInfo.category || "기타";
+  productInfo.status = productInfo.status || "판매중";
+  productInfo.tags = Array.isArray(productInfo.tags) ? productInfo.tags : [];
+  productInfo.features = Array.isArray(productInfo.features)
+    ? productInfo.features
+    : [];
+
+  // 픽업 정보 처리 - pickupDate가 이미 유효한 ISO 문자열인 경우 변환 생략
+  if (
+    productInfo.pickupDate &&
+    typeof productInfo.pickupDate === "string" &&
+    productInfo.pickupDate.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+  ) {
+    logger.info(`유효한 ISO 날짜 문자열 확인됨: ${productInfo.pickupDate}`);
+  } else if (
+    productInfo.pickupDate &&
+    typeof productInfo.pickupDate === "string" &&
+    productInfo.pickupDate.trim() !== ""
+  ) {
+    try {
+      // YYYY-MM-DD 형식인 경우 시간 추가
+      if (productInfo.pickupDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        productInfo.pickupDate = `${productInfo.pickupDate}T12:00:00.000Z`;
+      } else {
+        // 다른 형식이면 pickupInfo를 사용하여 추출
+        const pickupDateInfo = extractPickupDate(
+          productInfo.pickupInfo || productInfo.pickupDate,
+          postTime
+        );
+        productInfo.pickupDate = pickupDateInfo.date;
+        productInfo.pickupType = pickupDateInfo.type || productInfo.pickupType;
+      }
+    } catch (error) {
+      logger.error(`pickupDate 변환 오류: ${error.message}`);
+      // 오류 발생 시 내일 날짜로 설정
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(12, 0, 0, 0);
+      productInfo.pickupDate = tomorrow.toISOString();
+    }
+  } else if (productInfo.pickupInfo) {
+    try {
+      const pickupDateInfo = extractPickupDate(
+        productInfo.pickupInfo,
+        postTime
+      );
+      productInfo.pickupDate = pickupDateInfo.date;
+      productInfo.pickupType = pickupDateInfo.type;
+    } catch (error) {
+      logger.error(`pickupInfo 처리 오류: ${error.message}`);
+      productInfo.pickupDate = null;
+      productInfo.pickupType = null;
+    }
+  }
+
+  return productInfo;
 }
 
 /**

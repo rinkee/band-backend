@@ -566,6 +566,9 @@ class BandPosts extends BandAuth {
       logger.info(`${detailedPosts.length}개 게시물 처리 시작`);
 
       for (const post of detailedPosts) {
+        // postDataToInsert 변수 초기화
+        let postDataToInsert = null;
+
         // 새 ID 생성: 기존 추출된 post.postId를 사용
         // 제품 ID: bandId_product_postId
         const productId = `${this.bandId}_product_${post.postId}`;
@@ -640,7 +643,7 @@ class BandPosts extends BandAuth {
           post.postContent.trim() !== ""
         ) {
           try {
-            const productInfo = await extractProductInfo(
+            const productInfoResult = await extractProductInfo(
               post.postContent,
               post.postTime
             );
@@ -651,6 +654,132 @@ class BandPosts extends BandAuth {
                 post.postTitle
               }", 내용=${post.postContent.substring(0, 30)}...`
             );
+
+            // 여러 상품이 감지된 경우
+            if (
+              productInfoResult.multipleProducts &&
+              Array.isArray(productInfoResult.products) &&
+              productInfoResult.products.length > 0
+            ) {
+              logger.info(
+                `게시물 ID ${post.postId} - 여러 상품 감지: ${productInfoResult.products.length}개`
+              );
+
+              // 각 상품별로 상품 ID 생성 및 처리
+              const productIds = [];
+
+              for (let i = 0; i < productInfoResult.products.length; i++) {
+                const productInfo = productInfoResult.products[i];
+                // 각 상품별 고유 ID 생성
+                const individualProductId = `${this.bandId}_${
+                  post.postId
+                }_product_${i + 1}`;
+                productIds.push(individualProductId);
+
+                logger.info(
+                  `게시물 ID ${post.postId} - 상품 ${i + 1} 결과: 제목="${
+                    productInfo.title
+                  }", 가격=${productInfo.basePrice}`
+                );
+
+                // 개별 상품 데이터 준비
+                const individualProductData = {
+                  product_id: individualProductId,
+                  user_id: userId,
+                  band_id: parseInt(this.bandId, 10) || 0,
+                  title: productInfo.title || `상품 ${i + 1}`,
+                  content: post.postContent || "",
+                  base_price: productInfo.basePrice || 0,
+                  price_options: JSON.stringify(
+                    productInfo.priceOptions &&
+                      productInfo.priceOptions.length > 0
+                      ? productInfo.priceOptions
+                      : [
+                          {
+                            quantity: 1,
+                            price: productInfo.basePrice || 0,
+                            description: "기본가",
+                          },
+                        ]
+                  ),
+                  quantity:
+                    typeof productInfo.quantity === "number"
+                      ? productInfo.quantity
+                      : 1,
+                  quantity_text: productInfo.quantityText || null,
+                  original_price: productInfo.basePrice || 0,
+                  category: productInfo.category || "기타",
+                  tags: productInfo.tags || [],
+                  features: productInfo.features || [],
+                  status: productInfo.status || "판매중",
+                  band_post_id: parseInt(post.postId, 10) || 0,
+                  band_post_url: `https://band.us/band/${this.bandId}/post/${post.postId}`,
+                  comment_count: post.commentCount,
+                  pickup_info: productInfo.pickupInfo || null,
+                  pickup_date: productInfo.pickupDate || null,
+                  pickup_type: productInfo.pickupType || null,
+                  order_summary: {
+                    total_orders: post.commentCount,
+                    pending_orders: post.commentCount,
+                    confirmed_orders: 0,
+                  },
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                };
+
+                // 해당 상품 저장
+                productsToInsert.push(individualProductData);
+
+                logger.info(
+                  `게시물 ID ${post.postId} - 상품 ${
+                    i + 1
+                  } 추가: 상품ID=${individualProductId}, 상품명=${
+                    individualProductData.title
+                  }, 기본가격=${individualProductData.base_price}`
+                );
+              }
+
+              // 게시글 데이터에 모든 상품 ID 저장
+              postDataToInsert = {
+                post_id: uniquePostId,
+                user_id: userId,
+                band_id: parseInt(this.bandId, 10) || 0,
+                unique_post_id: uniquePostId,
+                band_post_url: `https://band.us/band/${this.bandId}/post/${post.postId}`,
+                author_name: post.authorName || "",
+                title: post.postTitle || "제목 없음",
+                band_post_id: parseInt(post.postId, 10) || 0,
+                author_id: "",
+                author_profile: "",
+                content: post.postContent || "",
+                posted_at: post.postTime
+                  ? safeParseDate(post.postTime)
+                  : new Date(),
+                comment_count: post.commentCount,
+                view_count: post.readCount || 0,
+                product_id: productIds[0], // 기본값으로 첫 번째 상품 ID 사용
+                products_data: {
+                  // JSONB 필드로 저장하여 확장성 유지
+                  product_ids: productIds,
+                  has_multiple_products: true,
+                },
+                crawled_at: new Date(),
+                is_product: true,
+                status: "활성",
+                updated_at: new Date(),
+              };
+
+              postsToInsert.push(postDataToInsert);
+
+              // 개별 상품 처리 완료 후 다음 게시물로 넘어감
+              logger.info(
+                `게시물 ID ${post.postId} - 여러 상품 처리 완료: ${productIds.length}개 상품 추가됨`
+              );
+              continue;
+            }
+
+            // 단일 상품인 경우 (기존 로직)
+            const productInfo = productInfoResult;
             logger.info(
               `게시물 ID ${post.postId} - AI 결과: 제목="${productInfo.title}", 가격=${productInfo.basePrice}`
             );
@@ -722,29 +851,38 @@ class BandPosts extends BandAuth {
         // 항상 모든 게시물 정보 저장 (중복검사 없음)
         productsToInsert.push(productData);
 
-        // 게시글 데이터 준비
-        const postDataToInsert = {
-          post_id: uniquePostId,
-          user_id: userId,
-          band_id: parseInt(this.bandId, 10) || 0,
-          unique_post_id: uniquePostId,
-          band_post_url: `https://band.us/band/${this.bandId}/post/${post.postId}`,
-          author_name: post.authorName || "",
-          title: post.postTitle || "제목 없음",
-          band_post_id: parseInt(post.postId, 10) || 0,
-          author_id: "",
-          author_profile: "",
-          content: post.postContent || "",
-          posted_at: post.postTime ? safeParseDate(post.postTime) : new Date(),
-          comment_count: post.commentCount,
-          view_count: post.readCount || 0,
-          product_id: productId,
-          crawled_at: new Date(),
-          is_product: true,
-          status: "활성",
-          updated_at: new Date(),
-        };
-        postsToInsert.push(postDataToInsert);
+        // 게시글 데이터 준비 (이미 여러 상품인 경우 위에서 처리했으므로 단일 상품인 경우만 처리)
+        if (!postDataToInsert) {
+          postDataToInsert = {
+            post_id: uniquePostId,
+            user_id: userId,
+            band_id: parseInt(this.bandId, 10) || 0,
+            unique_post_id: uniquePostId,
+            band_post_url: `https://band.us/band/${this.bandId}/post/${post.postId}`,
+            author_name: post.authorName || "",
+            title: post.postTitle || "제목 없음",
+            band_post_id: parseInt(post.postId, 10) || 0,
+            author_id: "",
+            author_profile: "",
+            content: post.postContent || "",
+            posted_at: post.postTime
+              ? safeParseDate(post.postTime)
+              : new Date(),
+            comment_count: post.commentCount,
+            view_count: post.readCount || 0,
+            product_id: productId,
+            products_data: {
+              // JSONB 필드로 저장하여 확장성 유지
+              product_ids: [productId],
+              has_multiple_products: false,
+            },
+            crawled_at: new Date(),
+            is_product: true,
+            status: "활성",
+            updated_at: new Date(),
+          };
+          postsToInsert.push(postDataToInsert);
+        }
 
         // 항상 모든 댓글(주문) 정보 저장 (중복검사 없음)
         if (comments && comments.length > 0) {
