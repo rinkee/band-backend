@@ -58,7 +58,7 @@ class BandAuth {
       this.updateTaskStatus("processing", "initialize", 0);
 
       this.browser = await puppeteer.launch({
-        headless: true, // 기본적으로 headless 모드 활성화
+        headless: false, // 기본적으로 headless 모드 활성화
         args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
         defaultViewport: null,
       });
@@ -318,8 +318,8 @@ class BandAuth {
 
   async naverLogin(naverId, naverPassword) {
     // 기다리는 시간 랜덤
-    const min = 2000; // 최소 2초
-    const max = 4000; // 최대 4초
+    const min = 5000; // 최소 5초
+    const max = 8000; // 최대 8초
     const randomDelay = Math.floor(Math.random() * (max - min + 1)) + min;
 
     try {
@@ -368,10 +368,10 @@ class BandAuth {
         await new Promise((resolve) => setTimeout(resolve, randomDelay));
       }
       // 2. 현재 페이지가 밴드 홈 또는 다른 밴드 페이지인 경우
-      else if (currentUrl.includes("band.us")) {
+      else if (currentUrl.includes("home")) {
         this.updateTaskStatus(
           "processing",
-          "밴드 페이지에서 로그인 버튼 클릭",
+          "홈 페이지에서 로그인 버튼 클릭",
           45
         );
 
@@ -387,26 +387,14 @@ class BandAuth {
           return false;
         });
 
-        if (!loginBtnClicked) {
-          this.updateTaskStatus(
-            "processing",
-            "로그인 버튼을 찾을 수 없어 직접 로그인 페이지로 이동",
-            46
+        // 로그인 페이지에서 네이버 로그인 버튼 클릭
+        await new Promise((resolve) => setTimeout(resolve, randomDelay));
+        await this.page.evaluate(() => {
+          const naverBtn = document.querySelector(
+            "a.-naver.externalLogin, a.uButtonRound.-h56.-icoType.-naver"
           );
-          await this.page.goto("https://auth.band.us/login_page", {
-            waitUntil: "networkidle2",
-            timeout: 30000,
-          });
-
-          // 로그인 페이지에서 네이버 로그인 버튼 클릭
-          await new Promise((resolve) => setTimeout(resolve, randomDelay));
-          await this.page.evaluate(() => {
-            const naverBtn = document.querySelector(
-              "a.-naver.externalLogin, a.uButtonRound.-h56.-icoType.-naver"
-            );
-            if (naverBtn) naverBtn.click();
-          });
-        }
+          if (naverBtn) naverBtn.click();
+        });
 
         // 네이버 로그인 페이지로 이동 대기
         await this.page
@@ -550,30 +538,61 @@ class BandAuth {
             .catch(() => {});
 
           // 아이디 입력
-          await this.page
-            .evaluate((id) => {
-              const idField = document.querySelector("#id");
-              if (idField) {
-                idField.value = id;
-                idField.dispatchEvent(new Event("input", { bubbles: true }));
-              }
-            }, naverId)
-            .catch(() => {
-              console.error("아이디 입력 실패");
+          // await this.page
+          //   .evaluate((id) => {
+          //     const idField = document.querySelector("#id");
+          //     if (idField) {
+          //       idField.value = id;
+          //       idField.dispatchEvent(new Event("input", { bubbles: true }));
+          //     }
+          //   }, naverId)
+          //   .catch(() => {
+          //     console.error("아이디 입력 실패");
+          //   });
+
+          // ID 필드 포커스
+          // 1. 클립보드 데이터 시뮬레이션
+          await this.page.evaluate((text) => {
+            // 클립보드 이벤트에 사용할 데이터 준비
+            const dataTransfer = new DataTransfer();
+            const clipboardEvent = new ClipboardEvent("paste", {
+              clipboardData: dataTransfer,
+              bubbles: true,
             });
 
+            // 데이터 추가
+            dataTransfer.setData("text/plain", text);
+
+            // ID 필드 가져오기
+            const idField = document.querySelector("#id");
+
+            // 이벤트 발생
+            idField.dispatchEvent(clipboardEvent);
+
+            // 값 직접 설정 (이벤트만으로 값이 설정되지 않을 수 있음)
+            idField.value = text;
+            idField.dispatchEvent(new Event("input", { bubbles: true }));
+          }, naverId);
+
           // 비밀번호 입력
-          await this.page
-            .evaluate((pw) => {
-              const pwField = document.querySelector("#pw");
-              if (pwField) {
-                pwField.value = pw;
-                pwField.dispatchEvent(new Event("input", { bubbles: true }));
-              }
-            }, naverPassword)
-            .catch(() => {
-              console.error("비밀번호 입력 실패");
-            });
+          // await this.page
+          //   .evaluate((pw) => {
+          //     const pwField = document.querySelector("#pw");
+          //     if (pwField) {
+          //       pwField.value = pw;
+          //       pwField.dispatchEvent(new Event("input", { bubbles: true }));
+          //     }
+          //   }, naverPassword)
+          //   .catch(() => {
+          //     console.error("비밀번호 입력 실패");
+          //   });
+          // 비밀번호 필드에도 동일한 방식 적용
+          await this.page.focus("#pw");
+          await this.page.evaluate((text) => {
+            const pwField = document.querySelector("#pw");
+            pwField.value = text;
+            pwField.dispatchEvent(new Event("input", { bubbles: true }));
+          }, naverPassword);
 
           this.updateTaskStatus(
             "waiting",
@@ -896,13 +915,10 @@ class BandAuth {
       if (!savedCookies) {
         this.updateTaskStatus("processing", "저장된 쿠키가 없습니다", 15);
         // 쿠키가 없는 경우 로그인 페이지로 이동
-        await this.page.goto(
-          "https://auth.band.us/login_page?next_url=https%3A%2F%2Fwww.band.us%2Fhome%3Freferrer%3Dhttps%253A%252F%252Fwww.band.us%252F",
-          {
-            waitUntil: "networkidle2",
-            timeout: 30000,
-          }
-        );
+        await this.page.goto("https://www.band.us/home", {
+          waitUntil: "networkidle2",
+          timeout: 30000,
+        });
         this.updateTaskStatus("processing", "로그인 페이지로 이동 완료", 16);
         return false;
       }

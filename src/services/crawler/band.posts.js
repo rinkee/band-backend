@@ -95,9 +95,9 @@ class BandPosts extends BandAuth {
    * 게시물 상세 정보 추출
    * @returns {Promise<Object|null>} - 게시물 상세 정보
    */
+
   async extractPostDetailFromPage() {
     try {
-      // 우선 삭제되었거나 접근할 수 없는 게시물인지 검사
       const isBlocked = await this.page.evaluate(() => {
         const blockKeywords = [
           "삭제되었거나",
@@ -114,13 +114,10 @@ class BandPosts extends BandAuth {
       });
 
       if (isBlocked) {
-        logger.warn(
-          `삭제되었거나 접근이 차단된 게시물: ${await this.page.url()}`
-        );
+        console.warn("삭제되었거나 접근이 차단된 게시물");
         return null;
       }
 
-      // 이후 정상 게시물이라면 DOM 로딩 대기
       await this.page.waitForSelector(
         ".postWrap, .postMain, .postText, .txtBody",
         {
@@ -133,13 +130,8 @@ class BandPosts extends BandAuth {
       const content = await this.page.content();
       const $ = cheerio.load(content);
 
-      // 게시물 ID 및 밴드 ID 파싱
       const postIdMatch = currentUrl.match(/\/post\/(\d+)/);
-      const bandIdMatch = currentUrl.match(/\/band\/([^\/]+)/);
       const postId = postIdMatch?.[1] || `unknown_${Date.now()}`;
-      const bandId = bandIdMatch?.[1] || this.bandId;
-
-      // 작성자, 제목, 내용, 시간 추출
       const authorName = $(".postWriterInfoWrap .text").text().trim() || "";
       const postTitle = authorName;
       const postContent =
@@ -147,7 +139,6 @@ class BandPosts extends BandAuth {
         $(".txtBody").text().trim() ||
         "";
       const postTime = $(".postListInfoWrap .time").text().trim() || "";
-
       const readCountText = $("._postReaders strong").text().trim();
       const readCount = parseInt(readCountText.match(/\d+/)?.[0] || "0", 10);
 
@@ -157,26 +148,36 @@ class BandPosts extends BandAuth {
         if (src) imageUrls.push(src);
       });
 
+      // 개선된 댓글 추출
       const comments = [];
-      $('div[data-viewname="DCommentLayoutView"].cComment').each((i, el) => {
+      const commentElements = $(".cComment, .comment, div[class*='comment']");
+      console.info(`발견된 댓글 요소 수: ${commentElements.length}`);
+
+      commentElements.each((i, el) => {
         const author =
           $(el)
-            .find('button[data-uiselector="authorNameButton"] strong.name')
+            .find("button[data-uiselector='authorNameButton'] strong.name")
             .text()
             .trim() || "익명";
-        const content = $(el)
-          .find("div.commentBody p.txt._commentContent")
-          .text()
-          .trim();
+
+        const content =
+          $(el).find("p.txt._commentContent").text().trim() ||
+          $(el).find(".txt").text().trim();
+
         const time =
-          $(el).find("div.func time.time").attr("title") ||
-          $(el).find("div.func time.time").text().trim();
-        if (content) comments.push({ author, content, time });
+          $(el).find("time.time").attr("title") ||
+          $(el).find("time.time").text().trim();
+
+        if (content) {
+          comments.push({ author, content, time });
+        }
       });
 
-      const postDetail = {
+      console.info(`게시물 ID ${postId} - 댓글 수: ${comments.length}`);
+
+      return {
         postId,
-        bandId,
+        bandId: this.bandId,
         postTitle,
         postContent,
         postTime,
@@ -187,13 +188,8 @@ class BandPosts extends BandAuth {
         comments,
         crawledAt: new Date().toISOString(),
       };
-
-      logger.info(
-        `게시물 정보 추출 완료: ID=${postId}, 제목="${postTitle}", 작성자=${authorName}`
-      );
-      return postDetail;
     } catch (e) {
-      logger.error(`게시물 상세 정보 추출 중 오류 발생: ${e.message}`);
+      console.error(`게시물 상세 정보 추출 중 오류 발생: ${e.message}`);
       return null;
     }
   }
