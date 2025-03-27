@@ -19,20 +19,15 @@ async function extractProductInfo(content, postTime = null) {
   try {
     if (!content || content.trim() === "") {
       logger.warn("빈 콘텐츠로 ChatGPT API 호출이 시도되었습니다.");
-      return {
-        title: "내용 없음",
-        basePrice: 0,
-        priceOptions: [],
-        quantity: null,
-        quantityText: null,
-        category: "기타",
-        status: "판매중",
-        tags: [],
-        features: [],
-        pickupInfo: null,
-        pickupDate: null,
-        pickupType: null,
-      };
+      return getDefaultProduct("내용 없음");
+    }
+
+    const hasPrice = /[0-9]+[,0-9]*\s*(원|만원|천원|\$|€|¥|￦|달러)/.test(
+      content
+    );
+    if (!hasPrice) {
+      logger.info("가격 정보가 없어 상품이 아닌 것으로 판단됩니다.");
+      return getDefaultProduct("상품 정보 없음");
     }
 
     logger.info("ChatGPT API 호출 시작");
@@ -42,81 +37,76 @@ async function extractProductInfo(content, postTime = null) {
       messages: [
         {
           role: "system",
-          content:
-            "당신은 게시물 텍스트에서 상품 정보를 정확하게 추출하는 도우미입니다. 반드시 JSON 형식으로만 응답해야 합니다. 정보가 부족해도 최대한 추측하여 JSON 형식으로 응답하세요. 여러 상품이 있을 경우 모든 상품을 찾아내서 배열로 반환해야 합니다.",
+          content: `
+당신은 게시물 텍스트에서 상품 정보를 정확하게 추출하는 도우미입니다. 반드시 JSON 형식으로만 응답해야 하며, 동일 상품에 다양한 가격이 존재할 경우 priceOptions에 담고, multipleProducts는 false로 설정해야 합니다. 여러 상품이 있을 경우 모든 상품을 찾아내서 배열로 반환해야 합니다.
+      
+
+※ 아래 조건을 반드시 따르세요:
+
+1. 서로 다른 품목(예: 방풍나물, 파프리카 등)이 함께 있을 경우:
+   - multipleProducts는 true로 설정합니다.
+   - products 배열 안에 각각의 상품을 JSON 객체로 넣습니다.
+   - 각 상품은 아래 구조를 따릅니다.
+   - 단, products 배열 안의 각 상품은 multipleProducts를 false로 유지합니다.
+
+2. 같은 품목이 다양한 가격/옵션으로 나올 경우:
+   - multipleProducts는 false로 설정합니다.
+   - priceOptions 배열에 옵션을 추가합니다.
+
+
+3. 실제 밴드에서 고객이 구매 가능한 판매 가격만 추출하세요. 
+   - 예: "1세트 4,900원", "2세트 9,500원" → O
+   - 예: "편의점 판매가 3,200원" → X (참고용 정가, 제외)
+
+4. 광고 문구나 비교를 위한 참고 가격(GS편의점, 마트 가격 등)은 priceOptions에 넣지 마세요.
+
+5. 판매 단위가 명확하면 quantity는 항상 1로 지정하고, 구성품 정보는 quantityText로 작성하세요.
+   - 예: "10봉 1세트" → quantity: 1, quantityText: "10봉묶음"
+
+6. 여러 가격이 같은 상품의 옵션일 경우 priceOptions에 배열로 포함하고, multipleProducts는 false로 유지합니다.
+
+7. 다른 품목이면 multipleProducts는 true로 설정하고 각각 개별 객체로 배열 반환하세요.
+
+8. 응답은 반드시 JSON 형식만 반환하고, 그 외 텍스트는 포함하지 마세요.
+
+9. 가격이 없으면 basePrice는 0, quantity는 1로 설정하세요.
+
+10. pickupDate는 "내일", "오늘" 등 키워드를 보고 게시일 기준으로 추정하세요.
+      `.trim(),
         },
         {
           role: "user",
-          content: `다음 텍스트에서 모든 상품 정보를 추출해주세요. 여러 상품이 있는 경우 모든 상품을 추출해주세요:
-                  
+          content: `다음 텍스트에서 상품 정보를 추출해주세요:
+
 텍스트: ${content}
 게시물 작성 시간: ${postTime}
-게시물 작성 시간과 픽업 정보를 비교해서 픽업 데이트 정보를 넣어주세요
-다음 형식으로 JSON 응답을 제공해주세요. 다른 텍스트는 포함하지 마세요:
 
-상품이 하나인 경우:
-{
-  "title": "상품명",
-  "basePrice": 숫자(가장 낮은 가격, 원단위),
-  "priceOptions": [
-    {"quantity": 수량(숫자), "price": 가격(숫자), "description": "옵션설명"}
-  ],
-  "quantityText": "용량/개수 정보 (예: 400g, 10개입)",
-  "quantity": 숫자(판매 단위 수량, 없으면 1),
-  "category": "카테고리(식품/의류/생활용품/기타 중 선택)",
-  "status": "판매중 또는 품절",
-  "tags": ["관련태그1", "관련태그2"],
-  "features": ["특징1", "특징2", "특징3"],
-  "pickupInfo": "픽업 정보 (예: 내일화요일수령, 오늘월요일오후2시도착)",
-  "pickupDate": "픽업 날짜 (예: 2025-03-25)",
-  "pickupType": "픽업 유형 (예: 도착, 수령, 픽업, 전달)",
-  "multipleProducts": false
-}
-
-여러 상품이 있는 경우(여러 번호로 구분된 상품들, 또는 여러 상품이 나열된 경우):
+출력 형식:
 {
   "multipleProducts": true,
   "products": [
-    {
-      "title": "상품1명",
-      "basePrice": 숫자,
-      "priceOptions": [{"quantity": 수량, "price": 가격, "description": "설명"}],
-      "quantityText": "용량 정보",
-      "quantity": 수량,
-      "category": "카테고리",
-      "status": "판매중",
-      "tags": ["태그1"],
-      "features": ["특징1"],
-      "pickupInfo": "픽업 정보",
-      "pickupDate": "픽업 날짜",
-      "pickupType": "픽업 유형"
-    },
-    {
-      "title": "상품2명",
-      "basePrice": 숫자,
-      // ... 다른 상품2 정보
-    },
-    // ... 더 많은 상품들
-  ],
-  "commonPickupInfo": "모든 상품에 공통적인 픽업 정보",
-  "commonPickupDate": "모든 상품에 공통적인 픽업 날짜",
-  "commonPickupType": "모든 상품에 공통적인 픽업 유형"
-}
-
-상품이 여러 개인지 확인하려면 다음을 살펴보세요:
-1. 번호로 구분된 항목들 (1️⃣, 2️⃣, 1), 2), 1., 2. 등)
-2. 여러 가격이 다른 항목들이 나열된 경우
-3. 여러 제품명이 명확하게 구분되는 경우
-4. 게시물 내용에 "불발분"이라는 단어가 있으면 해당 게시물은 여러 상품을 포함할 가능성이 높습니다.
-
-여러 가격 옵션이 있는 경우 모두 추출하세요(예: 1팩 2900원, 2팩 5000원).
-상품 정보가 부족하더라도 반드시 위 형식의 JSON으로만 응답하세요.
-가격이 없는 경우 0으로 설정하세요.
-quantity는 반드시 숫자로만 설정하세요. 용량 정보는 quantityText에 문자열로 넣어주세요.
-상품명이 없는 경우 텍스트에서 가장 관련성 높은 단어를 사용하세요.`,
+  {
+    "title": "상품명",
+    "basePrice": 숫자,
+    "priceOptions": [
+      { "quantity": 수량(숫자), "price": 가격(숫자), "description": "옵션 설명" }
+    ],
+    "quantityText": "10봉묶음 또는 1팩, 300g 등",
+    "quantity": 판매단위 수량 (예: 1세트면 1),
+    "category": "식품/의류/생활용품/기타",
+    "status": "판매중 또는 품절",
+    "tags": ["태그1", "태그2"],
+    "features": ["특징1", "특징2"],
+    "pickupInfo": "내일 도착 등",
+    "pickupDate": "2025-03-27",
+    "pickupType": "도착, 수령, 픽업, 전달 등",
+    "multipleProducts": false
+  }
+  ]
+}`,
         },
       ],
-      temperature: 0.2, // 더 낮은 온도로 설정하여 일관된 형식 유도
+      temperature: 0.2,
       response_format: { type: "json_object" },
     });
 
@@ -127,19 +117,19 @@ quantity는 반드시 숫자로만 설정하세요. 용량 정보는 quantityTex
     logger.info("=== API 응답 끝 ===");
 
     try {
-      // 응답이 JSON 형식인지 확인
       if (
         !contentText.trim().startsWith("{") ||
         !contentText.trim().endsWith("}")
       ) {
-        logger.error("API 응답이 올바른 JSON 형식이 아닙니다:", contentText);
         throw new Error("API 응답이 올바른 JSON 형식이 아닙니다");
       }
 
-      // JSON 문자열을 객체로 변환
-      let result = JSON.parse(contentText);
+      const result = JSON.parse(contentText);
 
-      // 여러 상품이 있는지 확인
+      // 👇 여기를 추가!
+      if (result.productName && !result.title)
+        result.title = result.productName;
+
       if (
         result.multipleProducts &&
         Array.isArray(result.products) &&
@@ -148,8 +138,6 @@ quantity는 반드시 숫자로만 설정하세요. 용량 정보는 quantityTex
         logger.info(
           `여러 상품 감지: ${result.products.length}개의 상품이 추출되었습니다.`
         );
-
-        // 각 상품에 공통 픽업 정보 적용
         const processedProducts = result.products.map((product) => {
           return processProduct(
             {
@@ -161,60 +149,39 @@ quantity는 반드시 숫자로만 설정하세요. 용량 정보는 quantityTex
             postTime
           );
         });
-
-        // 여러 상품 정보 반환
         return {
           multipleProducts: true,
           products: processedProducts,
         };
       }
 
-      // 단일 상품인 경우
       return processProduct(result, postTime);
     } catch (parseError) {
       logger.error("JSON 파싱 오류:", parseError);
-      // 기본값 설정
-      const defaultProduct = {
-        title: "제목 추출 실패",
-        basePrice: 0,
-        priceOptions: [{ quantity: 1, price: 0, description: "기본가" }],
-        quantity: 1,
-        quantityText: null,
-        category: "기타",
-        status: "판매중",
-        tags: [],
-        features: [],
-        pickupInfo: null,
-        pickupDate: null,
-        pickupType: null,
-        multipleProducts: false,
-      };
-
-      logger.info(
-        "파싱 오류로 기본값 사용:",
-        JSON.stringify(defaultProduct, null, 2)
-      );
-      return defaultProduct;
+      return getDefaultProduct("제목 추출 실패");
     }
   } catch (error) {
     logger.error("OpenAI API 호출 중 오류 발생:", error);
-    // 오류 발생시 기본값 반환
-    return {
-      title: "API 오류",
-      basePrice: 0,
-      priceOptions: [],
-      quantity: 1,
-      quantityText: null,
-      category: "기타",
-      status: "판매중",
-      tags: [],
-      features: [],
-      pickupInfo: null,
-      pickupDate: null,
-      pickupType: null,
-      multipleProducts: false,
-    };
+    return getDefaultProduct("API 오류");
   }
+}
+
+function getDefaultProduct(title = "제목 없음") {
+  return {
+    title,
+    basePrice: 0,
+    priceOptions: [{ quantity: 1, price: 0, description: "기본가" }],
+    quantity: 1,
+    quantityText: null,
+    category: "기타",
+    status: "판매중",
+    tags: [],
+    features: [],
+    pickupInfo: null,
+    pickupDate: null,
+    pickupType: null,
+    multipleProducts: false,
+  };
 }
 
 /**

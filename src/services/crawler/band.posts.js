@@ -10,6 +10,12 @@ const {
 } = require("./band.utils");
 const logger = require("../../config/logger");
 const cheerio = require("cheerio");
+const crypto = require("crypto");
+
+// UUID v4 생성 함수
+function generateUUID() {
+  return crypto.randomUUID();
+}
 
 /**
  * 밴드 게시물 크롤링 관련 클래스
@@ -91,108 +97,66 @@ class BandPosts extends BandAuth {
    */
   async extractPostDetailFromPage() {
     try {
-      try {
-        await Promise.race([
-          this.page.waitForSelector(".postWrap", {
-            visible: true,
-            timeout: 15000,
-          }),
-          this.page.waitForSelector(".postMain", {
-            visible: true,
-            timeout: 15000,
-          }),
-          this.page.waitForSelector(".postText", {
-            visible: true,
-            timeout: 15000,
-          }),
-          this.page.waitForSelector(".dPostCommentMainView", {
-            visible: true,
-            timeout: 15000,
-          }),
-        ]);
-      } catch (waitError) {
-        logger.warn(
-          `기본 셀렉터 대기 실패: ${waitError.message}, 대체 방법 시도`
+      // 우선 삭제되었거나 접근할 수 없는 게시물인지 검사
+      const isBlocked = await this.page.evaluate(() => {
+        const blockKeywords = [
+          "삭제되었거나",
+          "찾을 수 없습니다.",
+          "삭제된 게시글",
+          "존재하지 않는 게시글",
+          "권한이 없습니다",
+          "접근할 수 없습니다",
+          "찾을 수 없는 페이지",
+        ];
+        return blockKeywords.some((keyword) =>
+          document.body.innerText.includes(keyword)
         );
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+      });
+
+      if (isBlocked) {
+        logger.warn(
+          `삭제되었거나 접근이 차단된 게시물: ${await this.page.url()}`
+        );
+        return null;
       }
+
+      // 이후 정상 게시물이라면 DOM 로딩 대기
+      await this.page.waitForSelector(
+        ".postWrap, .postMain, .postText, .txtBody",
+        {
+          visible: true,
+          timeout: 5000,
+        }
+      );
+
       const currentUrl = await this.page.url();
-
-      let postId = "unknown";
-      let bandId = this.bandId || "";
-      const postIdMatch = currentUrl.match(/\/post\/(\d+)/);
-      if (postIdMatch && postIdMatch[1]) {
-        postId = postIdMatch[1];
-      } else {
-        postId = await this.page.evaluate(() => {
-          const metaTag = document.querySelector('meta[property="og:url"]');
-          if (metaTag) {
-            const url = metaTag.content;
-            const match = url.match(/\/post\/(\d+)/);
-            return match
-              ? match[1]
-              : `unknown_${Date.now()}_${Math.random()
-                  .toString(36)
-                  .substring(2, 8)}`;
-          }
-          return `unknown_${Date.now()}_${Math.random()
-            .toString(36)
-            .substring(2, 8)}`;
-        });
-      }
-      const bandIdMatch = currentUrl.match(/\/band\/([^\/]+)/);
-      if (bandIdMatch && bandIdMatch[1]) {
-        bandId = bandIdMatch[1];
-      }
-
       const content = await this.page.content();
       const $ = cheerio.load(content);
 
-      // 작성자명 추출
-      let authorName = "";
-      if ($(".postWriterInfoWrap .text").length > 0) {
-        authorName = $(".postWriterInfoWrap .text").text().trim();
-      } else if ($(".postWriterInfoWrap .a").length > 0) {
-        authorName = $(".postWriterInfoWrap .a").text().trim();
-      }
+      // 게시물 ID 및 밴드 ID 파싱
+      const postIdMatch = currentUrl.match(/\/post\/(\d+)/);
+      const bandIdMatch = currentUrl.match(/\/band\/([^\/]+)/);
+      const postId = postIdMatch?.[1] || `unknown_${Date.now()}`;
+      const bandId = bandIdMatch?.[1] || this.bandId;
 
-      let postTitle = "";
-      if ($(".postWriterInfoWrap .text").length > 0) {
-        postTitle = $(".postWriterInfoWrap .text").text().trim();
-      }
-      let postContent = "";
-      if ($(".postText .txtBody").length > 0) {
-        postContent = $(".postText .txtBody").text().trim();
-      } else if ($(".txtBody").length > 0) {
-        postContent = $(".txtBody").text().trim();
-      }
-      let postTime = "";
-      if ($(".postListInfoWrap .time").length > 0) {
-        postTime = $(".postListInfoWrap .time").text().trim();
-      }
-      let readCount = 0;
-      if ($("._postReaders strong").length > 0) {
-        const readCountText = $("._postReaders strong").text().trim();
-        const match = readCountText.match(/\d+/);
-        if (match) {
-          readCount = parseInt(match[0], 10);
-        }
-      }
-      let commentCount = 0;
-      if ($(".comment count").length > 0) {
-        const readCountText = $(".comment count").text().trim();
-        const match = readCountText.match(/\d+/);
-        if (match) {
-          commentCount = parseInt(match[0], 10);
-        }
-      }
+      // 작성자, 제목, 내용, 시간 추출
+      const authorName = $(".postWriterInfoWrap .text").text().trim() || "";
+      const postTitle = authorName;
+      const postContent =
+        $(".postText .txtBody").text().trim() ||
+        $(".txtBody").text().trim() ||
+        "";
+      const postTime = $(".postListInfoWrap .time").text().trim() || "";
+
+      const readCountText = $("._postReaders strong").text().trim();
+      const readCount = parseInt(readCountText.match(/\d+/)?.[0] || "0", 10);
+
       const imageUrls = [];
       $(".imageListInner img").each((i, el) => {
         const src = $(el).attr("src");
-        if (src) {
-          imageUrls.push(src);
-        }
+        if (src) imageUrls.push(src);
       });
+
       const comments = [];
       $('div[data-viewname="DCommentLayoutView"].cComment').each((i, el) => {
         const author =
@@ -207,10 +171,9 @@ class BandPosts extends BandAuth {
         const time =
           $(el).find("div.func time.time").attr("title") ||
           $(el).find("div.func time.time").text().trim();
-        if (content) {
-          comments.push({ author, content, time });
-        }
+        if (content) comments.push({ author, content, time });
       });
+
       const postDetail = {
         postId,
         bandId,
@@ -219,7 +182,7 @@ class BandPosts extends BandAuth {
         postTime,
         authorName,
         readCount,
-        commentCount,
+        commentCount: comments.length,
         imageUrls,
         comments,
         crawledAt: new Date().toISOString(),
@@ -312,6 +275,27 @@ class BandPosts extends BandAuth {
         waitUntil: "networkidle2",
         timeout: 60000,
       });
+
+      let alertDetected = false;
+
+      this.page.on("dialog", async (dialog) => {
+        const message = dialog.message();
+        logger.warn(`alert 감지됨: ${message}`);
+        if (
+          message.includes("삭제되었거나") ||
+          message.includes("삭제") ||
+          message.includes("권한") ||
+          message.includes("찾을 수 없습니다")
+        ) {
+          alertDetected = true;
+        }
+        await dialog.dismiss(); // 자동으로 확인 눌러줌
+      });
+
+      if (alertDetected) {
+        logger.warn(`접근할 수 없는 게시물: ${postUrl} (삭제/권한 없음 등)`);
+        return { success: false, error: "접근할 수 없는 게시물" };
+      }
 
       // 최신 게시물의 ID 가져오기
       const latestPostId = await this.getLatestPostId();
@@ -569,16 +553,12 @@ class BandPosts extends BandAuth {
         // postDataToInsert 변수 초기화
         let postDataToInsert = null;
 
-        // 새 ID 생성: 기존 추출된 post.postId를 사용
-        // 제품 ID: bandId_product_postId
-        const productId = `${this.bandId}_product_${post.postId}`;
-        // 게시글 ID: bandId_post_postId
-        const uniquePostId = `${this.bandId}_post_${post.postId}`;
+        // 새 ID 생성: UUID 사용
+        const productId = generateUUID();
+        const uniquePostId = generateUUID();
 
         if (!post.postId || post.postId === "undefined") {
-          post.postId = `unknown_${Date.now()}_${Math.random()
-            .toString(36)
-            .substring(2, 9)}`;
+          post.postId = generateUUID();
           logger.warn(`유효하지 않은 postId 감지: ${post.postId}`);
         }
 
@@ -587,6 +567,47 @@ class BandPosts extends BandAuth {
         const extractedPriceOptions = extractPriceOptions(
           post.postContent || ""
         );
+
+        // 가격 정보가 없으면 상품으로 처리하지 않음
+        if (
+          !extractedPrice &&
+          (!extractedPriceOptions || !extractedPriceOptions.basePrice)
+        ) {
+          logger.info(
+            `게시물 ID ${post.postId} - 가격 정보가 없어 상품으로 처리하지 않음`
+          );
+
+          // 게시글만 저장
+          postDataToInsert = {
+            post_id: uniquePostId,
+            user_id: userId,
+            band_id: parseInt(this.bandId, 10) || 0,
+            unique_post_id: uniquePostId,
+            band_post_url: `https://band.us/band/${this.bandId}/post/${post.postId}`,
+            author_name: post.authorName || "",
+            title: post.postTitle || "제목 없음",
+            band_post_id: parseInt(post.postId, 10) || 0,
+            author_id: "",
+            author_profile: "",
+            content: post.postContent || "",
+            posted_at: post.postTime
+              ? safeParseDate(post.postTime)
+              : new Date(),
+            comment_count: post.commentCount,
+            view_count: post.readCount || 0,
+            product_id: null, // 상품이 아닌 경우 null
+            products_data: {
+              product_ids: [],
+              has_multiple_products: false,
+            },
+            crawled_at: new Date(),
+            is_product: false,
+            status: "활성",
+            updated_at: new Date(),
+          };
+          postsToInsert.push(postDataToInsert);
+          continue;
+        }
 
         if (post.commentCount > 0) {
           postsWithComments++;
@@ -671,9 +692,7 @@ class BandPosts extends BandAuth {
               for (let i = 0; i < productInfoResult.products.length; i++) {
                 const productInfo = productInfoResult.products[i];
                 // 각 상품별 고유 ID 생성
-                const individualProductId = `${this.bandId}_${
-                  post.postId
-                }_product_${i + 1}`;
+                const individualProductId = generateUUID();
                 productIds.push(individualProductId);
 
                 logger.info(
@@ -785,9 +804,13 @@ class BandPosts extends BandAuth {
             );
 
             // 추출된 정보로 제품 데이터 업데이트
-            productData.title = productInfo.title || productData.title;
-            productData.base_price =
-              productInfo.basePrice || productData.base_price;
+            // 고친 코드
+            if (typeof productInfo.title === "string") {
+              productData.title = productInfo.title;
+            }
+            if (typeof productInfo.basePrice === "number") {
+              productData.base_price = productInfo.basePrice;
+            }
 
             // 디버깅 정보 추가
             logger.info(`API에서 반환된 상품명: '${productInfo.title}'`);
@@ -1066,7 +1089,7 @@ class BandPosts extends BandAuth {
             const { error: productsError } = await supabase
               .from("products")
               .upsert(processedBatch, {
-                onConflict: "band_id,band_post_id", // 기존 제품은 업데이트
+                onConflict: "product_id",
                 returning: "minimal",
               });
             if (productsError) {
