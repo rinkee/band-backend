@@ -39,9 +39,23 @@ async function extractProductInfo(content, postTime = null) {
           role: "system",
           content: `
 당신은 게시물 텍스트에서 상품 정보를 정확하게 추출하는 도우미입니다. 반드시 JSON 형식으로만 응답해야 하며, 동일 상품에 다양한 가격이 존재할 경우 priceOptions에 담고, multipleProducts는 false로 설정해야 합니다. 여러 상품이 있을 경우 모든 상품을 찾아내서 배열로 반환해야 합니다.
-      
 
-※ 아래 조건을 반드시 따르세요:
+※ 상품과 가격 옵션 식별에 대한 중요 규칙:
+
+1. 수량에 따른 가격 차이는 다른 상품이 아닌 같은 상품의 가격 옵션으로 처리해야 합니다:
+   - "아보카도 1알 2,900원, 2알 5,000원" → 이것은 '아보카도'라는 하나의 상품에 대한 두 가지 가격 옵션입니다.
+   - "파프리카(빨강) 3,000원, 파프리카(노랑) 3,200원" → 이것은 서로 다른 두 상품입니다.
+
+2. 다음은 동일 상품의 가격 옵션으로 처리해야 하는 경우입니다:
+   - 동일 상품의 수량에 따른 가격 차이 (1개, 2개, 3개...)
+   - 동일 상품의 포장 단위에 따른 가격 차이 (낱개, 세트, 박스...)
+   - 동일 상품의 중량에 따른 가격 차이 (100g, 500g, 1kg...)
+
+3. 다음은 별개의 상품으로 처리해야 하는 경우입니다:
+   - 명확히 다른 품목 (사과와 배, 쌀과 국수)
+   - 동일 품목이라도 종류나 색상이 뚜렷이 다른 경우 (빨간 파프리카와 노란 파프리카)
+
+※ 이제 출력 형식에 대해 설명드립니다:
 
 1. 서로 다른 품목(예: 방풍나물, 파프리카 등)이 함께 있을 경우:
    - multipleProducts는 true로 설정합니다.
@@ -82,27 +96,50 @@ async function extractProductInfo(content, postTime = null) {
 게시물 작성 시간: ${postTime}
 
 출력 형식:
+# 여러 상품일 경우:
 {
   "multipleProducts": true,
   "products": [
-  {
-    "title": "상품명",
-    "basePrice": 숫자,
-    "priceOptions": [
-      { "quantity": 수량(숫자), "price": 가격(숫자), "description": "옵션 설명" }
-    ],
-    "quantityText": "10봉묶음 또는 1팩, 300g 등",
-    "quantity": 판매단위 수량 (예: 1세트면 1),
-    "category": "식품/의류/생활용품/기타",
-    "status": "판매중 또는 품절",
-    "tags": ["태그1", "태그2"],
-    "features": ["특징1", "특징2"],
-    "pickupInfo": "내일 도착 등",
-    "pickupDate": "2025-03-27",
-    "pickupType": "도착, 수령, 픽업, 전달 등",
-    "multipleProducts": false
-  }
+    {
+      "title": "상품명1",
+      "basePrice": 숫자,
+      "priceOptions": [
+        { "quantity": 수량(숫자), "price": 가격(숫자), "description": "옵션 설명" }
+      ],
+      "quantityText": "10봉묶음 또는 1팩, 300g 등",
+      "quantity": 판매단위 수량 (예: 1세트면 1),
+      "category": "식품/의류/생활용품/기타",
+      "status": "판매중 또는 품절",
+      "tags": ["태그1", "태그2"],
+      "features": ["특징1", "특징2"],
+      "pickupInfo": "내일 도착 등",
+      "pickupDate": "2025-03-27",
+      "pickupType": "도착, 수령, 픽업, 전달 등"
+    },
+    {
+      "title": "상품명2",
+      // 이하 동일한 필드...
+    }
   ]
+}
+
+# 단일 상품일 경우:
+{
+  "multipleProducts": false,
+  "title": "상품명",
+  "basePrice": 숫자,
+  "priceOptions": [
+    { "quantity": 수량(숫자), "price": 가격(숫자), "description": "옵션 설명" }
+  ],
+  "quantityText": "10봉묶음 또는 1팩, 300g 등",
+  "quantity": 판매단위 수량 (예: 1세트면 1),
+  "category": "식품/의류/생활용품/기타",
+  "status": "판매중 또는 품절",
+  "tags": ["태그1", "태그2"],
+  "features": ["특징1", "특징2"],
+  "pickupInfo": "내일 도착 등",
+  "pickupDate": "2025-03-27",
+  "pickupType": "도착, 수령, 픽업, 전달 등"
 }`,
         },
       ],
@@ -126,18 +163,59 @@ async function extractProductInfo(content, postTime = null) {
 
       const result = JSON.parse(contentText);
 
-      // 👇 여기를 추가!
+      // 기존 코드: productName -> title 변환
       if (result.productName && !result.title)
         result.title = result.productName;
 
+      // 여러 상품 처리
       if (
         result.multipleProducts &&
         Array.isArray(result.products) &&
         result.products.length > 0
       ) {
+        // 여러 상품 처리
+
+        const mergedProduct = detectAndMergeQuantityBasedProducts(
+          result.products
+        );
+
+        // 통합된 상품이 있으면 사용
+        if (mergedProduct) {
+          logger.info("수량 기반 상품들을 하나의 상품으로 통합했습니다.");
+          return processProduct(mergedProduct, postTime);
+        }
+
         logger.info(
           `여러 상품 감지: ${result.products.length}개의 상품이 추출되었습니다.`
         );
+
+        // 여기가 핵심 수정 부분: products 배열에 하나의 상품만 있으면 단일 상품으로 처리
+        if (result.products.length === 1) {
+          logger.info(
+            "multipleProducts가 true로 설정되었지만 실제 상품은 1개입니다. 단일 상품으로 처리합니다."
+          );
+
+          // 단일 상품으로 변환하여 반환 (내부 multipleProducts 필드 제거)
+          const singleProduct = result.products[0];
+
+          // 상품 객체에서 multipleProducts 필드 제거 (혼란 방지)
+          const { multipleProducts: _unused, ...cleanProduct } = singleProduct;
+
+          return processProduct(
+            {
+              ...cleanProduct,
+              pickupInfo:
+                cleanProduct.pickupInfo || result.commonPickupInfo || null,
+              pickupDate:
+                cleanProduct.pickupDate || result.commonPickupDate || null,
+              pickupType:
+                cleanProduct.pickupType || result.commonPickupType || null,
+              // multipleProducts 필드 제거됨 - 단일 상품이므로 false로 처리됨
+            },
+            postTime
+          );
+        }
+
         const processedProducts = result.products.map((product) => {
           return processProduct(
             {
@@ -224,6 +302,14 @@ function processProduct(productInfo, postTime) {
   productInfo.features = Array.isArray(productInfo.features)
     ? productInfo.features
     : [];
+
+  // multipleProducts 속성 삭제 (중복 및 혼란 방지)
+  // 단일 상품은 항상 multipleProducts가 false
+  if (productInfo.multipleProducts !== undefined) {
+    delete productInfo.multipleProducts;
+  }
+
+  // 최상위 레벨에서 여러 상품을 표현하기 위한 multipleProducts는 제외
 
   // 픽업 정보 처리 - pickupDate가 이미 유효한 ISO 문자열인 경우 변환 생략
   if (
@@ -557,6 +643,99 @@ function extractPickupDate(text, postTime = null) {
       original: text,
     };
   }
+}
+
+/**
+ * 수량 기반으로 여러 상품으로 잘못 인식된 케이스를 감지하고 통합하는 함수
+ * @param {Array} products - 상품 목록
+ * @returns {Object|null} - 통합된 상품 또는 통합 불가 시 null
+ */
+function detectAndMergeQuantityBasedProducts(products) {
+  // 최소 2개 이상의 상품이 있어야 함
+  if (!products || products.length < 2) return null;
+
+  // 모든 상품 제목에서 수량 패턴 추출
+  const titlePatterns = products.map((product) => {
+    // 제목에서 수량 패턴 추출 (예: "아보카도 1알", "아보카도 2알")
+    const match = product.title.match(
+      /^(.*?)(?:\s+(\d+)\s*([알개봉팩세트박스통]+))?$/
+    );
+    if (!match) return null;
+
+    const [_, baseName, quantity, unit] = match;
+    return {
+      product,
+      baseName: baseName.trim(),
+      quantity: quantity ? parseInt(quantity) : 1,
+      unit: unit || "",
+    };
+  });
+
+  // 수량 패턴이 없는 상품이 있으면 통합 불가
+  if (titlePatterns.some((pattern) => pattern === null)) return null;
+
+  // 기본 이름이 모두 같은지 확인 (대소문자, 앞뒤 공백 무시)
+  const baseNames = new Set(
+    titlePatterns.map((p) => p.baseName.toLowerCase().trim())
+  );
+  if (baseNames.size !== 1) return null;
+
+  // 단위가 모두 같거나 비슷한지 확인
+  const units = new Set(titlePatterns.map((p) => p.unit.toLowerCase().trim()));
+  const similarUnits = [
+    "개",
+    "알",
+    "과",
+    "낱개",
+    "각",
+    "봉",
+    "봉지",
+    "팩",
+    "통",
+  ];
+  const isSimilarUnits = Array.from(units).every(
+    (unit) => similarUnits.includes(unit) || unit === ""
+  );
+
+  if (units.size > 2 && !isSimilarUnits) return null;
+
+  // 모든 조건 만족 시 통합된 상품 생성
+  const baseName = titlePatterns[0].baseName;
+  const unit = Array.from(units)[0] || titlePatterns[0].unit;
+
+  // 통합된 priceOptions 생성
+  const priceOptions = titlePatterns.map((pattern) => ({
+    quantity: pattern.quantity,
+    price: pattern.product.basePrice,
+    description: `${pattern.quantity}${unit}`,
+  }));
+
+  // 가격 옵션을 수량 순으로 정렬
+  priceOptions.sort((a, b) => a.quantity - b.quantity);
+
+  // 통합된 상품 생성
+  const mergedProduct = {
+    title: baseName, // "아보카도"와 같이 기본 이름만 사용
+    basePrice: priceOptions[0].price, // 가장 작은 수량의 가격을 기본 가격으로
+    priceOptions, // 통합된 가격 옵션
+    // 첫 번째 상품의 다른 속성들 복사
+    quantity: 1,
+    quantityText: titlePatterns[0].product.quantityText || null,
+    category: titlePatterns[0].product.category || "기타",
+    status: titlePatterns[0].product.status || "판매중",
+    tags: titlePatterns[0].product.tags || [],
+    features: titlePatterns[0].product.features || [],
+    pickupInfo: titlePatterns[0].product.pickupInfo || null,
+    pickupDate: titlePatterns[0].product.pickupDate || null,
+    pickupType: titlePatterns[0].product.pickupType || null,
+  };
+
+  logger.info(
+    `수량 기반으로 ${products.length}개 상품이 1개 상품으로 통합되었습니다: ${baseName}`
+  );
+  logger.info(`통합된 가격 옵션: ${JSON.stringify(priceOptions)}`);
+
+  return mergedProduct;
 }
 
 module.exports = {
