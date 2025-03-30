@@ -1,9 +1,13 @@
 // src/services/crawler/band.auth.js (통합된 버전)
-const puppeteer = require("puppeteer");
+require("dotenv").config();
+const puppeteer = require("puppeteer-extra");
 const logger = require("../../config/logger");
 const fs = require("fs").promises;
 const path = require("path");
 const { createClient } = require("@supabase/supabase-js");
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+const cp = require("copy-paste");
+puppeteer.use(StealthPlugin());
 
 // 쿠키 저장 경로 설정
 const COOKIES_PATH = path.join(__dirname, "../../../cookies");
@@ -58,13 +62,14 @@ class BandAuth {
       this.updateTaskStatus("processing", "initialize", 0);
 
       this.browser = await puppeteer.launch({
-        headless: false, // 기본적으로 headless 모드 활성화
+        headless: "new", // headless 모드 비활성화로 변경
         args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
         defaultViewport: null,
+        userDataDir: "./user_data", // 세션 지속 저장
       });
 
       this.page = await this.browser.newPage();
-      await this.page.setViewport({ width: 1920, height: 1080 });
+      await this.page.setViewport({ width: 1280, height: 720 });
 
       // 쿠키를 유지하기 위한 설정
       await this.page.setExtraHTTPHeaders({
@@ -316,148 +321,198 @@ class BandAuth {
     }
   }
 
+  /**
+   * 네이버 로그인 시도
+   */
   async naverLogin(naverId, naverPassword) {
-    // 기다리는 시간 랜덤
-    const min = 5000; // 최소 5초
-    const max = 8000; // 최대 8초
-    const randomDelay = Math.floor(Math.random() * (max - min + 1)) + min;
+    const randomDelay = Math.floor(Math.random() * (3000 - 1000 + 1)) + 1000;
+    this.updateTaskStatus("processing", "네이버 로그인 시작", 40);
 
     try {
-      this.updateTaskStatus("processing", "네이버 로그인 시작", 40);
-
-      // 현재 URL 확인
-      const currentUrl = this.page.url();
-
-      // 1. 현재 페이지가 auth.band.us 인 경우 (밴드 로그인 페이지)
-      if (currentUrl.includes("auth.band.us")) {
-        this.updateTaskStatus(
-          "processing",
-          "밴드 로그인 페이지에서 네이버 로그인 버튼 클릭",
-          45
-        );
-
-        // 네이버 로그인 버튼 클릭
-        const naverBtnClicked = await this.page.evaluate(() => {
-          const naverBtn = document.querySelector(
-            "a.-naver.externalLogin, a.uButtonRound.-h56.-icoType.-naver"
-          );
-          if (naverBtn) {
-            naverBtn.click();
-            return true;
-          }
-          return false;
-        });
-
-        if (!naverBtnClicked) {
-          this.updateTaskStatus(
-            "processing",
-            "네이버 로그인 버튼을 찾을 수 없어 직접 네이버 로그인 페이지로 이동",
-            46
-          );
-          await this.page.goto("https://nid.naver.com/nidlogin.login", {
-            waitUntil: "networkidle2",
-            timeout: 30000,
-          });
-        } else {
-          // 네이버 로그인 페이지로 이동 대기
-          await this.page
-            .waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 })
-            .catch(() => {});
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, randomDelay));
-      }
-      // 2. 현재 페이지가 밴드 홈 또는 다른 밴드 페이지인 경우
-      else if (currentUrl.includes("home")) {
-        this.updateTaskStatus(
-          "processing",
-          "홈 페이지에서 로그인 버튼 클릭",
-          45
-        );
-
-        // 로그인 버튼 클릭
-        const loginBtnClicked = await this.page.evaluate(() => {
-          const loginBtn = document.querySelector(
-            "a.login, button._loginBtn, a.btnTextStyle._btnLogin"
-          );
-          if (loginBtn) {
-            loginBtn.click();
-            return true;
-          }
-          return false;
-        });
-
-        // 로그인 페이지에서 네이버 로그인 버튼 클릭
-        await new Promise((resolve) => setTimeout(resolve, randomDelay));
-        await this.page.evaluate(() => {
-          const naverBtn = document.querySelector(
-            "a.-naver.externalLogin, a.uButtonRound.-h56.-icoType.-naver"
-          );
-          if (naverBtn) naverBtn.click();
-        });
-
-        // 네이버 로그인 페이지로 이동 대기
-        await this.page
-          .waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 })
-          .catch(() => {});
-        await new Promise((resolve) => setTimeout(resolve, randomDelay));
-      }
-
-      // 3. 네이버 로그인 페이지에서 아이디/비밀번호 입력
-      this.updateTaskStatus("processing", "네이버 아이디/비밀번호 입력", 50);
-
-      // ID 필드 대기 및 입력
-      await this.page
-        .waitForSelector("#id", { visible: true, timeout: 30000 })
-        .catch(() => {});
-
-      // 아이디 입력
-      await this.page.evaluate((id) => {
-        const idField = document.querySelector("#id");
-        if (idField) {
-          idField.value = id;
-          idField.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-      }, naverId);
-
-      await new Promise((resolve) => setTimeout(resolve, randomDelay));
-
-      // 비밀번호 입력
-      await this.page.evaluate((pw) => {
-        const pwField = document.querySelector("#pw");
-        if (pwField) {
-          pwField.value = pw;
-          pwField.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-      }, naverPassword);
-
-      await new Promise((resolve) => setTimeout(resolve, randomDelay));
-
-      // 로그인 버튼 클릭
-      this.updateTaskStatus("processing", "로그인 버튼 클릭", 60);
-      const loginClicked = await this.page.evaluate(() => {
-        const loginBtn = document.querySelector(
-          'button.btn_login, button[type="submit"]'
-        );
-        if (loginBtn) {
-          loginBtn.click();
-          return true;
-        }
-        return false;
+      await this.page.goto("https://auth.band.us/login_page", {
+        waitUntil: "networkidle2",
+        timeout: 30000,
       });
 
-      if (!loginClicked) {
-        // 버튼 클릭 실패 시 엔터키 시도
-        this.updateTaskStatus("processing", "Enter 키로 로그인", 60);
-        await this.page.keyboard.press("Enter");
-      }
+      await new Promise((resolve) => setTimeout(resolve, randomDelay));
 
-      // 리다이렉트 대기
+      // 네이버 로그인 버튼 클릭
+      await this.page.evaluate(() => {
+        const naverBtn = document.querySelector(
+          "a.-naver.externalLogin, a.uButtonRound.-h56.-icoType.-naver"
+        );
+        if (naverBtn) naverBtn.click();
+      });
+
       await this.page
         .waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 })
         .catch(() => {});
 
-      // 리캡챠 감지
+      // 3. 네이버 로그인 페이지에서 아이디/비밀번호 입력
+      this.updateTaskStatus("processing", "네이버 아이디/비밀번호 입력", 50);
+
+      // 페이지가 완전히 로드될 때까지 기다림
+      await this.page
+        .waitForSelector("#id", { timeout: 30000 })
+        .catch((err) => {
+          this.updateTaskStatus(
+            "processing",
+            `ID 필드 대기 중 오류 (계속 진행): ${err.message}`,
+            51
+          );
+        });
+
+      // 잠시 대기하여 페이지가 안정화되도록 함
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+
+      try {
+        // 직접 자바스크립트 삽입으로 입력 (가장 안정적인 방법)
+        await this.page.evaluate(
+          (id, pw) => {
+            // ID 필드 입력
+            if (document.querySelector("#id")) {
+              document.querySelector("#id").value = id;
+              document
+                .querySelector("#id")
+                .dispatchEvent(new Event("input", { bubbles: true }));
+              document
+                .querySelector("#id")
+                .dispatchEvent(new Event("change", { bubbles: true }));
+            }
+
+            // 비밀번호 필드 입력
+            if (document.querySelector("#pw")) {
+              document.querySelector("#pw").value = pw;
+              document
+                .querySelector("#pw")
+                .dispatchEvent(new Event("input", { bubbles: true }));
+              document
+                .querySelector("#pw")
+                .dispatchEvent(new Event("change", { bubbles: true }));
+            }
+          },
+          naverId,
+          naverPassword
+        );
+
+        this.updateTaskStatus(
+          "processing",
+          "ID와 비밀번호 입력 완료 (직접 DOM 설정)",
+          58
+        );
+
+        // 확인을 위한 대기
+        await new Promise((resolve) => setTimeout(resolve, randomDelay));
+      } catch (inputError) {
+        this.updateTaskStatus(
+          "processing",
+          `입력 과정 오류 (계속 진행): ${inputError.message}`,
+          59
+        );
+
+        // 실패 시 대체 방법으로 type 메서드 사용
+        try {
+          // ID 직접 입력
+          await this.page.evaluate(() => {
+            if (document.querySelector("#id")) {
+              document.querySelector("#id").value = "";
+            }
+          });
+
+          await this.page.type("#id", naverId, { delay: 150 });
+          this.updateTaskStatus("processing", "ID 입력 완료 (type 메서드)", 55);
+
+          await new Promise((resolve) => setTimeout(resolve, randomDelay));
+
+          // 비밀번호 입력
+          await this.page.evaluate(() => {
+            if (document.querySelector("#pw")) {
+              document.querySelector("#pw").value = "";
+            }
+          });
+
+          await this.page.type("#pw", naverPassword, { delay: 150 });
+          this.updateTaskStatus(
+            "processing",
+            "비밀번호 입력 완료 (type 메서드)",
+            58
+          );
+
+          await new Promise((resolve) => setTimeout(resolve, randomDelay));
+        } catch (e) {
+          this.updateTaskStatus(
+            "processing",
+            `대체 입력 방식도 실패: ${e.message}`,
+            59
+          );
+        }
+      }
+
+      // 엔터키 입력으로 로그인
+      this.updateTaskStatus("processing", "Enter 키로 로그인", 60);
+      try {
+        await this.page.keyboard.press("Enter").catch((e) => {
+          this.updateTaskStatus(
+            "processing",
+            `엔터키 입력 오류: ${e.message}`,
+            61
+          );
+        });
+      } catch (loginError) {
+        this.updateTaskStatus(
+          "processing",
+          `로그인 시도 오류 (계속 진행): ${loginError.message}`,
+          63
+        );
+      }
+
+      // 네비게이션 완료 대기
+      await this.page
+        .waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 })
+        .catch((e) => {
+          this.updateTaskStatus(
+            "processing",
+            `네비게이션 대기 오류 (계속 진행): ${e.message}`,
+            64
+          );
+        });
+
+      await new Promise((resolve) => setTimeout(resolve, randomDelay * 2));
+
+      // 밴드 홈페이지로 직접 이동
+      this.updateTaskStatus("processing", "밴드 홈페이지로 이동", 70);
+      await this.page
+        .goto("https://www.band.us/home", {
+          waitUntil: "networkidle2",
+          timeout: 30000,
+        })
+        .catch((e) => {
+          this.updateTaskStatus(
+            "processing",
+            `밴드 홈페이지 이동 오류 (계속 진행): ${e.message}`,
+            71
+          );
+        });
+
+      // 충분한 로딩 시간 대기
+      await new Promise((resolve) => setTimeout(resolve, randomDelay));
+
+      // 로그인 확인
+      const isLoggedIn = await this.checkLoginStatus().catch(() => false);
+
+      if (isLoggedIn) {
+        this.updateTaskStatus("processing", "네이버 로그인 성공", 75);
+        this.isLoggedIn = true;
+
+        // 쿠키 저장
+        const naverCookies = await this.browser.cookies();
+        await this.saveCookies(naverId, naverCookies);
+
+        this.updateTaskStatus("completed", "로그인 프로세스 완료", 100);
+        return true;
+      }
+
+      // 로그인 실패 - 리캡챠 확인
       const hasRecaptcha = await this.detectRecaptcha();
       if (hasRecaptcha) {
         this.updateTaskStatus(
@@ -519,233 +574,186 @@ class BandAuth {
           // 네이버 로그인 버튼 클릭
           await new Promise((resolve) => setTimeout(resolve, 2000));
 
-          const naverBtnClicked = await this.page
+          // 네이버 로그인 버튼 클릭
+          await this.page
             .evaluate(() => {
               const naverBtn = document.querySelector(
                 "a.-naver.externalLogin, a.uButtonRound.-h56.-icoType.-naver"
               );
-              if (naverBtn) {
-                naverBtn.click();
-                return true;
-              }
-              return false;
+              if (naverBtn) naverBtn.click();
             })
-            .catch(() => false);
+            .catch((e) => {
+              this.updateTaskStatus(
+                "processing",
+                `네이버 로그인 버튼 클릭 오류: ${e.message}`,
+                67
+              );
+            });
 
           // 네이버 로그인 페이지로 이동 대기
           await this.page
             .waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 })
             .catch(() => {});
 
-          // 아이디 입력
-          // await this.page
-          //   .evaluate((id) => {
-          //     const idField = document.querySelector("#id");
-          //     if (idField) {
-          //       idField.value = id;
-          //       idField.dispatchEvent(new Event("input", { bubbles: true }));
-          //     }
-          //   }, naverId)
-          //   .catch(() => {
-          //     console.error("아이디 입력 실패");
-          //   });
+          // 로그인 입력 필드 기다리기
+          await this.page
+            .waitForSelector("#id", { timeout: 10000 })
+            .catch(() => {});
 
-          // ID 필드 포커스
-          // 1. 클립보드 데이터 시뮬레이션
-          await this.page.evaluate((text) => {
-            // 클립보드 이벤트에 사용할 데이터 준비
-            const dataTransfer = new DataTransfer();
-            const clipboardEvent = new ClipboardEvent("paste", {
-              clipboardData: dataTransfer,
-              bubbles: true,
+          // 잠시 대기
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+
+          // 아이디와 비밀번호 입력 시도
+          try {
+            // ID 값을 먼저 지우고 새로 입력
+            await this.page.evaluate(() => {
+              if (document.querySelector("#id")) {
+                document.querySelector("#id").value = "";
+              }
             });
 
-            // 데이터 추가
-            dataTransfer.setData("text/plain", text);
+            await this.page.type("#id", naverId, { delay: 150 });
+            this.updateTaskStatus(
+              "processing",
+              "리캡챠 모드에서 ID 입력 완료",
+              68
+            );
 
-            // ID 필드 가져오기
-            const idField = document.querySelector("#id");
+            await new Promise((resolve) => setTimeout(resolve, 2000));
 
-            // 이벤트 발생
-            idField.dispatchEvent(clipboardEvent);
+            // 비밀번호도 동일하게 처리
+            await this.page.evaluate(() => {
+              if (document.querySelector("#pw")) {
+                document.querySelector("#pw").value = "";
+              }
+            });
 
-            // 값 직접 설정 (이벤트만으로 값이 설정되지 않을 수 있음)
-            idField.value = text;
-            idField.dispatchEvent(new Event("input", { bubbles: true }));
-          }, naverId);
+            await this.page.type("#pw", naverPassword, { delay: 150 });
+            this.updateTaskStatus(
+              "processing",
+              "리캡챠 모드에서 비밀번호 입력 완료",
+              69
+            );
 
-          // 비밀번호 입력
-          // await this.page
-          //   .evaluate((pw) => {
-          //     const pwField = document.querySelector("#pw");
-          //     if (pwField) {
-          //       pwField.value = pw;
-          //       pwField.dispatchEvent(new Event("input", { bubbles: true }));
-          //     }
-          //   }, naverPassword)
-          //   .catch(() => {
-          //     console.error("비밀번호 입력 실패");
-          //   });
-          // 비밀번호 필드에도 동일한 방식 적용
-          await this.page.focus("#pw");
-          await this.page.evaluate((text) => {
-            const pwField = document.querySelector("#pw");
-            pwField.value = text;
-            pwField.dispatchEvent(new Event("input", { bubbles: true }));
-          }, naverPassword);
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+          } catch (e) {
+            this.updateTaskStatus(
+              "processing",
+              `리캡챠 모드에서 입력 오류: ${e.message}`,
+              69
+            );
+
+            // 실패 시 직접 DOM 조작 시도
+            try {
+              await this.page.evaluate(
+                (id, pw) => {
+                  if (document.querySelector("#id")) {
+                    document.querySelector("#id").value = id;
+                    document
+                      .querySelector("#id")
+                      .dispatchEvent(new Event("input", { bubbles: true }));
+                    document
+                      .querySelector("#id")
+                      .dispatchEvent(new Event("change", { bubbles: true }));
+                  }
+
+                  if (document.querySelector("#pw")) {
+                    document.querySelector("#pw").value = pw;
+                    document
+                      .querySelector("#pw")
+                      .dispatchEvent(new Event("input", { bubbles: true }));
+                    document
+                      .querySelector("#pw")
+                      .dispatchEvent(new Event("change", { bubbles: true }));
+                  }
+                },
+                naverId,
+                naverPassword
+              );
+
+              this.updateTaskStatus(
+                "processing",
+                "리캡챠 모드에서 DOM 조작으로 입력 완료",
+                69
+              );
+            } catch (err) {
+              this.updateTaskStatus(
+                "processing",
+                `리캡챠 모드 입력 완전 실패: ${err.message}`,
+                69
+              );
+            }
+          }
 
           this.updateTaskStatus(
             "waiting",
             "리캡챠가 감지되었습니다. 사용자가 직접 로그인하도록 브라우저가 열렸습니다. 로그인을 완료해주세요.",
             65
           );
+
+          // 수동 로그인 대기 (최대 5분)
+          let isLoggedIn = false;
+          let checkCount = 0;
+          const maxChecks = 30; // 10초 간격으로 30번 체크 (약 5분)
+
+          while (!isLoggedIn && checkCount < maxChecks) {
+            await new Promise((resolve) => setTimeout(resolve, 10000)); // 10초마다 확인
+
+            try {
+              // URL로 판단하지 않고 실제 프로필 요소 확인으로 로그인 상태 판별
+              isLoggedIn = await this.page
+                .evaluate(() => {
+                  // profileInner 요소가 존재하면 로그인된 상태
+                  const profileElement =
+                    document.querySelector(".profileInner");
+                  return !!profileElement;
+                })
+                .catch(() => false);
+
+              this.updateTaskStatus(
+                "waiting",
+                `수동 로그인 대기 중... (${
+                  checkCount + 1
+                }/${maxChecks}) - profileInner ${
+                  isLoggedIn ? "확인됨" : "확인되지 않음"
+                }`,
+                65 + Math.floor((checkCount / maxChecks) * 10)
+              );
+
+              if (isLoggedIn) {
+                this.updateTaskStatus("processing", "수동 로그인 성공", 75);
+
+                // 사용자가 로그인 완료 후 페이지를 확인할 수 있도록 충분한 시간 제공
+                this.updateTaskStatus(
+                  "waiting",
+                  "로그인이 완료되었습니다. 10초 후 자동으로 진행합니다. 페이지를 확인하세요.",
+                  75
+                );
+
+                // 10초 대기
+                await new Promise((resolve) => setTimeout(resolve, 10000));
+
+                break;
+              }
+            } catch (e) {
+              console.error("로그인 상태 확인 중 오류:", e.message);
+            }
+
+            checkCount++;
+          }
+
+          if (!isLoggedIn) {
+            this.updateTaskStatus("failed", "수동 로그인 시간 초과", 75);
+            throw new Error("수동 로그인 시간 초과");
+          }
         } catch (error) {
           console.error("리캡챠 처리 중 오류:", error.message);
           this.updateTaskStatus(
-            "processing",
-            `리캡챠 처리 중 오류 발생: ${error.message}. 계속 진행합니다.`,
+            "failed",
+            `리캡챠 처리 중 오류 발생: ${error.message}`,
             66
           );
-
-          // 어떤 문제가 발생하더라도 새 브라우저 생성 시도
-          try {
-            this.browser = await puppeteer.launch({
-              headless: false,
-              args: [
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--start-maximized",
-              ],
-              defaultViewport: null,
-            });
-
-            this.page = await this.browser.newPage();
-            await this.page.setViewport({ width: 1920, height: 1080 });
-
-            await this.page.goto("https://nid.naver.com/nidlogin.login", {
-              waitUntil: "networkidle2",
-              timeout: 30000,
-            });
-          } catch (browserError) {
-            console.error("새 브라우저 생성 실패:", browserError.message);
-            this.updateTaskStatus(
-              "failed",
-              `새 브라우저 생성 실패: ${browserError.message}`,
-              66
-            );
-            throw browserError;
-          }
-        }
-
-        // 수동 로그인 대기 (최대 5분)
-        let isLoggedIn = false;
-        let checkCount = 0;
-        const maxChecks = 30; // 10초 간격으로 30번 체크 (약 5분)
-
-        while (!isLoggedIn && checkCount < maxChecks) {
-          await new Promise((resolve) => setTimeout(resolve, 10000)); // 10초마다 확인
-
-          try {
-            // URL로 판단하지 않고 실제 프로필 요소 확인으로 로그인 상태 판별
-            isLoggedIn = await this.page
-              .evaluate(() => {
-                // profileInner 요소가 존재하면 로그인된 상태
-                const profileElement = document.querySelector(".profileInner");
-                return !!profileElement;
-              })
-              .catch(() => false);
-
-            this.updateTaskStatus(
-              "waiting",
-              `수동 로그인 대기 중... (${
-                checkCount + 1
-              }/${maxChecks}) - profileInner ${
-                isLoggedIn ? "확인됨" : "확인되지 않음"
-              }`,
-              65 + Math.floor((checkCount / maxChecks) * 10)
-            );
-
-            if (isLoggedIn) {
-              this.updateTaskStatus("processing", "수동 로그인 성공", 75);
-
-              // 사용자가 로그인 완료 후 페이지를 확인할 수 있도록 충분한 시간 제공
-              this.updateTaskStatus(
-                "waiting",
-                "로그인이 완료되었습니다. 10초 후 자동으로 진행합니다. 페이지를 확인하세요.",
-                75
-              );
-
-              // 10초 대기
-              await new Promise((resolve) => setTimeout(resolve, 10000));
-
-              break;
-            }
-          } catch (e) {
-            console.error("로그인 상태 확인 중 오류:", e.message);
-          }
-
-          checkCount++;
-        }
-
-        if (!isLoggedIn) {
-          this.updateTaskStatus("failed", "수동 로그인 시간 초과", 75);
-          throw new Error("수동 로그인 시간 초과");
-        }
-      }
-
-      // 로그인 후 충분한 대기 시간
-      await new Promise((resolve) => setTimeout(resolve, randomDelay * 2));
-
-      // 로그인 상태 확인
-      const loginConfirmed = await this.checkLoginStatus();
-      if (loginConfirmed) {
-        this.updateTaskStatus("processing", "네이버 로그인 성공", 80);
-        this.isLoggedIn = true;
-
-        // 쿠키 저장
-        const naverCookies = await this.browser.cookies();
-        await this.saveCookies(naverId, naverCookies);
-
-        this.updateTaskStatus("completed", "로그인 프로세스 완료", 100);
-        return true;
-      } else {
-        // 로그인 실패 - 밴드 홈으로 이동해서 한번 더 확인
-        this.updateTaskStatus(
-          "processing",
-          "로그인 확인 실패, 추가 확인 중...",
-          75
-        );
-
-        await this.page.goto("https://band.us/home", {
-          waitUntil: "networkidle2",
-          timeout: 30000,
-        });
-
-        const finalCheck = await this.checkLoginStatus();
-        if (finalCheck) {
-          this.updateTaskStatus(
-            "processing",
-            "네이버 로그인 성공 (추가 확인)",
-            80
-          );
-          this.isLoggedIn = true;
-
-          // 쿠키 저장
-          const naverCookies = await this.browser.cookies();
-          await this.saveCookies(naverId, naverCookies);
-
-          this.updateTaskStatus("completed", "로그인 프로세스 완료", 100);
-          return true;
-        } else {
-          this.updateTaskStatus("failed", "로그인 실패", 75);
-          this.isLoggedIn = false;
-
-          // 디버깅 스크린샷
-          await this.page.screenshot({
-            path: `login-failed-${Date.now()}.png`,
-          });
-
-          throw new Error("로그인 실패: 확인 과정에서 로그인되지 않음");
+          return false;
         }
       }
     } catch (error) {

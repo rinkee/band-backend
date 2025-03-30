@@ -410,6 +410,23 @@ function hasClosingKeywords(comment) {
   return closingKeywords.some((keyword) => lowerComment.includes(keyword));
 }
 
+function generatePostUniqueId(userId, bandId, postId) {
+  // 가격처럼 변동 가능성이 있는 값은 제외하고, 변하지 않는 핵심 속성만 사용합니다.
+  const stableData = `${userId}-${bandId}-${postId}}`;
+  return crypto.createHash("sha256").update(stableData).digest("hex");
+}
+
+function generateProductUniqueId(bandId, postId, product) {
+  // 가격처럼 변동 가능성이 있는 값은 제외하고, 변하지 않는 핵심 속성만 사용합니다.
+  const stableData = `${bandId}-${postId}-${product.title}`;
+  return crypto.createHash("sha256").update(stableData).digest("hex");
+}
+
+function generateOrderUniqueId(bandId, postId, comment) {
+  const stableData = `${bandId}-${postId}-${comment.author}-${comment.content}-${comment.time}`;
+  return crypto.createHash("sha256").update(stableData).digest("hex");
+}
+
 module.exports = {
   parseKoreanDate,
   safeParseDate,
@@ -418,4 +435,7 @@ module.exports = {
   generateSimpleId,
   extractQuantityFromComment,
   hasClosingKeywords,
+  generatePostUniqueId,
+  generateProductUniqueId,
+  generateOrderUniqueId,
 };

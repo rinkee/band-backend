@@ -7,6 +7,9 @@ const {
   generateSimpleId,
   extractQuantityFromComment,
   hasClosingKeywords,
+  generateProductUniqueId,
+  generateOrderUniqueId,
+  generatePostUniqueId,
 } = require("./band.utils");
 const logger = require("../../config/logger");
 const cheerio = require("cheerio");
@@ -118,17 +121,32 @@ class BandPosts extends BandAuth {
         return null;
       }
 
-      await this.page.waitForSelector(
-        ".postWrap, .postMain, .postText, .txtBody",
-        {
+      // 댓글 영역 로드를 시도하되, 타임아웃 발생 시 빈 배열로 처리
+      try {
+        await this.page.waitForSelector(".sCommentList", {
           visible: true,
           timeout: 5000,
-        }
-      );
+        });
+      } catch (e) {
+        console.warn(
+          "댓글 영역이 없거나 로딩되지 않았습니다. (오류: " + e.message + ")"
+        );
+      }
+
+      // 댓글이 20개가 넘으면 "이전 댓글" 버튼이 나타납니다.
+      const prevButtonSelector =
+        "button[data-uiselector='previousCommentButton']";
+      while ((await this.page.$(prevButtonSelector)) !== null) {
+        console.info(
+          "이전 댓글 버튼이 존재합니다. 클릭하여 추가 댓글을 로드합니다."
+        );
+        await this.page.click(prevButtonSelector);
+        await this.page.waitForTimeout(1000);
+      }
 
       const currentUrl = await this.page.url();
       const content = await this.page.content();
-      const $ = cheerio.load(content);
+      const $ = require("cheerio").load(content);
 
       const postIdMatch = currentUrl.match(/\/post\/(\d+)/);
       const postId = postIdMatch?.[1] || `unknown_${Date.now()}`;
@@ -148,28 +166,29 @@ class BandPosts extends BandAuth {
         if (src) imageUrls.push(src);
       });
 
-      // 개선된 댓글 추출
+      // 댓글 추출: 댓글 영역이 없으면 빈 배열 처리
       const comments = [];
-      const commentElements = $(".cComment, .comment, div[class*='comment']");
+      const commentElements = $(".cComment");
       console.info(`발견된 댓글 요소 수: ${commentElements.length}`);
 
       commentElements.each((i, el) => {
-        const author =
+        const commentAuthor =
           $(el)
             .find("button[data-uiselector='authorNameButton'] strong.name")
             .text()
             .trim() || "익명";
-
-        const content =
+        const commentContent =
           $(el).find("p.txt._commentContent").text().trim() ||
           $(el).find(".txt").text().trim();
-
-        const time =
+        const commentTime =
           $(el).find("time.time").attr("title") ||
           $(el).find("time.time").text().trim();
-
-        if (content) {
-          comments.push({ author, content, time });
+        if (commentContent) {
+          comments.push({
+            author: commentAuthor,
+            content: commentContent,
+            time: commentTime,
+          });
         }
       });
 
@@ -550,8 +569,17 @@ class BandPosts extends BandAuth {
         let postDataToInsert = null;
 
         // 새 ID 생성: UUID 사용
-        const productId = generateUUID();
-        const uniquePostId = generateUUID();
+        // const productId = generateUUID();
+        const uniqueProductId = generateProductUniqueId(
+          this.bandId,
+          post.postId,
+          post
+        );
+        const uniquePostId = generatePostUniqueId(
+          userId,
+          this.bandId,
+          post.postId
+        );
 
         if (!post.postId || post.postId === "undefined") {
           post.postId = generateUUID();
@@ -612,7 +640,7 @@ class BandPosts extends BandAuth {
 
         // 제품 데이터 준비
         const productData = {
-          product_id: productId,
+          product_id: uniqueProductId,
           user_id: userId,
           band_id: parseInt(this.bandId, 10) || 0,
           title: post.postTitle || "제목 없음",
@@ -889,10 +917,10 @@ class BandPosts extends BandAuth {
               : new Date(),
             comment_count: post.commentCount,
             view_count: post.readCount || 0,
-            product_id: productId,
+            product_id: uniqueProductId,
             products_data: {
               // JSONB 필드로 저장하여 확장성 유지
-              product_ids: [productId],
+              product_ids: [uniqueProductId],
               has_multiple_products: false,
             },
             crawled_at: new Date(),
@@ -943,7 +971,7 @@ class BandPosts extends BandAuth {
             const orderData = {
               order_id: orderId,
               user_id: userId,
-              product_id: productId,
+              product_id: uniqueProductId,
               post_id: post.postId,
               band_id: this.bandId,
               customer_name: customerName,

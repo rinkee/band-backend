@@ -1,0 +1,40 @@
+winston:create-logger: Define prototype method for "error"
+winston:create-logger: Define prototype method for "warn"
+winston:create-logger: Define prototype method for "info"
+winston:create-logger: Define prototype method for "http"
+winston:create-logger: Define prototype method for "verbose"
+winston:create-logger: Define prototype method for "debug"
+winston:create-logger: Define prototype method for "silly"
+winston:create-logger: Define prototype method for "error"
+winston:create-logger: Define prototype method for "warn"
+winston:create-logger: Define prototype method for "info"
+winston:create-logger: Define prototype method for "http"
+winston:create-logger: Define prototype method for "debug"
+2025-03-28T08:34:42.223Z puppeteer-extra-plugin:base:stealth Initialized.
+2025-03-28T08:34:42.225Z puppeteer-extra plugin registered stealth
+winston:file: written true false
+winston:file: logged 3659 {"date":"Fri Mar 28 2025 17:34:42 GMT+0900 (대한민국 표준시)","error":{},"exception":true,"level":"error","message":"uncaughtException: supabaseUrl is required.\nError: supabaseUrl is required.\n    at new SupabaseClient (/Users/seong/Band/back/node_modules/@supabase/supabase-js/dist/main/SupabaseClient.js:43:19)\n    at createClient (/Users/seong/Band/back/node_modules/@supabase/supabase-js/dist/main/index.js:38:12)\n    at Object.<anonymous> (/Users/seong/Band/back/src/services/crawler/band.auth.js:15:18)\n    at Module._compile (node:internal/modules/cjs/loader:1469:14)\n    at Module._extensions..js (node:internal/modules/cjs/loader:1548:10)\n    at Module.load (node:internal/modules/cjs/loader:1288:32)\n    at Module._load (node:internal/modules/cjs/loader:1104:12)\n    at Module.require (node:internal/modules/cjs/loader:1311:19)\n    at require (node:internal/modules/helpers:179:18)\n    at Object.<anonymous> (/Users/seong/Band/back/src/services/crawler/band.posts.js:2:18)","os":{"loadavg":[2.15283203125,2.462890625,2.484375],"uptime":19514},"process":{"argv":["/usr/local/bin/node","/Users/seong/Band/back/test/crawl.js"],"cwd":"/Users/seong/Band/back","execPath":"/usr/local/bin/node","gid":20,"memoryUsage":{"arrayBuffers":16659,"external":2227098,"heapTotal":31289344,"heapUsed":17492264,"rss":55779328},"pid":19075,"uid":501,"version":"v20.18.0"},"service":"app","stack":"Error: supabaseUrl is required.\n    at new SupabaseClient (/Users/seong/Band/back/node_modules/@supabase/supabase-js/dist/main/SupabaseClient.js:43:19)\n    at createClient (/Users/seong/Band/back/node_modules/@supabase/supabase-js/dist/main/index.js:38:12)\n    at Object.<anonymous> (/Users/seong/Band/back/src/services/crawler/band.auth.js:15:18)\n    at Module._compile (node:internal/modules/cjs/loader:1469:14)\n    at Module._extensions..js (node:internal/modules/cjs/loader:1548:10)\n    at Module.load (node:internal/modules/cjs/loader:1288:32)\n    at Module._load (node:internal/modules/cjs/loader:1104:12)\n    at Module.require (node:internal/modules/cjs/loader:1311:19)\n    at require (node:internal/modules/helpers:179:18)\n    at Object.<anonymous> (/Users/seong/Band/back/src/services/crawler/band.posts.js:2:18)","timestamp":"2025-03-28 17:34:42","trace":[{"column":19,"file":"/Users/seong/Band/back/node_modules/@supabase/supabase-js/dist/main/SupabaseClient.js","function":"new SupabaseClient","line":43,"method":null,"native":false},{"column":12,"file":"/Users/seong/Band/back/node_modules/@supabase/supabase-js/dist/main/index.js","function":"createClient","line":38,"method":null,"native":false},{"column":18,"file":"/Users/seong/Band/back/src/services/crawler/band.auth.js","function":null,"line":15,"method":null,"native":false},{"column":14,"file":"node:internal/modules/cjs/loader","function":"Module._compile","line":1469,"method":"_compile","native":false},{"column":10,"file":"node:internal/modules/cjs/loader","function":"Module._extensions..js","line":1548,"method":".js","native":false},{"column":32,"file":"node:internal/modules/cjs/loader","function":"Module.load","line":1288,"method":"load","native":false},{"column":12,"file":"node:internal/modules/cjs/loader","function":"Module._load","line":1104,"method":"_load","native":false},{"column":19,"file":"node:internal/modules/cjs/loader","function":"Module.require","line":1311,"method":"require","native":false},{"column":18,"file":"node:internal/modules/helpers","function":"require","line":179,"method":null,"native":false},{"column":18,"file":"/Users/seong/Band/back/src/services/crawler/band.posts.js","function":null,"line":2,"method":null,"native":false}]}
+
+winston:file: stat done: error.log { size: 95194 }
+winston:file: create stream start /Users/seong/Band/back/logs/error.log { flags: 'a' }
+winston:file: create stream ok /Users/seong/Band/back/logs/error.log
+winston:file: stat done: combined.log { size: 3129215 }
+winston:file: create stream start /Users/seong/Band/back/logs/combined.log { flags: 'a' }
+winston:file: create stream ok /Users/seong/Band/back/logs/combined.log
+winston:file: stat done: crawler.log { size: 3126661 }
+winston:file: create stream start /Users/seong/Band/back/logs/crawler.log { flags: 'a' }
+winston:file: create stream ok /Users/seong/Band/back/logs/crawler.log
+winston:file: stat done: exceptions.log { size: 349941 }
+winston:file: create stream start /Users/seong/Band/back/logs/exceptions.log { flags: 'a' }
+winston:file: create stream ok /Users/seong/Band/back/logs/exceptions.log
+winston:file: stat done: rejections.log { size: 19088 }
+winston:file: create stream start /Users/seong/Band/back/logs/rejections.log { flags: 'a' }
+winston:file: create stream ok /Users/seong/Band/back/logs/rejections.log
+winston:file: file open ok /Users/seong/Band/back/logs/error.log
+winston:file: file open ok /Users/seong/Band/back/logs/crawler.log
+winston:file: file open ok /Users/seong/Band/back/logs/combined.log
+winston:file: file open ok /Users/seong/Band/back/logs/exceptions.log
+winston:file: file open ok /Users/seong/Band/back/logs/rejections.log
+winston:exception: finished
+winston:exception: doExit true
+winston:exception: process._exiting false
