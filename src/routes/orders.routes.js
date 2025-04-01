@@ -5,13 +5,13 @@ const ordersController = require("../controllers/orders.controller");
 const { authMiddleware } = require("../middlewares/auth.middleware");
 
 // 주문 목록 조회
-router.get("/", ordersController.getAllOrders);
+router.get("/", authMiddleware, ordersController.getAllOrders);
 
 // 주문 통계 조회
-router.get("/stats", ordersController.getOrderStats);
+router.get("/stats", authMiddleware, ordersController.getOrderStats);
 
 // 특정 주문 조회
-router.get("/:id", ordersController.getOrderById);
+router.get("/:id", authMiddleware, ordersController.getOrderById);
 
 // 주문 상태 업데이트
 router.put("/:id/status", authMiddleware, ordersController.updateOrderStatus);

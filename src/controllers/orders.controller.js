@@ -1,6 +1,7 @@
 // src/controllers/orders.controller.js - 주문 관련 컨트롤러
 const { createClient } = require("@supabase/supabase-js");
 const logger = require("../config/logger");
+const { orderService } = require("../services/orders.service");
 
 // Supabase 클라이언트 초기화
 const supabase = createClient(
@@ -276,14 +277,13 @@ const cancelOrder = async (req, res) => {
 };
 
 /**
- * 주문 통계 조회
+ * 주문 통계 조회 - 기간별 필터링 가능
  * @param {Object} req - 요청 객체
  * @param {Object} res - 응답 객체
  */
 const getOrderStats = async (req, res) => {
   try {
     const { userId } = req.query;
-    const period = req.query.period || "month"; // 기본값: 월간
 
     if (!userId) {
       return res.status(400).json({
@@ -292,70 +292,115 @@ const getOrderStats = async (req, res) => {
       });
     }
 
-    // 기간 설정
-    const now = new Date();
-    let startDate;
+    // 기간 파라미터 처리
+    const dateRange = req.query.dateRange || "7days"; // 기본값: 7일
+    const startDate = req.query.startDate;
+    const endDate = req.query.endDate;
 
-    switch (period) {
-      case "week":
-        startDate = new Date(now);
-        startDate.setDate(now.getDate() - 7);
-        break;
-      case "month":
-        startDate = new Date(now);
-        startDate.setMonth(now.getMonth() - 1);
-        break;
-      case "year":
-        startDate = new Date(now);
-        startDate.setFullYear(now.getFullYear() - 1);
-        break;
-      default:
-        startDate = new Date(now);
-        startDate.setMonth(now.getMonth() - 1);
+    // 날짜 범위 계산
+    let fromDate, toDate;
+    toDate = new Date(); // 현재 시간
+
+    if (dateRange === "custom" && startDate && endDate) {
+      // 사용자 지정 기간
+      fromDate = new Date(startDate);
+      toDate = new Date(endDate);
+      toDate.setHours(23, 59, 59, 999); // 종료일 끝 시간으로 설정
+    } else {
+      // 미리 정의된 기간
+      fromDate = new Date();
+      switch (dateRange) {
+        case "today":
+          // 오늘 데이터 (오늘 00:00:00부터 현재까지)
+          fromDate.setHours(0, 0, 0, 0);
+          break;
+        case "yesterday":
+          // 어제 데이터
+          fromDate.setDate(fromDate.getDate() - 1);
+          fromDate.setHours(0, 0, 0, 0);
+          toDate = new Date(fromDate);
+          toDate.setHours(23, 59, 59, 999);
+          break;
+        case "thisWeek":
+          // 이번 주 데이터 (월요일부터 현재까지)
+          const dayOfWeek = fromDate.getDay() || 7; // 0(일)을 7로 변경
+          const mondayOffset = dayOfWeek === 1 ? 0 : -(dayOfWeek - 1); // 월요일이면 0, 아니면 음수
+          fromDate.setDate(fromDate.getDate() + mondayOffset);
+          fromDate.setHours(0, 0, 0, 0);
+          break;
+        case "thisMonth":
+          // 이번 달 데이터 (1일부터 현재까지)
+          fromDate = new Date(fromDate.getFullYear(), fromDate.getMonth(), 1);
+          break;
+        case "lastMonth":
+          // 지난 달 데이터 (지난 달 1일부터 말일까지)
+          fromDate = new Date(
+            fromDate.getFullYear(),
+            fromDate.getMonth() - 1,
+            1
+          );
+          toDate = new Date(fromDate.getFullYear(), fromDate.getMonth() + 1, 0);
+          toDate.setHours(23, 59, 59, 999);
+          break;
+        case "30days":
+          fromDate.setDate(fromDate.getDate() - 30);
+          break;
+        case "90days":
+          fromDate.setDate(fromDate.getDate() - 90);
+          break;
+        case "7days":
+        default:
+          fromDate.setDate(fromDate.getDate() - 7);
+          break;
+      }
     }
 
-    // 주문 통계 쿼리
-    const { data: ordersData, error: ordersError } = await supabase
-      .from("orders")
-      .select("status, total_amount, ordered_at")
-      .eq("user_id", userId)
-      .gte("ordered_at", startDate.toISOString())
-      .lte("ordered_at", now.toISOString());
-
-    if (ordersError) {
-      throw ordersError;
-    }
-
-    // 통계 계산
-    const totalOrders = ordersData.length;
-    const totalSales = ordersData.reduce(
-      (sum, order) => sum + (order.total_amount || 0),
-      0
+    console.log(
+      `기간 필터링: ${fromDate.toISOString()} ~ ${toDate.toISOString()}`
     );
 
-    // 상태별 주문 수 계산
-    const statusCounts = {};
-    ordersData.forEach((order) => {
-      const status = order.status || "unknown";
-      statusCounts[status] = (statusCounts[status] || 0) + 1;
-    });
+    // 주문 데이터 조회
+    const orders = await orderService.getOrdersByDateRange(
+      userId,
+      fromDate,
+      toDate
+    );
+
+    // 서비스의 메소드를 사용하여 통계 계산
+    const stats = orderService.calculateOrderStats(orders);
+
+    // 최근 활동 (최대 10개)
+    const recentActivity = orders.slice(0, 10).map((order) => ({
+      type: "order",
+      orderId: order.order_id,
+      customerName: order.customer_name || "알 수 없음",
+      productName: order.products?.[0]?.title || "상품 정보 없음",
+      amount: order.total_amount || 0,
+      timestamp: order.ordered_at || order.created_at, // ordered_at이 우선, 없으면 created_at 사용
+      status: order.status,
+    }));
+
+    // 응답 데이터
+    const statsData = {
+      ...stats, // totalOrders, completedOrders, pendingOrders, totalSales, completedSales
+      recentActivity,
+      dateRange: {
+        from: fromDate,
+        to: toDate,
+        type: dateRange,
+      },
+    };
 
     return res.status(200).json({
       success: true,
-      data: {
-        totalOrders,
-        totalSales,
-        statusCounts,
-        period,
-        startDate: startDate.toISOString(),
-        endDate: now.toISOString(),
-      },
+      message: "주문 통계 조회 성공",
+      data: statsData,
     });
   } catch (error) {
-    logger.error("주문 통계 조회 오류:", error);
+    console.error("주문 통계 조회 오류:", error);
     return res.status(500).json({
       success: false,
-      message: "주문 통계를 불러오는 중 오류가 발생했습니다.",
+      message: "주문 통계 조회 중 오류가 발생했습니다.",
       error: error.message,
     });
   }

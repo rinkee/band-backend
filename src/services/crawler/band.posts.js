@@ -141,7 +141,8 @@ class BandPosts extends BandAuth {
           "이전 댓글 버튼이 존재합니다. 클릭하여 추가 댓글을 로드합니다."
         );
         await this.page.click(prevButtonSelector);
-        await this.page.waitForTimeout(1000);
+
+        await new Promise((resolve) => setTimeout(resolve, 1500));
       }
 
       const currentUrl = await this.page.url();

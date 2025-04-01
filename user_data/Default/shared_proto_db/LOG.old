@@ -1,3 +1,3 @@
-2025/03/30-15:00:03.173 a103 Reusing MANIFEST /Users/seong/Band/back/user_data/Default/shared_proto_db/MANIFEST-000001
-2025/03/30-15:00:03.173 a103 Recovering log #3
-2025/03/30-15:00:03.177 a103 Reusing old log /Users/seong/Band/back/user_data/Default/shared_proto_db/000003.log 
+2025/04/01-15:00:02.904 8803 Reusing MANIFEST /Users/seong/Band/back/user_data/Default/shared_proto_db/MANIFEST-000001
+2025/04/01-15:00:02.904 8803 Recovering log #4
+2025/04/01-15:00:02.906 8803 Reusing old log /Users/seong/Band/back/user_data/Default/shared_proto_db/000004.log 
