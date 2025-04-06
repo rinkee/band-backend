@@ -912,13 +912,13 @@ class BandPosts extends BandAuth {
             productMap.set(itemNumber, uniqueProductId);
 
             // --- VVV 가격 결정 로직 수정 VVV ---
-            let determinedBasePrice = 0; // 최종적으로 사용할 가격 변수
+            let determinedSalePrice = 0; // 최종적으로 사용할 가격 변수
 
             // 1. AI가 제공한 basePrice가 유효한 숫자인지 확인 (0보다 큰 경우 우선 사용)
             if (typeof item.basePrice === "number" && item.basePrice > 0) {
-              determinedBasePrice = item.basePrice;
+              determinedSalePrice = item.basePrice;
               logger.debug(
-                `ID ${originalBandPostIdStr}, 상품 ${item.title}: AI 제공 basePrice (${determinedBasePrice}) 사용.`
+                `ID ${originalBandPostIdStr}, 상품 ${item.title}: AI 제공 basePrice (${determinedSalePrice}) 사용.`
               );
             }
             // 2. basePrice가 유효하지 않고, priceOptions가 존재하며 비어있지 않은 경우
@@ -933,9 +933,9 @@ class BandPosts extends BandAuth {
                 firstOptionPrice >= 0
               ) {
                 // 0원일 수도 있으므로 >= 0 체크
-                determinedBasePrice = firstOptionPrice;
+                determinedSalePrice = firstOptionPrice;
                 logger.warn(
-                  `ID ${originalBandPostIdStr}, 상품 ${item.title}: AI basePrice(${item.basePrice})가 유효하지 않아 priceOptions[0].price (${determinedBasePrice}) 사용.`
+                  `ID ${originalBandPostIdStr}, 상품 ${item.title}: AI basePrice(${item.basePrice})가 유효하지 않아 priceOptions[0].price (${determinedSalePrice}) 사용.`
                 );
               } else {
                 logger.error(
@@ -952,25 +952,26 @@ class BandPosts extends BandAuth {
             // --- ^^^ 가격 결정 로직 수정 ^^^ ---
 
             const productData = {
-              // AI 결과 기반으로 productData 생성
               product_id: uniqueProductId,
               user_id: userId,
               post_id: uniquePostId,
-              post_number: post.postId,
+              post_number: originalBandPostIdStr, // postId가 문자열일 수 있으므로 원본 사용
               item_number: itemNumber,
               title: item.title || "제목 없음",
               content: postContent || "",
-              base_price: determinedBasePrice,
+              base_price: determinedSalePrice, // 결정된 판매 가격
+              original_price:
+                item.originalPrice !== null &&
+                item.originalPrice !== determinedSalePrice
+                  ? item.originalPrice
+                  : null, // 원가
               price_options:
                 Array.isArray(item.priceOptions) && item.priceOptions.length > 0
                   ? item.priceOptions
                   : [
                       {
                         quantity: 1,
-                        price:
-                          typeof item.basePrice === "number"
-                            ? item.basePrice
-                            : 0,
+                        price: determinedSalePrice,
                         description: "기본가",
                       },
                     ],
@@ -981,9 +982,18 @@ class BandPosts extends BandAuth {
               features: Array.isArray(item.features) ? item.features : [],
               status: item.status || "판매중",
               pickup_info: item.pickupInfo || null,
-              pickup_date: item.pickupDate || null,
+              pickup_date: item.pickupDate || null, // 이미 ISO 문자열 또는 null로 처리됨
               pickup_type: item.pickupType || null,
-              order_summary: { total_orders: 0, total_quantity: 0 },
+              // --- stockQuantity 처리 추가 ---
+              // AI 결과에서 stockQuantity 필드를 가져오고, 유효한 숫자가 아니면 null로 설정
+              stock_quantity:
+                typeof item.stockQuantity === "number" &&
+                Number.isInteger(item.stockQuantity) &&
+                item.stockQuantity >= 0
+                  ? item.stockQuantity
+                  : null,
+              // --- order_summary 등 나머지 필드 ---
+              order_summary: { total_orders: 0, total_quantity: 0 }, // 초기화
               created_at: postedAt.toISOString(),
               updated_at: new Date().toISOString(),
             };
@@ -992,7 +1002,7 @@ class BandPosts extends BandAuth {
               itemNumber: itemNumber,
               productId: uniqueProductId,
               title: productData.title,
-              price: determinedBasePrice,
+              price: determinedSalePrice,
             });
           }
         } // --- 상품 정보 처리 끝 ---

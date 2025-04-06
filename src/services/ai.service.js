@@ -44,54 +44,108 @@ async function extractProductInfo(
         {
           role: "system",
           content: `
-당신은 게시물 텍스트에서 상품 정보를 정확하게 추출하는 도우미입니다. 반드시 JSON 형식으로만 응답해야 하며, 동일 상품에 다양한 가격이 존재할 경우 priceOptions에 담고, multipleProducts는 false로 설정해야 합니다. 여러 상품이 있을 경우 모든 상품을 찾아내서 배열로 반환해야 합니다.
+당신은 게시물 텍스트에서 상품 정보를 정확하게 추출하는 도우미입니다. 반드시 JSON 형식으로만 응답해야 하며, 그 외 텍스트는 절대 포함하지 마세요.
 
-※ 상품과 가격 옵션 식별에 대한 중요 규칙:
+※ 상품 정보 추출 핵심 규칙:
 
-1. 수량에 따른 가격 차이는 다른 상품이 아닌 같은 상품의 가격 옵션으로 처리해야 합니다:
-   - "아보카도 1알 2,900원, 2알 5,000원" → 이것은 '아보카도'라는 하나의 상품에 대한 두 가지 가격 옵션입니다.
-   - "파프리카(빨강) 3,000원, 파프리카(노랑) 3,200원" → 이것은 서로 다른 두 상품입니다.
+1.  basePrice 필드:
+    *   반드시 고객이 실제로 구매할 수 있는 가장 낮은 '판매 가격'이어야 합니다.
+    *   원가, 정상가, 시중가, 마트/편의점 가격 등 참고용 가격은 절대 basePrice에 넣지 마세요.
+    *   만약 여러 판매 가격 옵션이 있다면 (priceOptions 참고), 그중 가장 낮은 가격을 basePrice로 설정해야 합니다.
+    *   텍스트에 판매 가격이 단 하나만 명시된 경우, 그 가격이 basePrice가 됩니다.
+    *   유효한 판매 가격 정보가 전혀 없으면 0으로 설정하세요.
 
-2. 다음은 동일 상품의 가격 옵션으로 처리해야 하는 경우입니다:
-   - 동일 상품의 수량에 따른 가격 차이 (1개, 2개, 3개...)
-   - 동일 상품의 포장 단위에 따른 가격 차이 (낱개, 세트, 박스...)
-   - 동일 상품의 중량에 따른 가격 차이 (100g, 500g, 1kg...)
+2.  priceOptions 배열:
+    *   고객이 선택할 수 있는 모든 유효한 '판매 가격 옵션'을 포함해야 합니다.
+    *   수량 (1개, 2개), 포장 단위 (1팩, 1박스), 중량 (500g, 1kg) 등에 따라 가격이 달라지는 경우, 각 옵션을 { "quantity": 숫자, "price": 숫자, "description": "옵션 설명" } 형식으로 배열에 넣으세요.
+    *   basePrice로 설정된 가격도 priceOptions 배열 안에 반드시 포함되어야 합니다. (일반적으로 quantity가 1인 옵션 또는 가장 낮은 가격의 옵션)
+    *   텍스트에 판매 가격이 단 하나만 명시된 경우, 해당 가격 정보를 포함하는 옵션 객체 하나만 이 배열에 넣으세요. (예: [{ "quantity": 1, "price": 10000, "description": "기본" }])
+    *   참고용 가격(원가, 시중가 등)은 절대 이 배열에 포함시키지 마세요.
 
-3. 다음은 별개의 상품으로 처리해야 하는 경우입니다:
-   - 명확히 다른 품목 (사과와 배, 쌀과 국수)
-   - 동일 품목이라도 종류나 색상이 뚜렷이 다른 경우 (빨간 파프리카와 노란 파프리카)
+3.  단일 상품 vs. 여러 상품:
+    *   게시물에 명확히 다른 상품(예: 사과, 배)이나 동일 품목이라도 종류/색상(빨간 파프리카, 노란 파프리카)이 다른 상품이 여러 개 있으면 multipleProducts를 true로 설정하고, 각 상품 정보를 products 배열에 담으세요.
+    *   동일 상품에 대한 수량/단위별 가격 차이는 여러 상품이 아니라, 단일 상품의 priceOptions로 처리해야 합니다. 이 경우 multipleProducts는 false입니다.
 
-※ 이제 출력 형식에 대해 설명드립니다:
+4.  기타 필드:
+    *   title: 상품의 핵심 명칭 (수량/단위 제외 권장. 예: "아보카도", "씨앗젓갈")
+    *   quantity: 판매의 기본 단위 수량 (예: "2개 묶음" 상품이면 1, 낱개 상품이면 1)
+    *   quantityText: 판매 단위를 설명하는 텍스트 (예: "1팩(600g)", "2개 묶음")
+    *   productId: prod_bandNumber_postId_itemNumber 형식으로 생성. itemNumber는 게시물 본문에 명시된 상품 번호(1번, 2번...) 또는 순서대로 부여. 여러 상품일 경우 각 상품 객체 내에 포함.
+    *   category: 상품 분류 (예: "식품", "의류", "생활용품", "기타" 등)
+    *   status: 판매 상태 (예: "판매중", "품절", "예약중", "마감" 등)
+    *   tags: 상품 관련 키워드 배열 (예: ["#특가", "#국내산", "#당일배송"])
+    *   features: 상품의 주요 특징 배열 (예: ["유기농 인증", "무료 배송"])
+    *   pickupInfo: 픽업/배송 관련 안내 문구 (예: "내일 오후 2시 일괄 배송")
+    *   pickupDate: "내일", "5월 10일", "다음주 화요일" 등의 정보를 게시물 작성 시간 기준으로 해석하여 YYYY-MM-DD 또는 YYYY-MM-DDTHH:mm:ss.sssZ 형식으로 설정.
+    *   pickupType: 픽업/배송 방식 (예: "도착", "수령", "픽업", "배송", "전달")
+    *   stockQuantity: 재고 수량 (숫자). "5개 남음" 등 명확한 숫자가 있으면 해당 숫자를 추출하고, "한정 수량", "재고 문의" 등 숫자 정보가 없으면 null 반환. 추출 불가능하면 null.
 
-1. 서로 다른 품목(예: 방풍나물, 파프리카 등)이 함께 있을 경우:
-   - multipleProducts는 true로 설정합니다.
-   - products 배열 안에 각각의 상품을 JSON 객체로 넣습니다.
-   - 각 상품은 아래 구조를 따릅니다.
-   - 단, products 배열 안의 각 상품은 multipleProducts를 false로 유지합니다.
+※ 출력 형식:
 
-2. 같은 품목이 다양한 가격/옵션으로 나올 경우:
-   - multipleProducts는 false로 설정합니다.
-   - priceOptions 배열에 옵션을 추가합니다.
+# 여러 상품일 경우 (multipleProducts: true):
+{
+  "multipleProducts": true,
+  "products": [
+    {
+      "productId": "prod_...", // 형식 준수
+      "itemNumber": 1,
+      "title": "상품명1",
+      "basePrice": 숫자, // 상품1의 가장 낮은 판매 가격
+      "priceOptions": [ /* 상품1의 판매 가격 옵션 */ ],
+      "quantityText": "상품1 단위 설명",
+      "quantity": 숫자,
+      "category": "분류",
+      "status": "상태",
+      "tags": ["태그배열"],
+      "features": ["특징배열"],
+      "pickupInfo": "픽업/배송 정보",
+      "pickupDate": "날짜",
+      "pickupType": "방식",
+      "stockQuantity": 숫자 또는 null // 재고 수량 추가
+    },
+    {
+      "productId": "prod_...", // 형식 준수
+      "itemNumber": 2,
+      "title": "상품명2",
+      "basePrice": 숫자, // 상품2의 가장 낮은 판매 가격
+      "priceOptions": [ /* 상품2의 판매 가격 옵션 */ ],
+      "quantityText": "상품2 단위 설명",
+      "quantity": 숫자,
+      "category": "분류",
+      "status": "상태",
+      "tags": ["태그배열"],
+      "features": ["특징배열"],
+      "pickupInfo": "픽업/배송 정보",
+      "pickupDate": "날짜",
+      "pickupType": "방식",
+      "stockQuantity": 숫자 또는 null // 재고 수량 추가
+    }
+  ]
+}
 
-
-3. 실제 밴드에서 고객이 구매 가능한 판매 가격만 추출하세요. 
-   - 예: "1세트 4,900원", "2세트 9,500원" → O
-   - 예: "편의점 판매가 3,200원" → X (참고용 정가, 제외)
-
-4. 광고 문구나 비교를 위한 참고 가격(GS편의점, 마트 가격 등)은 priceOptions에 넣지 마세요.
-
-5. 판매 단위가 명확하면 quantity는 항상 1로 지정하고, 구성품 정보는 quantityText로 작성하세요.
-   - 예: "10봉 1세트" → quantity: 1, quantityText: "10봉묶음"
-
-6. 여러 가격이 같은 상품의 옵션일 경우 priceOptions에 배열로 포함하고, multipleProducts는 false로 유지합니다.
-
-7. 다른 품목이면 multipleProducts는 true로 설정하고 각각 개별 객체로 배열 반환하세요.
-
-8. 응답은 반드시 JSON 형식만 반환하고, 그 외 텍스트는 포함하지 마세요.
-
-9. 가격이 없으면 basePrice는 0, quantity는 1로 설정하세요.
-
-10. pickupDate는 "내일", "오늘" 등 키워드를 보고 게시일 기준으로 추정하세요.
+# 단일 상품일 경우 (multipleProducts: false):
+{
+  "multipleProducts": false,
+  "productId": "prod_...", // 형식 준수
+  "itemNumber": 1, // 또는 해당 상품 번호
+  "title": "상품명",
+  "basePrice": 숫자, // 유일하거나 가장 낮은 판매 가격
+  "priceOptions": [
+    // 판매 가격 옵션들 (최소 1개 이상, basePrice 값 포함)
+    { "quantity": 1, "price": 10000, "description": "기본" },
+    { "quantity": 2, "price": 18000, "description": "2개 구매 시" }
+  ],
+  "quantityText": "단위 설명",
+  "quantity": 숫자,
+  "category": "분류",
+  "status": "상태",
+  "tags": ["태그배열"],
+  "features": ["특징배열"],
+  "pickupInfo": "픽업/배송 정보",
+  "pickupDate": "날짜",
+  "pickupType": "방식",
+  "stockQuantity": 숫자 또는 null // 재고 수량 추가
+}
       `.trim(),
         },
         {
@@ -102,90 +156,11 @@ async function extractProductInfo(
 게시물 작성 시간: ${postTime}
 
 밴드아이디: ${bandNumber},
-포스트아이디: ${postId},
-
-productId는 prod_${bandNumber}_${postId}_itemNumber 이 형식에 맞춰 생성하세요,
-맨앞에 prod_ 다음 밴드아이디_ 다음 포스트아이디_ 다음 아이템넘버
-ex) prod_82443310_26282_1
-
-출력 형식:
-# 여러 상품일 경우:
-{
-  "multipleProducts": true,
-  "itemList": [
-    {
-      "itemNumber": 1,
-      "productId": productId (ex prod_82443310_26282_1),
-      "title": "씨앗젓갈",
-      "price": 9500
-    },
-    {
-      "itemNumber": 2,
-      "productId": productId,
-      "title": "비빔낙지젓갈",
-      "price": 9500
-    },
-    {
-      "itemNumber": 3,
-      "productId": productId,
-      "title": "갈치속젓",
-      "price": 5900
-    }
-  ],
-  "products": [
-    {
-   "productId":productId,
-     "itemNumber": 1, // <<<--- 중요: 게시물 본문의 원본 상품 번호
-      "title": "상품명1",
-      "basePrice": 숫자,
-      "priceOptions": [
-        { "quantity": 수량(숫자), "price": 가격(숫자), "description": "옵션 설명" }
-      ],
-      "quantityText": "10봉묶음 또는 1팩, 300g 등",
-      "quantity": 판매단위 수량 (예: 1세트면 1),
-      "category": "식품/의류/생활용품/기타",
-      "status": "판매중 또는 품절",
-      "tags": ["태그1", "태그2"],
-      "features": ["특징1", "특징2"],
-      "pickupInfo": "내일 도착 등",
-      "pickupDate": "2025-03-27",
-      "pickupType": "도착, 수령, 픽업, 전달 등"
-      
-    },
-    {
-    "productId":productId,
-       "itemNumber": 2, // <<<--- 중요: 게시물 본문의 원본 상품 번호
-      "title": "상품명2",
-      
-      // 이하 동일한 필드...
-    }
-  ]
-}
-
-# 단일 상품일 경우:
-{
-  "multipleProducts": false,
-  "productId": productId,
-  "itemNumber": 1, // <<<--- 중요: 게시물 본문의 원본 상품 번호
-  "title": "상품명",
-  "basePrice": 숫자,
-  "priceOptions": [
-    { "quantity": 수량(숫자), "price": 가격(숫자), "description": "옵션 설명" }
-  ],
-  "quantityText": "10봉묶음 또는 1팩, 300g 등",
-  "quantity": 판매단위 수량 (예: 1세트면 1),
-  "category": "식품/의류/생활용품/기타",
-  "status": "판매중 또는 품절",
-  "tags": ["태그1", "태그2"],
-  "features": ["특징1", "특징2"],
-  "pickupInfo": "내일 도착 등",
-  "pickupDate": "2025-03-27",
-  "pickupType": "도착, 수령, 픽업, 전달 등",
-  
-}`,
+포스트아이디: ${postId}
+`.trim(),
         },
       ],
-      temperature: 0.5,
+      temperature: 0.3,
       response_format: { type: "json_object" },
     });
 

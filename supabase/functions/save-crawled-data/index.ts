@@ -135,21 +135,27 @@ serve(async (req: Request) => {
       // 3. 상품 정보 Upsert
       if (products.length > 0) {
         for (const product of products) {
-          // *** 중요: products 테이블에 quantity (numeric), quantity_text (text) 컬럼 등이 실제로 존재하는지 확인 필요 ***
+          // *** stock_quantity 컬럼 추가 ***
           await connection.queryObject(
-            // 컬럼 20개 명시
-            `INSERT INTO products (product_id, user_id, post_id, item_number, title, content, base_price, price_options, quantity, quantity_text, category, tags, features, status, pickup_info, pickup_date, pickup_type, order_summary, created_at, updated_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18::jsonb, $19, $20) -- 플레이스홀더 20개
-                   ON CONFLICT (product_id) DO UPDATE SET
-                     post_id = EXCLUDED.post_id, item_number = EXCLUDED.item_number, title = EXCLUDED.title,
-                     content = EXCLUDED.content, base_price = EXCLUDED.base_price, price_options = EXCLUDED.price_options,
-                     quantity = EXCLUDED.quantity, quantity_text = EXCLUDED.quantity_text, category = EXCLUDED.category, tags = EXCLUDED.tags,
-                     
-                     features = EXCLUDED.features, status = EXCLUDED.status, pickup_info = EXCLUDED.pickup_info, pickup_date = EXCLUDED.pickup_date,
-                     pickup_type = EXCLUDED.pickup_type, order_summary = EXCLUDED.order_summary, updated_at = EXCLUDED.updated_at
-                  `,
+            // 컬럼 목록에 stock_quantity 추가 (총 21개 컬럼)
+            `INSERT INTO products (
+                product_id, user_id, post_id, item_number, title, content, base_price,
+                price_options, quantity, quantity_text, category, tags, features, status,
+                pickup_info, pickup_date, pickup_type, order_summary, created_at, updated_at,
+                stock_quantity  -- <<< stock_quantity 컬럼 추가
+             )
+             -- 플레이스홀더도 21개로 증가
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18::jsonb, $19, $20, $21)
+             ON CONFLICT (product_id) DO UPDATE SET
+               post_id = EXCLUDED.post_id, item_number = EXCLUDED.item_number, title = EXCLUDED.title,
+               content = EXCLUDED.content, base_price = EXCLUDED.base_price, price_options = EXCLUDED.price_options,
+               quantity = EXCLUDED.quantity, quantity_text = EXCLUDED.quantity_text, category = EXCLUDED.category, tags = EXCLUDED.tags,
+               features = EXCLUDED.features, status = EXCLUDED.status, pickup_info = EXCLUDED.pickup_info, pickup_date = EXCLUDED.pickup_date,
+               pickup_type = EXCLUDED.pickup_type, order_summary = EXCLUDED.order_summary, updated_at = EXCLUDED.updated_at,
+               stock_quantity = EXCLUDED.stock_quantity -- <<< 업데이트 시 stock_quantity 추가
+            `,
             [
-              // 값 배열 20개 (순서 중요)
+              // 값 배열도 21개로 증가 (마지막에 stock_quantity 추가)
               product.product_id, // $1
               product.user_id, // $2
               product.post_id, // $3
@@ -157,23 +163,26 @@ serve(async (req: Request) => {
               product.title, // $5
               product.content, // $6
               product.base_price, // $7
-              JSON.stringify(product.price_options || []), // $8 (jsonb)
+              JSON.stringify(product.price_options || []), // $8
               product.quantity, // $9
               product.quantity_text, // $10
               product.category, // $11
-              product.tags || [],
-              JSON.stringify(product.features || []), // $13 (jsonb)
+              product.tags || [], // $12
+              JSON.stringify(product.features || []), // $13
               product.status, // $14
               product.pickup_info, // $15
               product.pickup_date, // $16
               product.pickup_type, // $17
-              JSON.stringify(product.order_summary || {}), // $18 (jsonb)
+              JSON.stringify(product.order_summary || {}), // $18
               product.created_at, // $19
               product.updated_at, // $20
+              product.stock_quantity, // $21 <<< stock_quantity 값 추가 (null일 수도 있음)
             ]
           );
         }
-        console.log(`${products.length} 상품 정보 처리됨.`);
+        console.log(
+          `${products.length} 상품 정보 처리됨 (stock_quantity 포함).`
+        );
       }
 
       // 4. 주문 정보 Upsert
