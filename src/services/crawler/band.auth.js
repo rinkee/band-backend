@@ -111,8 +111,8 @@ class BandAuth {
         ignoreHTTPSErrors: true,
         defaultViewport: null,
 
-        executablePath:
-          process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium-browser",
+        // executablePath:
+        //   process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium-browser",
       });
 
       this.page = await this.browser.newPage();
