@@ -34,7 +34,46 @@ class BandAuth {
       progress: 0,
       updatedAt: new Date(),
     };
-    this.bandId = "";
+    this.bandNumber = "";
+  }
+
+  /**
+   * 상태 업데이트 콜백 함수 설정
+   * @param {Function} callback - 상태 업데이트 시 호출될 콜백 함수
+   */
+  setOnStatusUpdate(callback) {
+    this.onStatusUpdate = callback;
+    logger.info("상태 업데이트 콜백이 설정되었습니다.");
+  }
+
+  /**
+   * 내부 상태 업데이트 메소드
+   * @param {string} status - 상태 ('processing', 'failed', 'completed' 등)
+   * @param {string} message - 상태 메시지
+   * @param {number} progress - 진행률 (0-100)
+   */
+  _updateStatus(status, message, progress) {
+    // 디버깅: _updateStatus 호출 확인
+    // logger.debug(`_updateStatus 호출됨: status=${status}, message=${message}, progress=${progress}, this.onStatusUpdate 존재여부=${!!this.onStatusUpdate}`);
+
+    if (this.onStatusUpdate && typeof this.onStatusUpdate === "function") {
+      // 콜백 함수가 있으면 호출
+      try {
+        this.onStatusUpdate(status, message, progress);
+      } catch (callbackError) {
+        logger.error(
+          `상태 업데이트 콜백 함수 실행 중 오류: ${callbackError.message}`,
+          callbackError
+        );
+      }
+    } else {
+      // 콜백 없으면 기본 로깅
+      const progressText =
+        progress !== undefined ? ` 진행률: ${progress}% |` : "";
+      logger.info(
+        `[상태 업데이트]${progressText} 상태: ${status} | 메시지: ${message}`
+      );
+    }
   }
 
   // 작업 상태 업데이트 메서드
@@ -860,13 +899,13 @@ class BandAuth {
       // 밴드 페이지로 직접 이동하여 로그인 상태 확인
       this.updateTaskStatus(
         "processing",
-        `밴드 페이지(${this.bandId})로 이동하여 로그인 상태 확인 중`,
+        `밴드 페이지(${this.bandNumber})로 이동하여 로그인 상태 확인 중`,
         20
       );
 
       // 밴드 페이지로 이동
       await this.page
-        .goto(`https://www.band.us/band/${this.bandId}`, {
+        .goto(`https://www.band.us/band/${this.bandNumber}`, {
           waitUntil: "networkidle2",
           timeout: 30000,
         })
@@ -1033,10 +1072,10 @@ class BandAuth {
       await this.initialize(naverId, naverPassword);
     }
 
-    logger.info(`밴드 페이지로 이동: https://band.us/band/${this.bandId}`);
+    logger.info(`밴드 페이지로 이동: https://band.us/band/${this.bandNumber}`);
 
     // 밴드 페이지로 이동
-    await this.page.goto(`https://band.us/band/${this.bandId}`, {
+    await this.page.goto(`https://band.us/band/${this.bandNumber}`, {
       waitUntil: "networkidle2",
       timeout: 60000,
     });
@@ -1062,7 +1101,9 @@ class BandAuth {
 
     // 오류 발생 시 로그인 페이지인지 확인하고 로그인 시도
     if (!hasBandAccess) {
-      logger.info(`밴드 ${this.bandId} 접근 실패, 로그인 페이지 확인 중...`);
+      logger.info(
+        `밴드 ${this.bandNumber} 접근 실패, 로그인 페이지 확인 중...`
+      );
 
       // 현재 페이지가 로그인 페이지인지 확인
       const isLoginPage = await this.page.evaluate(() => {
@@ -1090,7 +1131,7 @@ class BandAuth {
             logger.info("로그인 성공, 밴드 페이지 다시 접근 시도 중...");
 
             // 로그인 성공 후 다시 밴드 페이지로 이동
-            await this.page.goto(`https://band.us/band/${this.bandId}`, {
+            await this.page.goto(`https://band.us/band/${this.bandNumber}`, {
               waitUntil: "networkidle2",
               timeout: 60000,
             });
@@ -1113,10 +1154,10 @@ class BandAuth {
             });
 
             if (bandAccessAfterLogin) {
-              logger.info(`로그인 후 밴드 ${this.bandId} 접근 성공`);
+              logger.info(`로그인 후 밴드 ${this.bandNumber} 접근 성공`);
               return true;
             } else {
-              logger.error(`로그인 후에도 밴드 ${this.bandId} 접근 실패`);
+              logger.error(`로그인 후에도 밴드 ${this.bandNumber} 접근 실패`);
 
               // 디버깅을 위한 스크린샷 저장
               await this.page.screenshot({
@@ -1135,7 +1176,7 @@ class BandAuth {
           logger.info("쿠키 로그인 성공, 밴드 페이지 다시 접근 시도 중...");
 
           // 쿠키 로그인 성공 후 다시 밴드 페이지로 이동
-          await this.page.goto(`https://band.us/band/${this.bandId}`, {
+          await this.page.goto(`https://band.us/band/${this.bandNumber}`, {
             waitUntil: "networkidle2",
             timeout: 60000,
           });
@@ -1158,10 +1199,12 @@ class BandAuth {
           });
 
           if (bandAccessAfterCookieLogin) {
-            logger.info(`쿠키 로그인 후 밴드 ${this.bandId} 접근 성공`);
+            logger.info(`쿠키 로그인 후 밴드 ${this.bandNumber} 접근 성공`);
             return true;
           } else {
-            logger.error(`쿠키 로그인 후에도 밴드 ${this.bandId} 접근 실패`);
+            logger.error(
+              `쿠키 로그인 후에도 밴드 ${this.bandNumber} 접근 실패`
+            );
 
             // 디버깅을 위한 스크린샷 저장
             await this.page.screenshot({
@@ -1177,7 +1220,7 @@ class BandAuth {
           return false;
         }
       } else {
-        logger.error(`밴드 ${this.bandId} 접근 실패 (로그인 페이지 아님)`);
+        logger.error(`밴드 ${this.bandNumber} 접근 실패 (로그인 페이지 아님)`);
         await this.page.screenshot({
           path: `band-access-error-${Date.now()}.png`,
         });
@@ -1185,7 +1228,7 @@ class BandAuth {
       }
     }
 
-    logger.info(`밴드 페이지 접근 성공: ${this.bandId}`);
+    logger.info(`밴드 페이지 접근 성공: ${this.bandNumber}`);
     return true;
   }
 
@@ -1199,7 +1242,7 @@ class BandAuth {
       const { data: users, error } = await this.supabase
         .from("users")
         .select("user_id")
-        .eq("band_id", this.bandId)
+        .eq("band_number", this.bandNumber)
         .single();
 
       if (error && error.code !== "PGRST116") {
@@ -1217,10 +1260,10 @@ class BandAuth {
         .from("users")
         .insert([
           {
-            band_id: this.bandId,
-            login_id: `band_${this.bandId}`,
+            band_number: this.bandNumber,
+            login_id: `band_${this.bandNumber}`,
             login_password: crypto.randomBytes(16).toString("hex"),
-            store_name: `밴드 ${this.bandId}`,
+            store_name: `밴드 ${this.bandNumber}`,
             is_active: true,
             role: "user",
             created_at: new Date().toISOString(),
@@ -1239,6 +1282,312 @@ class BandAuth {
       logger.error("사용자 생성/조회 오류:", error);
       throw error;
     }
+  }
+
+  async initiateManualNaverLogin(naverId, naverPassword) {
+    // userId가 클래스 멤버 변수라고 가정합니다. 아니라면 파라미터로 받거나 정의해야 합니다.
+    const userId = this.userId;
+    const naverLoginUrl = "https://auth.band.us/login_page"; // 네이버 로그인 URL
+    const targetDomain = "band.us"; // 최종 목표 도메인
+
+    try {
+      console.log(`[Manual Login] Starting for user ${this.userId}...`);
+      this.browser = await puppeteer.launch({
+        headless: false,
+        args: ["--window-size=800,600"],
+      });
+      this.page = await this.browser.newPage(); // 'page' 변수 사용
+
+      // 쿠키를 유지하기 위한 설정
+      await this.page.setExtraHTTPHeaders({
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+      });
+
+      await this.page.goto("https://auth.band.us/login_page", {
+        waitUntil: "networkidle2",
+        timeout: 60000, // 시간 증가 고려
+      });
+      console.log(
+        `[Manual Login] Navigated to login page for user ${userId}. Waiting for user action...`
+      );
+
+      await this.page.evaluate(() => {
+        const naverBtn = document.querySelector(
+          "a.-naver.externalLogin, a.uButtonRound.-h56.-icoType.-naver"
+        );
+        if (naverBtn) naverBtn.click();
+        else console.error("Naver login button not found!"); // 버튼 못찾을 경우 로그 추가
+      });
+
+      await this.page
+        .waitForSelector("#id", { timeout: 60000 })
+        .catch((err) => {
+          // 시간 증가 고려
+          this.updateTaskStatus(
+            "processing",
+            `Naver ID 필드 대기 중 오류 (계속 진행): ${err.message}`,
+            51
+          );
+          // ID 필드를 못찾으면 로그인 진행이 어려울 수 있으므로 에러 throw 고려
+          // throw new Error("Naver ID 입력 필드를 찾을 수 없습니다.");
+        });
+
+      await this.page.evaluate(
+        (id, pw) => {
+          const idInput = document.querySelector("#id");
+          const pwInput = document.querySelector("#pw");
+
+          if (idInput) {
+            idInput.value = id;
+            idInput.dispatchEvent(new Event("input", { bubbles: true }));
+            idInput.dispatchEvent(new Event("change", { bubbles: true }));
+          } else {
+            console.error("ID input field not found!");
+          }
+
+          if (pwInput) {
+            pwInput.value = pw;
+            pwInput.dispatchEvent(new Event("input", { bubbles: true }));
+            pwInput.dispatchEvent(new Event("change", { bubbles: true }));
+          } else {
+            console.error("Password input field not found!");
+          }
+        },
+        naverId,
+        naverPassword
+      );
+
+      this.updateTaskStatus(
+        "processing",
+        "ID와 비밀번호 입력 완료 (직접 DOM 설정)",
+        58
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 2000)); // 대기 시간 증가 고려
+
+      // 엔터키 입력으로 로그인 (this.page 대신 page 사용)
+      this.updateTaskStatus("processing", "Enter 키로 로그인 시도", 60);
+      try {
+        await this.page.keyboard.press("Enter"); // catch 제거하고 에러 발생 시 전체 try-catch에서 잡도록 함
+      } catch (loginError) {
+        this.updateTaskStatus(
+          "processing",
+          `로그인 시도(Enter) 오류: ${loginError.message}`,
+          61
+        );
+        // 엔터키 실패 시 다른 로그인 버튼 클릭 시도 등을 추가할 수 있음
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 10000)); // 대기 시간 증가 고려
+
+      const maxWaitTime = 300000; // 최대 대기 시간: 5분 (300,000ms)
+      const checkInterval = 5000; // 확인 간격: 2초 (2,000ms)
+      const startTime = Date.now();
+
+      let loginConfirmed = false;
+
+      while (Date.now() - startTime < maxWaitTime) {
+        let currentUrl = "";
+        try {
+          // 페이지가 닫혔는지 먼저 확인
+          if (this.page.isClosed()) {
+            console.warn(
+              "[Manual Login Debug] Page closed unexpectedly during wait loop."
+            );
+            throw new Error("로그인 대기 중 페이지가 닫혔습니다.");
+          }
+          currentUrl = this.page.url();
+          console.log(
+            `[Manual Login Debug] Checking URL (${Math.round(
+              (Date.now() - startTime) / 1000
+            )}s): ${currentUrl}`
+          );
+
+          // 1. 최종 목표 도달 확인 (band.us)
+          if (currentUrl.includes(targetDomain)) {
+            console.log(
+              `[Manual Login Success] Detected target domain: ${targetDomain}`
+            );
+            loginConfirmed = true;
+            break; // 성공, 루프 종료
+          }
+
+          // 2. 네이버 인증 페이지에 머무르는지 확인 (로그인/2FA 등)
+          // (주의: 실제 네이버 인증 관련 URL 패턴 확인 필요)
+          if (
+            currentUrl.includes("nid.naver.com") ||
+            currentUrl.includes("nidlogin.login") ||
+            currentUrl.includes("login.naver.com") ||
+            currentUrl.includes("deviceConfirm")
+          ) {
+            // 아직 네이버 인증 과정에 있음, 계속 대기
+            // 상태 업데이트 (선택적)
+            this._updateStatus(
+              "waiting",
+              `로그인 진행 중... (${Math.round(
+                (Date.now() - startTime) / 1000
+              )}초)`,
+              67
+            );
+          } else {
+            // 3. 예상치 못한 URL (네이버도 아니고 band.us도 아님)
+            //    - 중간 리다이렉션 페이지일 수 있으므로 일단 계속 대기
+            //    - 또는 특정 오류 페이지 감지 시 실패 처리 가능
+            console.log(
+              `[Manual Login Debug] Intermediate or unexpected URL: ${currentUrl}. Continuing wait.`
+            );
+            this._updateStatus(
+              "waiting",
+              `페이지 이동 감지... (${Math.round(
+                (Date.now() - startTime) / 1000
+              )}초)`,
+              68
+            );
+          }
+        } catch (urlError) {
+          // URL 확인 중 오류 발생 시 (페이지 닫힘 등)
+          console.error(
+            `[Manual Login Debug] Error getting URL or page state: ${urlError.message}`
+          );
+          throw urlError; // 루프 중단 및 에러 처리
+        }
+
+        // 다음 확인까지 대기
+        await new Promise((resolve) => setTimeout(resolve, checkInterval));
+      } // --- while 루프 종료 ---
+
+      // --- 루프 종료 후 결과 처리 ---
+      if (loginConfirmed) {
+        this._updateStatus(
+          "processing",
+          "로그인 성공 확인 (band.us 접속), 쿠키 저장 중...",
+          75
+        );
+        console.log(
+          `[Manual Login] Login successful for user ${userId}. Extracting cookies from ${targetDomain}...`
+        );
+
+        // 쿠키 추출 (목표 도메인 기준)
+        const cookies = await this.browser.cookies();
+        await this.saveCookies(naverId, cookies); // this.saveCookies는 그대로 사용
+        console.log(`[Manual Login] Cookies saved for user ${userId}.`);
+        this._updateStatus("completed", "수동 로그인 및 쿠키 저장 완료", 100);
+
+        return true;
+      } else {
+        // 타임아웃 발생
+        console.error(
+          `[Manual Login Error] Login timed out after ${
+            maxWaitTime / 1000
+          } seconds. Final URL: ${await this.page.url()}`
+        );
+        this._updateStatus("failed", "로그인 시간 초과", 65);
+        throw new Error(
+          `네이버 로그인 시간 초과 (${
+            maxWaitTime / 1000
+          }초). 사용자가 로그인을 완료하지 않았거나 ${targetDomain}로 이동하지 않았습니다.`
+        );
+        return false;
+      }
+
+      // 잠시 대기하여 페이지가 안정화되도록 함
+
+      // // 수동 로그인 확인 및 대기
+      // this.updateTaskStatus("waiting", "사용자 로그인 확인 대기 중...", 65);
+      // let isLoggedInManual = false;
+      // let checkCount = 0;
+      // const maxChecks = 30; // 10초 간격 * 30 = 5분
+
+      // while (!isLoggedInManual && checkCount < maxChecks) {
+      //   await new Promise((resolve) => setTimeout(resolve, 20000)); // 10초마다 확인
+
+      //   try {
+      //     // URL 변경 또는 특정 요소 존재 여부로 로그인 상태 확인 (this.page 대신 page 사용)
+      //     // 예시: 밴드 메인 페이지의 특정 요소 확인
+      //     isLoggedInManual = await this.page
+      //       .evaluate(() => {
+      //         // 로그인 후 나타나는 대표적인 요소로 변경 (예: 프로필 영역, 뉴스피드 등)
+      //         return (
+      //           !!document.querySelector("._gnbProfileButton") ||
+      //           !!document.querySelector(".feedList")
+      //         );
+      //       })
+      //       .catch(() => false); // 평가 중 에러 발생 시 false 반환
+
+      //     const progress = 65 + Math.floor((checkCount / maxChecks) * 10); // 진행률 계산
+      //     this.updateTaskStatus(
+      //       "waiting",
+      //       `수동 로그인 대기 중... (${
+      //         checkCount + 1
+      //       }/${maxChecks}) - 로그인 상태: ${
+      //         isLoggedInManual ? "감지됨" : "미감지"
+      //       }`,
+      //       progress
+      //     );
+
+      //     if (isLoggedInManual) {
+      //       this.updateTaskStatus("processing", "사용자 로그인 감지됨", 75);
+      //       // 로그인 감지 후 안정화를 위해 잠시 더 대기
+      //       await new Promise((resolve) => setTimeout(resolve, 5000));
+      //       break; // 루프 탈출
+      //     }
+      //   } catch (e) {
+      //     console.error("로그인 상태 확인 중 오류:", e.message);
+      //     // 오류 발생 시 다음 체크 시도
+      //   }
+      //   checkCount++;
+      // } // end while
+
+      // // --- 여기부터 괄호 문제 수정 ---
+
+      // // while 루프 후 최종 로그인 상태 확인
+      // if (!isLoggedInManual) {
+      //   // 시간 초과 또는 로그인 확인 실패
+      //   const currentUrl = await this.page.url();
+      //   console.warn(
+      //     `[Manual Login] Login check timed out or failed for user ${userId}. Final URL: ${currentUrl}`
+      //   );
+      //   throw new Error(
+      //     "사용자가 제한 시간 내에 로그인하지 않았거나, 로그인 상태를 감지할 수 없습니다."
+      //   );
+      // }
+
+      // 로그인 성공 처리
+      this.updateTaskStatus("processing", "로그인 성공 확인", 90);
+      this.isLoggedIn = true; // 클래스 상태 업데이트 (필요시)
+
+      // 쿠키 저장 (page 객체에서 쿠키 가져오기)
+
+      this.updateTaskStatus("completed", "로그인 프로세스 완료", 100);
+      return true; // 성공 시 true 반환
+
+      // --- 불필요한/잘못된 else 및 return 제거 ---
+      // 아래 블록은 제거됨:
+      // } else {
+      //   console.warn(...)
+      //   throw new Error(...)
+      // }
+      // return { success: true };
+    } catch (error) {
+      // ... (에러 처리) ...
+      // 타임아웃 에러 메시지 개선 가능
+      if (error.message.includes("timeout")) {
+        throw new Error(
+          `네이버 로그인 시간 초과 (설정 시간: ${
+            error.timeout / 1000
+          }초). 2단계 인증 등을 확인해주세요.`
+        );
+      }
+      throw error; // 다른 에러는 그대로 throw
+    } finally {
+      if (this.browser) {
+        await this.browser.close();
+        console.log(`[Manual Login] Browser closed for user ${userId}.`);
+      }
+    }
+    // finally 이후에는 특별한 return문이 없어도 됨 (성공 시 try에서 true 반환, 실패 시 catch에서 에러 throw)
   }
 }
 

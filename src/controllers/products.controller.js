@@ -296,13 +296,13 @@ async function processAndSaveProduct(crawledData, userId) {
     const productInfo = await extractProductInfo(crawledData.content);
 
     // 상품 ID 생성 (밴드 ID와 게시물 ID 조합)
-    const productId = `${crawledData.bandId}_product_${crawledData.postId}`;
+    const productId = `${crawledData.bandNumber}_product_${crawledData.postId}`;
 
     // 데이터베이스에 저장할 상품 객체 생성
     const product = {
       product_id: productId,
       user_id: userId,
-      band_id: crawledData.bandId,
+      band_number: crawledData.bandNumber,
       title: productInfo.title || crawledData.title,
       content: crawledData.content,
       price: productInfo.price || 0,
@@ -311,7 +311,7 @@ async function processAndSaveProduct(crawledData, userId) {
       category: productInfo.category || "기타",
       tags: productInfo.tags || [],
       status: productInfo.status || "판매중",
-      band_post_id: crawledData.postId,
+      post_number: crawledData.postId,
       band_post_url: crawledData.url,
     };
 

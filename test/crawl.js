@@ -13,11 +13,11 @@ async function testCrawlComments() {
     logger.info("댓글 크롤링 테스트 시작");
 
     // 테스트할 밴드 ID와 게시물 ID 설정
-    const bandId = "82443310"; // 테스트할 밴드 ID
+    const bandNumber = "82443310"; // 테스트할 밴드 ID
     const postIds = ["26111", "26112", "26113"]; // 여러 게시물 ID 테스트
 
     // BandComments 인스턴스 생성
-    const crawler = new BandComments(bandId);
+    const crawler = new BandComments(bandNumber);
 
     // 네이버 계정 정보 설정
     const naverId = process.env.NAVER_ID;

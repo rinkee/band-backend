@@ -30,6 +30,7 @@
     "cheerio": "^1.0.0",
     "clipboardy": "^4.0.0",
     "compression": "^1.8.0",
+    "copy-paste": "^1.5.3",
     "cors": "^2.8.5",
     "cron-parser": "^5.0.6",
     "dotenv": "^16.4.7",

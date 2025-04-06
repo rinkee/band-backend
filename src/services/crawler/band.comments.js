@@ -12,8 +12,8 @@ const logger = require("../../config/logger");
  * 밴드 댓글 크롤링 관련 클래스
  */
 class BandComments extends BandPosts {
-  constructor(bandId, options = {}) {
-    super(bandId, options);
+  constructor(bandNumber, options = {}) {
+    super(bandNumber, options);
     // 모든 댓글을 저장할 전역 저장소
     this.allOrdersToSave = [];
     this.allCustomersToSave = new Map();
@@ -613,7 +613,7 @@ class BandComments extends BandPosts {
       await this.accessBandPage(naverId, naverPassword);
 
       // 게시물 페이지로 이동
-      const postUrl = `https://band.us/band/${this.bandId}/post/${postId}`;
+      const postUrl = `https://band.us/band/${this.bandNumber}/post/${postId}`;
       logger.info(`게시물 페이지로 이동: ${postUrl}`);
 
       // 페이지 이동 시도
@@ -783,7 +783,7 @@ class BandComments extends BandPosts {
               status: "마감",
               updated_at: new Date().toISOString(),
             })
-            .eq("band_post_id", postDetail.postId);
+            .eq("post_number", postDetail.postId);
 
           // 게시글 테이블 업데이트
           await this.supabase
@@ -792,7 +792,7 @@ class BandComments extends BandPosts {
               status: "마감",
               updated_at: new Date().toISOString(),
             })
-            .eq("band_post_id", postDetail.postId);
+            .eq("post_number", postDetail.postId);
 
           logger.info(
             `게시물 ${postDetail.postId}의 상태가 '마감'으로 업데이트되었습니다.`
@@ -850,7 +850,7 @@ class BandComments extends BandPosts {
           comment.commentTime || comment.commentTimeTitle || comment.time
         );
 
-        const orderId = `${this.bandId}_${
+        const orderId = `${this.bandNumber}_${
           postDetail.postId
         }_${orderTime.getTime()}`;
 
@@ -872,7 +872,7 @@ class BandComments extends BandPosts {
           const { data: product, error: productError } = await this.supabase
             .from("products")
             .select("*")
-            .eq("band_post_id", postDetail.postId)
+            .eq("post_number", postDetail.postId)
             .single();
 
           if (!productError && product) {
@@ -960,8 +960,8 @@ class BandComments extends BandPosts {
           order_id: orderId,
           user_id: userId,
           product_id: productData ? productData.product_id : postDetail.postId,
-          band_id: this.bandId,
-          band_post_id: postDetail.postId,
+          band_number: this.bandNumber,
+          post_number: postDetail.postId,
           customer_name: comment.name || "익명",
           quantity: quantity,
           price: finalPrice,
@@ -970,7 +970,7 @@ class BandComments extends BandPosts {
           status: "ordered",
           ordered_at: orderTime.toISOString(),
           band_comment_id: bandCommentId,
-          band_comment_url: `https://band.us/band/${this.bandId}/post/${postDetail.postId}#comment`,
+          band_comment_url: `https://band.us/band/${this.bandNumber}/post/${postDetail.postId}#comment`,
           price_option_used: priceOptionUsed,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -983,7 +983,7 @@ class BandComments extends BandPosts {
 
         // 고객 정보 수집
         const customerName = comment.name || "익명";
-        const customerId = `${this.bandId}_customer_${customerName.replace(
+        const customerId = `${this.bandNumber}_customer_${customerName.replace(
           /\s+/g,
           "_"
         )}`;
@@ -995,7 +995,7 @@ class BandComments extends BandPosts {
             user_id: userId,
             name: customerName,
             band_user_id: customerName.replace(/\s+/g, "_"),
-            band_id: this.bandId,
+            band_number: this.bandNumber,
             total_orders: 1,
             first_order_at: new Date().toISOString(),
             last_order_at: new Date().toISOString(),
@@ -1010,7 +1010,7 @@ class BandComments extends BandPosts {
           comment_count: postDetail.comments.length,
           updated_at: new Date().toISOString(),
         })
-        .eq("band_post_id", postDetail.postId);
+        .eq("post_number", postDetail.postId);
 
       // 이번 게시물에서 추가된 주문 수
       const addedOrdersCount = ordersToInsert.length;
@@ -1284,7 +1284,7 @@ class BandComments extends BandPosts {
       // 최종 결과 조합
       const result = {
         postId,
-        bandId: this.bandId,
+        bandNumber: this.bandNumber,
         ...postDetail,
         commentCount: uniqueComments.length,
         comments: uniqueComments,

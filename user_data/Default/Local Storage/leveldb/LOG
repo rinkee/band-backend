@@ -1,3 +1,6 @@
-2025/04/01-17:00:02.705 3e07 Reusing MANIFEST /Users/seong/Band/back/user_data/Default/Local Storage/leveldb/MANIFEST-000001
-2025/04/01-17:00:02.715 3e07 Recovering log #11
-2025/04/01-17:00:02.716 3e07 Reusing old log /Users/seong/Band/back/user_data/Default/Local Storage/leveldb/000011.log 
+2025/04/06-15:41:25.481 3e07 Reusing MANIFEST /Users/seong/Band/back/user_data/Default/Local Storage/leveldb/MANIFEST-000001
+2025/04/06-15:41:25.490 3e07 Recovering log #32
+2025/04/06-15:41:25.495 3e07 Reusing old log /Users/seong/Band/back/user_data/Default/Local Storage/leveldb/000032.log 
+2025/04/06-15:42:25.504 3a03 Level-0 table #36: started
+2025/04/06-15:42:25.507 3a03 Level-0 table #36: 8504 bytes OK
+2025/04/06-15:42:25.510 3a03 Delete type=0 #32

@@ -12,16 +12,16 @@ async function migrateDatabase() {
 
     // 각 store 문서마다 처리
     for (const storeDoc of storesSnapshot.docs) {
-      const bandId = storeDoc.id;
-      logger.info(`밴드 ${bandId} 처리 중...`);
+      const bandNumber = storeDoc.id;
+      logger.info(`밴드 ${bandNumber} 처리 중...`);
 
       // 1.1 users 컬렉션에 사용자 문서 생성
       const userRef = db.collection("users").doc();
       const userId = userRef.id;
 
       await userRef.set({
-        bandId: bandId,
-        storeName: `밴드 ${bandId}`,
+        bandNumber: bandNumber,
+        storeName: `밴드 ${bandNumber}`,
         role: "store",
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -57,7 +57,7 @@ async function migrateDatabase() {
             images: postData.imageUrls || [],
             status: "판매중",
             bandPostId: postData.postId || postDoc.id,
-            bandPostUrl: `https://band.us/band/${bandId}/post/${
+            bandPostUrl: `https://band.us/band/${bandNumber}/post/${
               postData.postId || postDoc.id
             }`,
             category: "기타",
@@ -95,7 +95,7 @@ async function migrateDatabase() {
               userId: userId,
               productId: productId,
               customerName: customerName,
-              customerBandId: "",
+              customerbandNumber: "",
               customerProfile: "",
               quantity: 1,
               price: 0,
@@ -108,7 +108,7 @@ async function migrateDatabase() {
                 ? new Date(commentData.time)
                 : new Date(),
               bandCommentId: commentData.commentId || commentDoc.id,
-              bandCommentUrl: `https://band.us/band/${bandId}/post/${productId}#comment`,
+              bandCommentUrl: `https://band.us/band/${bandNumber}/post/${productId}#comment`,
               createdAt: commentData.createdAt
                 ? new Date(commentData.createdAt)
                 : new Date(),
@@ -178,7 +178,7 @@ async function migrateDatabase() {
         ),
       });
 
-      logger.info(`밴드 ${bandId} 마이그레이션 완료`);
+      logger.info(`밴드 ${bandNumber} 마이그레이션 완료`);
     }
 
     logger.info("데이터베이스 마이그레이션 완료!");

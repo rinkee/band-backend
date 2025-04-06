@@ -74,9 +74,9 @@ router.get("/options", (req, res) => {
  */
 router.post("/crawl", async (req, res) => {
   try {
-    const { userId, bandId, cronExpression } = req.body;
+    const { userId, bandNumber, cronExpression } = req.body;
 
-    if (!userId || !bandId || !cronExpression) {
+    if (!userId || !bandNumber || !cronExpression) {
       return res.status(400).json({
         success: false,
         message: "사용자 ID, 밴드 ID, 크론 표현식이 필요합니다.",
@@ -94,7 +94,7 @@ router.post("/crawl", async (req, res) => {
     // 스케줄 등록
     const jobId = schedulerService.scheduleBandCrawling(
       userId,
-      bandId,
+      bandNumber,
       cronExpression
     );
 
@@ -111,7 +111,7 @@ router.post("/crawl", async (req, res) => {
       data: {
         jobId,
         userId,
-        bandId,
+        bandNumber,
         cronExpression,
       },
     });

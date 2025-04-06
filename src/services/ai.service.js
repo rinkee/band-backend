@@ -11,11 +11,17 @@ const openai = new OpenAI({
 
 /**
  * 텍스트에서 상품 정보를 추출하는 함수
+ * saveDetailPostsSupabase에서 사용중
  * @param {string} content - 크롤링한 게시물 내용
  * @param {string|Date} postTime - 게시물 작성 시간 (선택적)
  * @returns {Promise<Object|Array>} - 추출된 상품 정보 또는 상품 정보 배열
  */
-async function extractProductInfo(content, postTime = null) {
+async function extractProductInfo(
+  content,
+  postTime = null,
+  bandNumber,
+  postId
+) {
   try {
     if (!content || content.trim() === "") {
       logger.warn("빈 콘텐츠로 ChatGPT API 호출이 시도되었습니다.");
@@ -95,12 +101,41 @@ async function extractProductInfo(content, postTime = null) {
 텍스트: ${content}
 게시물 작성 시간: ${postTime}
 
+밴드아이디: ${bandNumber},
+포스트아이디: ${postId},
+
+productId는 prod_${bandNumber}_${postId}_itemNumber 이 형식에 맞춰 생성하세요,
+맨앞에 prod_ 다음 밴드아이디_ 다음 포스트아이디_ 다음 아이템넘버
+ex) prod_82443310_26282_1
+
 출력 형식:
 # 여러 상품일 경우:
 {
   "multipleProducts": true,
+  "itemList": [
+    {
+      "itemNumber": 1,
+      "productId": productId (ex prod_82443310_26282_1),
+      "title": "씨앗젓갈",
+      "price": 9500
+    },
+    {
+      "itemNumber": 2,
+      "productId": productId,
+      "title": "비빔낙지젓갈",
+      "price": 9500
+    },
+    {
+      "itemNumber": 3,
+      "productId": productId,
+      "title": "갈치속젓",
+      "price": 5900
+    }
+  ],
   "products": [
     {
+   "productId":productId,
+     "itemNumber": 1, // <<<--- 중요: 게시물 본문의 원본 상품 번호
       "title": "상품명1",
       "basePrice": 숫자,
       "priceOptions": [
@@ -115,9 +150,13 @@ async function extractProductInfo(content, postTime = null) {
       "pickupInfo": "내일 도착 등",
       "pickupDate": "2025-03-27",
       "pickupType": "도착, 수령, 픽업, 전달 등"
+      
     },
     {
+    "productId":productId,
+       "itemNumber": 2, // <<<--- 중요: 게시물 본문의 원본 상품 번호
       "title": "상품명2",
+      
       // 이하 동일한 필드...
     }
   ]
@@ -126,6 +165,8 @@ async function extractProductInfo(content, postTime = null) {
 # 단일 상품일 경우:
 {
   "multipleProducts": false,
+  "productId": productId,
+  "itemNumber": 1, // <<<--- 중요: 게시물 본문의 원본 상품 번호
   "title": "상품명",
   "basePrice": 숫자,
   "priceOptions": [
@@ -139,11 +180,12 @@ async function extractProductInfo(content, postTime = null) {
   "features": ["특징1", "특징2"],
   "pickupInfo": "내일 도착 등",
   "pickupDate": "2025-03-27",
-  "pickupType": "도착, 수령, 픽업, 전달 등"
+  "pickupType": "도착, 수령, 픽업, 전달 등",
+  
 }`,
         },
       ],
-      temperature: 0.2,
+      temperature: 0.5,
       response_format: { type: "json_object" },
     });
 

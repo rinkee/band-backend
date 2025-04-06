@@ -125,8 +125,8 @@ async function loginAndSaveCookies() {
     );
 
     // 밴드 ID 접근 테스트
-    const testBandId = "82443310";
-    await page.goto(`https://band.us/band/${testBandId}`, {
+    const testbandNumber = "82443310";
+    await page.goto(`https://band.us/band/${testbandNumber}`, {
       waitUntil: "networkidle2",
     });
 

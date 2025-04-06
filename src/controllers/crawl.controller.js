@@ -98,7 +98,7 @@ const getUserNaverAccount = async (userId) => {
       userId,
       naverId: userData.naver_id,
       naverPassword: userData.naver_password,
-      bandId: userData.band_id,
+      bandNumber: userData.band_number,
     };
   } catch (error) {
     logger.error(`사용자 정보 조회 중 오류: ${error.message}`);
@@ -162,12 +162,12 @@ class CrawlController {
     const taskId = `task_${Date.now()}`;
 
     try {
-      // URL 경로 매개변수에서 bandId 가져오기
-      const { bandId } = req.params;
+      // URL 경로 매개변수에서 bandNumber 가져오기
+      const { bandNumber } = req.params;
       const { userId, maxPosts, processProducts } = req.body;
 
-      // bandId 검증
-      if (!bandId) {
+      // bandNumber 검증
+      if (!bandNumber) {
         return res.status(400).json({
           success: false,
           message: "밴드 ID는 필수 값입니다.",
@@ -207,14 +207,14 @@ class CrawlController {
         data: {
           taskId,
           userId,
-          bandId,
+          bandNumber,
           maxPosts: maxPosts || 30,
           processProducts: processProducts || false,
         },
       });
 
       // BandPosts 인스턴스 생성 (모듈화된 코드 사용)
-      crawler = new BandPosts(bandId, {
+      crawler = new BandPosts(bandNumber, {
         numPostsToLoad: maxPosts || 30,
       });
 
@@ -248,10 +248,7 @@ class CrawlController {
         });
 
         // processProducts 파라미터를 전달하여 저장 시 AI 처리를 함께 수행
-        await crawler.saveDetailPostsToSupabase(
-          result.data,
-          processProducts === true
-        );
+        await crawler.saveDetailPostsToSupabase(result.data, userId, true);
 
         // AI 처리 완료 후 상태 업데이트
         this.taskStatusMap.set(taskId, {
@@ -349,11 +346,11 @@ class CrawlController {
     const taskId = `task_comments_${Date.now()}`;
 
     try {
-      const { bandId, postId } = req.params;
+      const { bandNumber, postId } = req.params;
       const { userId } = req.body;
 
       // 필수 매개변수 검증
-      if (!bandId || !postId) {
+      if (!bandNumber || !postId) {
         return res.status(400).json({
           success: false,
           message: "밴드 ID와 게시물 ID는 필수 값입니다.",
@@ -391,14 +388,14 @@ class CrawlController {
         data: {
           taskId,
           userId,
-          bandId,
+          bandNumber,
           postId,
           startTime: new Date().toISOString(),
         },
       });
 
       // BandComments 인스턴스 생성 (모듈화된 코드 사용)
-      crawler = new BandComments(bandId);
+      crawler = new BandComments(bandNumber);
 
       // 상태 업데이트 함수 추가
       crawler.onStatusUpdate = (status, message, progress) => {
@@ -538,11 +535,11 @@ class CrawlController {
     const taskId = `task_post_list_${Date.now()}`;
 
     try {
-      const { bandId } = req.params;
+      const { bandNumber } = req.params;
       const { userId, maxPosts } = req.body;
 
       // 필수 매개변수 검증
-      if (!bandId) {
+      if (!bandNumber) {
         return res.status(400).json({
           success: false,
           message: "밴드 ID는 필수 값입니다.",
@@ -580,13 +577,13 @@ class CrawlController {
         data: {
           taskId,
           userId,
-          bandId,
+          bandNumber,
           maxPosts: maxPosts || 50,
         },
       });
 
       // BandPosts 인스턴스 생성 (모듈화된 코드 사용)
-      crawler = new BandPosts(bandId, {
+      crawler = new BandPosts(bandNumber, {
         numPostsToLoad: maxPosts || 20,
       });
 
@@ -712,11 +709,11 @@ class CrawlController {
     const taskId = `task_extract_${Date.now()}`;
 
     try {
-      const { bandId } = req.params;
+      const { bandNumber } = req.params;
       const { userId, postIds } = req.body;
 
       // 매개변수 검증
-      if (!bandId) {
+      if (!bandNumber) {
         return res.status(400).json({
           success: false,
           message: "밴드 ID는 필수 값입니다.",
@@ -753,7 +750,7 @@ class CrawlController {
         data: {
           taskId,
           userId,
-          bandId,
+          bandNumber,
           postCount: postIds.length,
         },
       });
@@ -770,8 +767,8 @@ class CrawlController {
       const { data: postsData, error } = await supabase
         .from("posts")
         .select("*")
-        .eq("band_id", bandId)
-        .in("band_post_id", postIds);
+        .eq("band_number", bandNumber)
+        .in("post_number", postIds);
 
       if (error) {
         throw new Error(`게시물 데이터 조회 오류: ${error.message}`);
@@ -796,8 +793,8 @@ class CrawlController {
 
       // 처리 가능한 형식으로 데이터 변환 (열 이름 매핑 수정)
       const processableData = postsData.map((post) => ({
-        bandId: bandId,
-        postId: post.band_post_id.toString(),
+        bandNumber: bandNumber,
+        postId: post.post_number.toString(),
         title: post.title,
         content: post.content,
         url: post.band_post_url,
@@ -831,7 +828,7 @@ class CrawlController {
    */
   async testProductExtraction(req, res) {
     try {
-      const { content, title, postId, bandId, userId } = req.body;
+      const { content, title, postId, bandNumber, userId } = req.body;
 
       if (!content) {
         return res.status(400).json({
@@ -848,7 +845,7 @@ class CrawlController {
       }
 
       const testPostData = {
-        bandId: bandId || "test_band",
+        bandNumber: bandNumber || "test_band",
         postId: postId || `test_${Date.now()}`,
         title: title || "테스트 게시물",
         content,

@@ -1,2 +1,2 @@
-order_id,user_id,product_id,post_id,band_id,customer_name,customer_band_id,customer_profile,quantity,price,total_amount,comment,status,ordered_at,confirmed_at,completed_at,band_comment_id,band_comment_url,admin_note,updated_at,history
+order_id,user_id,product_id,post_id,bandId,customer_name,customer_bandId,customer_profile,quantity,price,total_amount,comment,status,ordered_at,confirmed_at,completed_at,band_comment_id,band_comment_url,admin_note,updated_at,history
 96643229_1446_0,d8a5676f-b71a-4500-a973-0350a6cce5aa,96643229_product_1446,1446,96643229,쭈바,,,1,6980,6980,1봉예약합니다,주문완료,2025-03-19 01:42:00+00,,,1446_comment_0,https://band.us/band/96643229/post/1446#comment,,,

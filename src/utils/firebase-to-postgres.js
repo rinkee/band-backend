@@ -34,7 +34,7 @@ async function migrateUsers() {
         naverId: userData.naverId,
         naverPassword: userData.naverPassword,
         bandUrl: userData.bandUrl,
-        bandId: userData.bandId,
+        bandNumber: userData.bandNumber,
         storeName: userData.storeName,
         lastLoginAt: userData.lastLoginAt
           ? new Date(userData.lastLoginAt.toDate())
@@ -95,7 +95,7 @@ async function migratePosts(userIdMap) {
         content: postData.content || "",
         images: postData.images || [],
         bandPostId: postData.bandPostId,
-        bandId: postData.bandId,
+        bandNumber: postData.bandNumber,
         bandPostUrl: postData.bandPostUrl,
         commentCount: postData.commentCount || 0,
         author: postData.author,
@@ -159,7 +159,7 @@ async function migrateProducts(userIdMap) {
         images: productData.images || [],
         status: productData.status || "판매중",
         bandPostId: productData.bandPostId,
-        bandId: productData.bandId,
+        bandNumber: productData.bandNumber,
         bandPostUrl: productData.bandPostUrl,
         category: productData.category || "기타",
         tags: productData.tags || [],
@@ -226,7 +226,7 @@ async function migrateOrders(userIdMap, productIdMap) {
         productId: postgresProductId,
         originalProductId: orderData.originalProductId,
         customerName: orderData.customerName || "익명",
-        customerBandId: orderData.customerBandId,
+        customerbandNumber: orderData.customerbandNumber,
         customerProfile: orderData.customerProfile,
         quantity: orderData.quantity || 1,
         price: orderData.price || 0,
@@ -237,7 +237,7 @@ async function migrateOrders(userIdMap, productIdMap) {
           ? new Date(orderData.orderedAt.toDate())
           : null,
         bandCommentId: orderData.bandCommentId,
-        bandId: orderData.bandId,
+        bandNumber: orderData.bandNumber,
         bandCommentUrl: orderData.bandCommentUrl,
         barcode: orderData.barcode,
         createdAt: orderData.createdAt

@@ -34,13 +34,13 @@ const processAndSaveProduct = async (postData, userId) => {
     );
 
     // 2. 상품 ID 생성 (밴드 ID와 게시물 ID 조합)
-    const productId = `${postData.bandId}_product_${postData.postId}`;
+    const productId = `${postData.bandNumber}_product_${postData.postId}`;
 
     // 3. 저장할 상품 객체 생성
     const product = {
       product_id: productId,
       user_id: userId,
-      band_id: postData.bandId,
+      band_number: postData.bandNumber,
       title: productInfo.title || postData.title || "제목 없음",
       content: postData.content,
       base_price: productInfo.basePrice || 0,
@@ -60,10 +60,10 @@ const processAndSaveProduct = async (postData, userId) => {
       delivery_info: productInfo.deliveryInfo || null,
       delivery_date: productInfo.deliveryDate || null,
       delivery_type: productInfo.deliveryType || null,
-      band_post_id: postData.postId,
+      post_number: postData.postId,
       band_post_url:
         postData.url ||
-        `https://band.us/band/${postData.bandId}/post/${postData.postId}`,
+        `https://band.us/band/${postData.bandNumber}/post/${postData.postId}`,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };

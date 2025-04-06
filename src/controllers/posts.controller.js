@@ -15,14 +15,14 @@ const supabase = createClient(
  */
 const getAllPosts = async (req, res) => {
   try {
-    const { bandId } = req.query;
+    const { bandNumber } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 30;
     const startIndex = (page - 1) * limit;
     const sortBy = req.query.sortBy || "posted_at";
     const sortOrder = req.query.sortOrder === "asc" ? true : false;
 
-    if (!bandId) {
+    if (!bandNumber) {
       return res.status(400).json({
         success: false,
         message: "밴드 ID가 필요합니다.",
@@ -38,7 +38,7 @@ const getAllPosts = async (req, res) => {
       `,
         { count: "exact" }
       )
-      .eq("band_id", bandId)
+      .eq("band_number", bandNumber)
       .order(sortBy, { ascending: sortOrder })
       .range(startIndex, startIndex + limit - 1);
 

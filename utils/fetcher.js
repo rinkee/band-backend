@@ -13,7 +13,7 @@ console.log("API 기본 URL 설정:", API_BASE_URL);
 export const fetcher = async (url) => {
   try {
     const fullUrl = url.startsWith("http") ? url : `${API_BASE_URL}${url}`;
-    console.log("Fetcher 요청 URL:", fullUrl);
+    // console.log("Fetcher 요청 URL:", fullUrl);
 
     const response = await axios.get(fullUrl);
     return response.data;
@@ -71,7 +71,7 @@ export const authFetcher = async (url, options = {}) => {
  */
 export const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: 30000,
   headers: {
     "Content-Type": "application/json",
   },

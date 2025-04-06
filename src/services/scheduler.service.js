@@ -340,10 +340,10 @@ const scheduleBandCrawling = (userId, bandId, cronExpression) => {
  */
 const registerUserCrawlingTask = async (user) => {
   try {
-    const { user_id, band_id, crawl_interval } = user;
+    const { user_id, band_number, crawl_interval } = user;
 
     // 시스템 자동 크롤링 작업의 경우 다른 ID 형식 사용
-    const jobId = `band-crawl-system-${band_id}`;
+    const jobId = `band-crawl-system-${band_number}`;
 
     // 사용자 설정 크롤링 간격을 사용하거나 기본값 10분 사용
     const interval = crawl_interval || 10;
@@ -362,7 +362,7 @@ const registerUserCrawlingTask = async (user) => {
         ? "0 * * * *"
         : `*/${interval} * * * *`;
 
-    const description = `${band_id} 밴드 게시물 자동 크롤링 (${interval}분 간격)`;
+    const description = `${band_number} 밴드 게시물 자동 크롤링 (${interval}분 간격)`;
 
     // 기존 작업이 있다면 삭제
     if (scheduledJobs.has(jobId)) {
@@ -377,7 +377,7 @@ const registerUserCrawlingTask = async (user) => {
       try {
         // 임시 요청/응답 객체 생성
         const req = {
-          params: { bandId: band_id },
+          params: { bandId: band_number },
           body: { userId: user_id },
           user: { userId: user_id },
         };
@@ -416,7 +416,7 @@ const registerUserCrawlingTask = async (user) => {
 
     if (created) {
       logger.info(
-        `사용자 '${user_id}'의 자동 크롤링 작업 등록 완료 (밴드: ${band_id}, 간격: ${interval}분)`
+        `사용자 '${user_id}'의 자동 크롤링 작업 등록 완료 (밴드: ${band_number}, 간격: ${interval}분)`
       );
 
       // DB에 작업 ID 저장
@@ -516,7 +516,7 @@ const refreshAutoCrawlingTasks = async () => {
 
     // 새 사용자와 기존 사용자 구분하여 작업 등록/유지
     for (const user of users) {
-      const taskId = `band-crawl-system-${user.band_id}`;
+      const taskId = `band-crawl-system-${user.band_number}`;
       const interval = user.crawl_interval || 10;
 
       // 이미 등록된 작업이면 로직 확인 후 필요시 업데이트

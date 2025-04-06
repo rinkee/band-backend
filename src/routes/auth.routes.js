@@ -63,4 +63,10 @@ router.put(
   authController.updateLoginPassword
 );
 
+// POST /auth/:userId/manual-naver-login 엔드포인트 추가
+router.post(
+  "/:userId/manual-naver-login",
+  authController.handleManualNaverLogin
+);
+
 module.exports = router;

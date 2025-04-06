@@ -10,7 +10,7 @@ const logger = require("../config/logger");
 //   try {
 //     const { data: userData, error } = await supabase
 //       .from("users")
-//       .select("user_id, naver_id, naver_password, band_id")
+//       .select("user_id, naver_id, naver_password, band_number")
 //       .eq("user_id", userId)
 //       .single();
 
@@ -28,7 +28,7 @@ const logger = require("../config/logger");
 //       userId: userData.user_id,
 //       naverId: userData.naver_id,
 //       naverPassword: userData.naver_password,
-//       bandId: userData.band_id,
+//       bandId: userData.band_number,
 //     };
 //   } catch (error) {
 //     logger.error(`사용자 정보 조회 중 오류: ${error.message}`);
@@ -45,7 +45,7 @@ async function getAutoCrawlEnabledUsers() {
     const { data, error } = await supabase
       .from("users")
       .select(
-        "user_id, band_id, naver_id, naver_password, job_id, crawl_interval"
+        "user_id, band_number, naver_id, naver_password, job_id, crawl_interval"
       )
       .eq("auto_crawl", true) // auto_crawl이 true인 사용자만 선택
       .eq("is_active", true) // 활성 사용자만 선택

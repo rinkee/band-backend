@@ -5,7 +5,7 @@ const path = require("path");
 async function extractCommentsBySelector() {
   console.log("댓글 컨테이너 로드 대기 후 추출 테스트 시작");
 
-  const bandId = "82443310"; // 테스트할 밴드 ID
+  const bandNumber = "82443310"; // 테스트할 밴드 ID
   const postId = "26123"; // 테스트할 게시물 ID
 
   let browser;
@@ -45,7 +45,7 @@ async function extractCommentsBySelector() {
     });
 
     // 게시물 페이지로 이동
-    const postUrl = `https://band.us/band/${bandId}/post/${postId}`;
+    const postUrl = `https://band.us/band/${bandNumber}/post/${postId}`;
     console.log(`게시물 페이지로 이동: ${postUrl}`);
     await page.goto(postUrl, { waitUntil: "networkidle2", timeout: 30000 });
     console.log("게시물 페이지 로드 완료");

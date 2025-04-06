@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const logger = require("../config/logger");
 const { generateToken } = require("../utils/jwt");
 const BaseCrawler = require("../services/crawler/base.crawler");
+const BandAuth = require("../services/crawler/band.auth");
 
 // Supabase 클라이언트 초기화
 const supabase = createClient(
@@ -41,7 +42,7 @@ const getUserData = async (req, res) => {
         owner_name,
         phone_number,
         band_url,
-        band_id,
+        band_number,
         is_active,
         created_at,
         last_login_at,
@@ -196,12 +197,14 @@ const register = async (req, res) => {
     }
 
     // 밴드 ID 추출 (URL에서)
-    const bandIdMatch = bandUrl.match(
+    const bandNumberMatch = bandUrl.match(
       /band\.us\/band\/(\d+)|band\.com\/band\/(\d+)/
     );
-    const bandId = bandIdMatch ? bandIdMatch[1] || bandIdMatch[2] : null;
+    const bandNumber = bandNumberMatch
+      ? bandNumberMatch[1] || bandNumberMatch[2]
+      : null;
 
-    if (!bandId) {
+    if (!bandNumber) {
       return res.status(400).json({
         success: false,
         message: "밴드 URL에서 ID를 추출할 수 없습니다.",
@@ -238,7 +241,7 @@ const register = async (req, res) => {
           owner_name: ownerName || loginId,
           phone_number: phoneNumber || null,
           band_url: bandUrl,
-          band_id: bandId,
+          band_number: bandNumber,
           settings: {
             notificationEnabled: true,
             autoConfirmOrders: false,
@@ -274,7 +277,7 @@ const register = async (req, res) => {
         userId: userData.user_id,
         loginId: userData.login_id,
         storeName: userData.store_name,
-        bandId: userData.band_id,
+        bandNumber: userData.band_number,
       },
     });
   } catch (error) {
@@ -347,7 +350,7 @@ const login = async (req, res) => {
         ownerName: userData.owner_name,
         phoneNumber: userData.phone_number,
         bandUrl: userData.band_url,
-        bandId: userData.band_id,
+        bandNumber: userData.band_number,
         naverId: userData.naver_id,
         isActive: userData.is_active,
         settings: userData.settings,
@@ -477,7 +480,7 @@ const checkAuth = async (req, res) => {
       ownerName: userData.owner_name,
       phoneNumber: userData.phone_number,
       bandUrl: userData.band_url,
-      bandId: userData.band_id,
+      bandNumber: userData.band_number,
       role: userData.role,
       settings: userData.settings,
       isActive: userData.isActive,
@@ -600,7 +603,7 @@ const updateProfile = async (req, res) => {
       ownerName: updatedUserData.owner_name,
       phoneNumber: updatedUserData.phone_number,
       bandUrl: updatedUserData.band_url,
-      bandId: updatedUserData.band_id,
+      bandNumber: updatedUserData.band_number,
       updatedAt: updatedUserData.updated_at.toDate(),
     };
 
@@ -705,9 +708,9 @@ const updateLoginPassword = async (req, res) => {
  */
 const naverLogin = async (req, res) => {
   try {
-    const { userId, bandId } = req.body;
+    const { userId, bandNumber } = req.body;
 
-    if (!userId || !bandId) {
+    if (!userId || !bandNumber) {
       return res.status(400).json({
         success: false,
         message: "사용자 ID와 밴드 ID는 필수 값입니다.",
@@ -903,6 +906,126 @@ const checkNaverLoginStatus = async (req, res) => {
   }
 };
 
+const handleManualNaverLogin = async (req, res) => {
+  try {
+    // userId는 URL 경로에서 가져옵니다.
+    const { userId } = req.params;
+    // bandNumber는 요청 본문(body)에서 가져옵니다.
+    const { bandNumber } = req.body; // bandNumber는 body에서 받는 것이 맞다면 유지
+
+    // userId 존재 유무 확인
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "URL 경로에 사용자 ID가 누락되었습니다.",
+      });
+    }
+    // bandNumber 존재 유무 확인 (body에 필요하다면)
+    if (!bandNumber) {
+      return res.status(400).json({
+        success: false,
+        message: "요청 본문에 밴드 ID(bandNumber)는 필수 값입니다.",
+      });
+    }
+
+    // Supabase에서 사용자 정보 조회
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("*")
+      .eq("user_id", userId)
+      .single();
+
+    if (userError) {
+      return res.status(404).json({
+        success: false,
+        message: "사용자를 찾을 수 없습니다.",
+      });
+    }
+
+    // 네이버 계정 정보 확인
+    if (!userData.naver_id || !userData.naver_password) {
+      return res.status(400).json({
+        success: false,
+        message: "네이버 계정 정보가 설정되지 않았습니다.",
+      });
+    }
+
+    // 로그인 상태 업데이트
+    naverLoginStatus.set(userId, {
+      status: "processing",
+      message: "로그인 시도 중...",
+      timestamp: Date.now(),
+    });
+
+    // 백그라운드에서 로그인 처리
+    const crawler = new BandAuth();
+
+    try {
+      // login 메서드는 boolean 값을 반환
+      const loginSuccess = await crawler.initiateManualNaverLogin(
+        userData.naver_id,
+        userData.naver_password
+      );
+
+      if (loginSuccess) {
+        // 쿠키 저장
+        // const cookies = await crawler.browser.cookies();
+        // await crawler.saveCookies(userData.naver_id, cookies);
+
+        // Supabase에서 사용자 정보 업데이트
+        await supabase
+          .from("users")
+          .update({
+            last_naver_login: new Date().toISOString(),
+            naver_login_status: "success",
+          })
+          .eq("user_id", userId);
+
+        naverLoginStatus.set(userId, {
+          status: "success",
+          message: "로그인 성공",
+          timestamp: Date.now(),
+        });
+
+        res.json({
+          success: true,
+          message: "네이버 로그인 성공",
+          user: {
+            id: userData.user_id,
+            email: userData.login_id,
+            name: userData.owner_name,
+          },
+          cookieCount: 0,
+        });
+      } else {
+        throw new Error("네이버 로그인 실패");
+      }
+    } catch (error) {
+      naverLoginStatus.set(userId, {
+        status: "error",
+        message: error.message,
+        timestamp: Date.now(),
+      });
+      throw error;
+    } finally {
+      await crawler.close();
+    }
+  } catch (error) {
+    console.error("네이버 로그인 실패:", error);
+    console.error(
+      `[Manual Login Controller Error] User ${req.params?.userId || "N/A"}:`,
+      error
+    );
+    res
+      .status(500)
+      .json({ success: false, message: `서버 오류: ${error.message}` });
+    res.status(500).json({
+      success: false,
+      message: error.message || "네이버 로그인 처리 중 오류가 발생했습니다.",
+    });
+  }
+};
+
 module.exports = {
   getUserData,
   register,
@@ -916,4 +1039,5 @@ module.exports = {
   setNaverAccount,
   getNaverLoginStatus,
   checkNaverLoginStatus,
+  handleManualNaverLogin,
 };

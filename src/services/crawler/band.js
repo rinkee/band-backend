@@ -8,8 +8,8 @@ const utils = require("./band.utils");
  * 기존 인터페이스와의 호환성을 위한 BandCrawler 클래스
  */
 class BandCrawler extends BandComments {
-  constructor(bandId, options = {}) {
-    super(bandId, options);
+  constructor(bandNumber, options = {}) {
+    super(bandNumber, options);
   }
 }
 

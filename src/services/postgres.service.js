@@ -48,11 +48,11 @@
 // // 게시물 저장하기 (밴드 게시물 ID와 밴드 ID로 중복 확인)
 // async function savePost(postData) {
 //   try {
-//     const { bandId, bandPostId } = postData;
+//     const { bandNumber, bandPostId } = postData;
 
 //     // 중복 확인
 //     const existingPost = await Post.findOne({
-//       where: { bandId, bandPostId },
+//       where: { bandNumber, bandPostId },
 //     });
 
 //     if (existingPost) {
@@ -71,11 +71,11 @@
 // // 상품 저장하기 (밴드 게시물 ID와 밴드 ID로 중복 확인)
 // async function saveProduct(productData) {
 //   try {
-//     const { bandId, bandPostId } = productData;
+//     const { bandNumber, bandPostId } = productData;
 
 //     // 중복 확인
 //     const existingProduct = await Product.findOne({
-//       where: { bandId, bandPostId },
+//       where: { bandNumber, bandPostId },
 //     });
 
 //     if (existingProduct) {
@@ -94,11 +94,11 @@
 // // 주문 저장하기 (밴드 댓글 ID와 밴드 ID로 중복 확인)
 // async function saveOrder(orderData) {
 //   try {
-//     const { bandId, bandCommentId } = orderData;
+//     const { bandNumber, bandCommentId } = orderData;
 
 //     // 중복 확인
 //     const existingOrder = await Order.findOne({
-//       where: { bandId, bandCommentId },
+//       where: { bandNumber, bandCommentId },
 //     });
 
 //     if (existingOrder) {

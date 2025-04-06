@@ -4,14 +4,14 @@ const fs = require("fs");
 async function testBandComments() {
   console.log("BandComments 클래스 테스트 시작");
 
-  const bandId = "82443310";
+  const bandNumber = "82443310";
   const postId = "26123";
 
   let crawler;
 
   try {
     // BandComments 인스턴스 생성 (밴드 ID 제공)
-    crawler = new BandComments(bandId, {
+    crawler = new BandComments(bandNumber, {
       useCache: false,
       skipLogin: false,
     });
@@ -41,7 +41,7 @@ async function testBandComments() {
     }
 
     // 게시물 페이지로 이동
-    const postUrl = `https://band.us/band/${bandId}/post/${postId}`;
+    const postUrl = `https://band.us/band/${bandNumber}/post/${postId}`;
     console.log(`게시물 페이지로 이동: ${postUrl}`);
     await crawler.navigateTo(postUrl);
     console.log("게시물 페이지 로드 완료");

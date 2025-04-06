@@ -108,7 +108,7 @@
 //  * @param {Page} page - Puppeteer 페이지 인스턴스
 //  * @returns {Promise<boolean>} - 로그인 상태 여부
 //  */
-// async function checkLoginStatus(page, bandId) {
+// async function checkLoginStatus(page, bandNumber) {
 //   try {
 //     // 네이버 메인 페이지로 이동
 //     await this.page.goto("https://www.naver.com", {
@@ -143,7 +143,7 @@
 //       console.log("네이버 로그인 상태 확인됨");
 
 //       // 밴드 접근 권한 확인
-//       await this.page.goto(`https://band.us/band/${bandId}`, {
+//       await this.page.goto(`https://band.us/band/${bandNumber}`, {
 //         waitUntil: "networkidle2",
 //       });
 //       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -439,10 +439,10 @@
 //  * 게시물 및 댓글 크롤링
 //  * @param {Page} page - Puppeteer 페이지 인스턴스
 //  * @param {string} taskId - 작업 ID
-//  * @param {string} bandId - 밴드 ID
+//  * @param {string} bandNumber - 밴드 ID
 //  * @returns {Promise<{posts: Array, comments: Array}>} - 수집된 게시물과 댓글
 //  */
-// async function crawlPostsAndComments(page, taskId, bandId) {
+// async function crawlPostsAndComments(page, taskId, bandNumber) {
 //   updateTaskStatus(taskId, "processing", "게시물 스크롤링 중...", 45);
 
 //   try {
@@ -455,7 +455,7 @@
 //     updateTaskStatus(taskId, "processing", "게시물 데이터 추출 중...", 60);
 
 //     // 게시물 데이터 추출
-//     const posts = await page.evaluate(async (bandId) => {
+//     const posts = await page.evaluate(async (bandNumber) => {
 //       const postItems = document.querySelectorAll(".cCard.gContentCardShadow");
 //       console.log(`발견된 게시물 수: ${postItems.length}`);
 
@@ -497,7 +497,7 @@
 //           // 게시물 데이터 구성
 //           const postData = {
 //             postId,
-//             bandId,
+//             bandNumber,
 //             content,
 //             authorName,
 //             postTime,
@@ -514,9 +514,9 @@
 //           };
 
 //           // 데이터 유효성 검증
-//           if (!postData.postId || !postData.bandId) {
+//           if (!postData.postId || !postData.bandNumber) {
 //             console.warn(
-//               `필수 데이터 누락: postId=${postData.postId}, bandId=${postData.bandId}`
+//               `필수 데이터 누락: postId=${postData.postId}, bandNumber=${postData.bandNumber}`
 //             );
 //             continue;
 //           }
@@ -529,7 +529,7 @@
 //       }
 
 //       return extractedPosts;
-//     }, bandId);
+//     }, bandNumber);
 
 //     updateTaskStatus(
 //       taskId,
@@ -686,11 +686,11 @@
 //       try {
 //         await writeLog(`\n[${taskId}] ===== 게시물 저장 시도 =====`);
 //         await writeLog(`postId: ${postData.postId}`);
-//         await writeLog(`bandId: ${postData.bandId}`);
+//         await writeLog(`bandNumber: ${postData.bandNumber}`);
 //         await writeLog(`전체 데이터: ${JSON.stringify(postData, null, 2)}`);
 
 //         // 데이터 유효성 재검증
-//         if (!postData.postId || !postData.bandId) {
+//         if (!postData.postId || !postData.bandNumber) {
 //           await writeLog(
 //             `[${taskId}] 필수 필드 누락: ${JSON.stringify(postData)}`
 //           );
@@ -700,7 +700,7 @@
 //         // upsert 작업 수행
 //         const [post, created] = await Post.upsert(postData, {
 //           where: {
-//             bandId: postData.bandId,
+//             bandNumber: postData.bandNumber,
 //             postId: postData.postId,
 //           },
 //           returning: true,
@@ -849,18 +849,18 @@
 //  * 게시물 댓글 크롤링 함수
 //  * @param {string} naverId - 네이버 아이디
 //  * @param {string} naverPassword - 네이버 비밀번호
-//  * @param {string} bandId - 밴드 ID
+//  * @param {string} bandNumber - 밴드 ID
 //  * @param {string} postId - 게시물 ID
 //  * @returns {Promise<Object>} - 크롤링 결과
 //  */
-// const crawlPostComments = async (naverId, naverPassword, bandId, postId) => {
+// const crawlPostComments = async (naverId, naverPassword, bandNumber, postId) => {
 //   const taskId = `comment_task_${Date.now()}`;
 
 //   crawlingTasks.set(taskId, {
 //     status: "processing",
 //     message: "댓글 크롤링 작업 시작...",
 //     progress: 0,
-//     bandId,
+//     bandNumber,
 //     postId,
 //     createdAt: new Date(),
 //   });
@@ -868,7 +868,7 @@
 //   updateTaskStatus(
 //     taskId,
 //     "processing",
-//     `댓글 크롤링 시작: bandId=${bandId}, postId=${postId}`,
+//     `댓글 크롤링 시작: bandNumber=${bandNumber}, postId=${postId}`,
 //     0
 //   );
 
@@ -876,7 +876,7 @@
 //   const dbPost = await Post.findOne({
 //     where: {
 //       postId: postId,
-//       bandId: bandId,
+//       bandNumber: bandNumber,
 //     },
 //   });
 
@@ -921,7 +921,7 @@
 //       console.log("저장된 쿠키를 로드했습니다.");
 
 //       // 쿠키로 로그인 상태 확인
-//       isLoggedIn = await checkLoginStatus(page, bandId);
+//       isLoggedIn = await checkLoginStatus(page, bandNumber);
 //       if (isLoggedIn) {
 //         console.log("저장된 쿠키로 로그인 성공");
 //         updateTaskStatus(taskId, "processing", "저장된 쿠키로 로그인됨", 30);
@@ -937,7 +937,7 @@
 
 //     // 밴드 게시물로 이동
 //     updateTaskStatus(taskId, "processing", "밴드 게시물 페이지로 이동 중", 50);
-//     const postUrl = `https://band.us/band/${bandId}/post/${postId}`;
+//     const postUrl = `https://band.us/band/${bandNumber}/post/${postId}`;
 //     await page.goto(postUrl, { waitUntil: "networkidle2" });
 
 //     // 댓글 영역이 로드될 때까지 대기
@@ -1097,10 +1097,10 @@
 //  * 밴드 크롤링 시작 함수
 //  * @param {string} naverId - 네이버 아이디
 //  * @param {string} naverPassword - 네이버 비밀번호
-//  * @param {string} bandId - 밴드 ID
+//  * @param {string} bandNumber - 밴드 ID
 //  * @returns {Promise<string>} - 태스크 ID
 //  */
-// const startCrawling = async (naverId, naverPassword, bandId) => {
+// const startCrawling = async (naverId, naverPassword, bandNumber) => {
 //   // 고유 태스크 ID 생성
 //   const taskId = `task_${Date.now()}`;
 
@@ -1109,7 +1109,7 @@
 //     status: "pending",
 //     message: "크롤링 작업 준비 중...",
 //     progress: 0,
-//     bandId,
+//     bandNumber,
 //     createdAt: new Date(),
 //   });
 
@@ -1140,7 +1140,7 @@
 //       updateTaskStatus(taskId, "processing", "게시물 크롤링 중...", 30);
 
 //       // 밴드로 이동해서 게시물과 댓글 크롤링
-//       await crawlPostsAndComments(page, taskId, bandId);
+//       await crawlPostsAndComments(page, taskId, bandNumber);
 
 //       // 작업 완료 상태 업데이트
 //       updateTaskStatus(taskId, "completed", "크롤링 작업 완료", 100);
