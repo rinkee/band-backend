@@ -1,53 +1,55 @@
-# Use an official Node.js runtime as a parent image
-# LTS (Long Term Support) 버전을 사용하는 것이 안정성 측면에서 좋습니다.
-# 필요에 따라 버전을 변경하세요 (예: node:18-alpine, node:20)
+# Use an official Node.js Alpine runtime as a parent image
 FROM node:18-alpine
 
 # Set the working directory in the container
 WORKDIR /usr/src/app
 
-# We don't need the standalone Chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true
+# --- Puppeteer/Chromium Configuration for Alpine ---
+# 1. Tell Puppeteer NOT to download its own Chromium, as we will install it via apk.
+# 2. Tell Puppeteer where to find the system-installed Chromium executable.
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
-# Install Google Chrome Stable and fonts
-# Note: this installs the necessary libs to make the browser work with Puppeteer.
-RUN apt-get update && apt-get install gnupg wget -y && \
-    wget --quiet --output-document=- https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor > /etc/apt/trusted.gpg.d/google-archive.gpg && \
-    sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' && \
-    apt-get update && \
-    apt-get install google-chrome-stable -y --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/*
+# --- Install Chromium and necessary dependencies using Alpine's package manager (apk) ---
+# RUN apt-get update && apt-get install gnupg wget -y && \  <-- 삭제 (apt-get 사용 불가)
+#     wget --quiet --output-document=- https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor > /etc/apt/trusted.gpg.d/google-archive.gpg && \ <-- 삭제
+#     sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' && \ <-- 삭제
+#     apt-get update && \ <-- 삭제
+#     apt-get install google-chrome-stable -y --no-install-recommends && \ <-- 삭제 (google-chrome-stable 대신 chromium 설치)
+#     rm -rf /var/lib/apt/lists/* <-- 삭제 (apk 캐시 정리로 대체)
 
-# Verify that Chrome is installed at the expected location
-RUN ls -alh /usr/bin/google-chrome-stable && \
-    /usr/bin/google-chrome-stable --version
+# === Alpine 방식 수정 ===
+RUN apk update && apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont \
+    udev \
+    # 필요에 따라 다른 종속성 추가 가능
+    # 예: dbus
+    && rm -rf /var/cache/apk/* # apk 캐시 정리
 
-
-
-# Copy package.json and package-lock.json (or yarn.lock)
-# package-lock.json 또는 yarn.lock 파일이 있다면 함께 복사하는 것이 좋습니다.
+# --- 애플리케이션 종속성 설치 ---
+# Copy package.json and package-lock.json (if available)
 COPY package*.json ./
-# 만약 yarn을 사용한다면 아래 줄을 대신 사용하세요.
-# COPY package.json yarn.lock ./
 
-# Install app dependencies including Puppeteer
-RUN npm install
-
-# Install app dependencies
-# CI=true 옵션은 불필요한 로그 출력을 줄이고, package-lock.json을 엄격하게 사용하도록 합니다.
+# Install production dependencies using npm ci (recommended for CI/CD)
+# 이전에 있던 'RUN npm install'은 제거합니다. 'npm ci'가 더 빠르고 안정적입니다.
 RUN npm ci --only=production
-# 만약 yarn을 사용한다면 아래 줄을 대신 사용하세요.
-# RUN yarn install --frozen-lockfile --production
 
+# --- 애플리케이션 코드 복사 ---
 # Bundle app source
 COPY . .
 
-# Expose the port the app runs on
-# 애플리케이션이 사용하는 포트를 명시합니다. 기본적으로 8080을 사용하지만,
-# 실제 애플리케이션 포트와 일치시켜야 합니다. .env 파일이나 설정 파일을 확인하세요.
+# --- 실행 설정 ---
+# Expose the port the app runs on (Cloud Run uses PORT env var)
 EXPOSE 8080
 
-# Define the command to run the app
-# package.json의 "start" 스크립트를 실행하는 것이 일반적입니다.
-# 필요에 따라 ["node", "src/server.js"] 와 같이 직접 실행 명령을 지정할 수도 있습니다.
+# Define the command to run the app using the "start" script in package.json
 CMD [ "npm", "start" ]
+
+# --- 불필요한 검증 단계 제거 ---
+# RUN ls -alh /usr/bin/google-chrome-stable && \ <-- 삭제 (경로 및 이름 변경됨)
+#     /usr/bin/google-chrome-stable --version <-- 삭제
