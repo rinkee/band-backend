@@ -102,9 +102,17 @@ class BandAuth {
 
       this.browser = await puppeteer.launch({
         headless: "new", // headless 모드 비활성화로 변경
-        args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+        ],
+        ignoreHTTPSErrors: true,
         defaultViewport: null,
-        userDataDir: "./user_data", // 세션 지속 저장
+
+        executablePath:
+          process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium-browser",
       });
 
       this.page = await this.browser.newPage();

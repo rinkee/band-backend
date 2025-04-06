@@ -1,55 +1,66 @@
-# Use an official Node.js Alpine runtime as a parent image
-FROM node:18-alpine
+# Debian 기반 이미지 사용 (예: node:18-slim)
+FROM node:18-slim
 
-# Set the working directory in the container
+# 시스템 업데이트 및 필수 종속성 설치 (Puppeteer 공식 가이드 목록 참고)
+# Chromium 실행에 필요한 라이브러리들입니다.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    fonts-liberation \
+    libappindicator3-1 \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libc6 \
+    libcairo2 \
+    libcups2 \
+    libdbus-1-3 \
+    libexpat1 \
+    libfontconfig1 \
+    libgbm1 \
+    libgcc1 \
+    libglib2.0-0 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libstdc++6 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxcb1 \
+    libxcomposite1 \
+    libxcursor1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxi6 \
+    libxrandr2 \
+    libxrender1 \
+    libxss1 \
+    libxtst6 \
+    lsb-release \
+    wget \
+    xdg-utils \
+    # Puppeteer 버전에 따라 필요한 라이브러리가 약간 다를 수 있습니다.
+    # 에러 발생 시 로그를 보고 누락된 라이브러리를 추가해야 할 수 있습니다.
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /usr/src/app
 
-# --- Puppeteer/Chromium Configuration for Alpine ---
-# 1. Tell Puppeteer NOT to download its own Chromium, as we will install it via apk.
-# 2. Tell Puppeteer where to find the system-installed Chromium executable.
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+# Puppeteer는 기본적으로 Chromium을 다운로드합니다. (이 방식이 더 간단할 수 있음)
+# 만약 시스템 Chromium을 사용하고 싶다면 아래 주석 처리된 부분을 사용하고
+# apk add chromium 부분을 추가해야 합니다. (Alpine에서 주로 사용)
+# ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+#     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium # 또는 chromium-browser
 
-# --- Install Chromium and necessary dependencies using Alpine's package manager (apk) ---
-# RUN apt-get update && apt-get install gnupg wget -y && \  <-- 삭제 (apt-get 사용 불가)
-#     wget --quiet --output-document=- https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor > /etc/apt/trusted.gpg.d/google-archive.gpg && \ <-- 삭제
-#     sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' && \ <-- 삭제
-#     apt-get update && \ <-- 삭제
-#     apt-get install google-chrome-stable -y --no-install-recommends && \ <-- 삭제 (google-chrome-stable 대신 chromium 설치)
-#     rm -rf /var/lib/apt/lists/* <-- 삭제 (apk 캐시 정리로 대체)
-
-# === Alpine 방식 수정 ===
-RUN apk update && apk add --no-cache \
-    chromium \
-    nss \
-    freetype \
-    harfbuzz \
-    ca-certificates \
-    ttf-freefont \
-    udev \
-    # 필요에 따라 다른 종속성 추가 가능
-    # 예: dbus
-    && rm -rf /var/cache/apk/* # apk 캐시 정리
-
-# --- 애플리케이션 종속성 설치 ---
-# Copy package.json and package-lock.json (if available)
 COPY package*.json ./
 
-# Install production dependencies using npm ci (recommended for CI/CD)
-# 이전에 있던 'RUN npm install'은 제거합니다. 'npm ci'가 더 빠르고 안정적입니다.
+# 종속성 설치 (Puppeteer 포함)
+# --only=production 은 devDependencies를 제외합니다. Puppeteer가 devDependencies에 있다면 제거하세요.
 RUN npm ci --only=production
 
-# --- 애플리케이션 코드 복사 ---
-# Bundle app source
 COPY . .
 
-# --- 실행 설정 ---
-# Expose the port the app runs on (Cloud Run uses PORT env var)
 EXPOSE 8080
-
-# Define the command to run the app using the "start" script in package.json
 CMD [ "npm", "start" ]
-
-# --- 불필요한 검증 단계 제거 ---
-# RUN ls -alh /usr/bin/google-chrome-stable && \ <-- 삭제 (경로 및 이름 변경됨)
-#     /usr/bin/google-chrome-stable --version <-- 삭제
