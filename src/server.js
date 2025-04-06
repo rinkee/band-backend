@@ -4,7 +4,7 @@ const app = require("./app");
 const logger = require("./config/logger");
 
 // 환경변수에서 포트 가져오기 또는 기본값 사용
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8080;
 
 // 서버 시작
 const server = app.listen(PORT, () => {
