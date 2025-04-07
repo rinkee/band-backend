@@ -36,8 +36,6 @@ COPY package*.json ./
 #    PUPPETEER_EXECUTABLE_PATH: Dockerfile에서 설치한 Chrome 경로 지정
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/opt/google/chrome/chrome
-
-
 # npm install 실행
 RUN npm install
 

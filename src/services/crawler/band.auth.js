@@ -101,7 +101,7 @@ class BandAuth {
       this.updateTaskStatus("processing", "initialize", 0);
 
       this.browser = await puppeteer.launch({
-        headless: "new", // headless 모드 비활성화로 변경
+        headless: "new",
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -110,6 +110,7 @@ class BandAuth {
         ],
         ignoreHTTPSErrors: true,
         defaultViewport: null,
+        executablePath: "/opt/google/chrome/chrome", // 실제 확인된 경로로 명시적 지정
       });
 
       this.page = await this.browser.newPage();
