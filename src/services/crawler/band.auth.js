@@ -110,7 +110,6 @@ class BandAuth {
         ],
         ignoreHTTPSErrors: true,
         defaultViewport: null,
-        executablePath: "/opt/google/chrome/chrome", // 실제 확인된 경로로 명시적 지정
       });
 
       this.page = await this.browser.newPage();
