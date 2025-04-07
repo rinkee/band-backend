@@ -1,5 +1,5 @@
 # 1. 베이스 Node.js 이미지 선택
-FROM node:18-slim # 또는 FROM node:18 로 변경 시도 가능
+FROM node:18-slim 
 
 # 2. 시스템 업데이트 및 Chromium과 필요 라이브러리 설치
 RUN apt-get update \
