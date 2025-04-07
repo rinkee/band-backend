@@ -23,7 +23,8 @@ COPY package*.json ./
 #    주의: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true 를 설정하여 Dockerfile에서 Chrome을 직접 설치했으므로,
 #    npm install 시 Puppeteer가 자동으로 Chromium을 다운로드하지 않도록 합니다.
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+    PUPPETEER_EXECUTABLE_PATH=/opt/google/chrome/chrome
+
 
 RUN npm install
 
