@@ -311,7 +311,7 @@ const scheduleBandCrawling = (userId, bandId, cronExpression) => {
         };
 
         // 게시물 목록 크롤링
-        await crawlController.getPostsInfoOnly(req, res);
+        await crawlController.startPostDetailCrawling(req, res);
       } catch (error) {
         logger.error(`자동 크롤링 작업 오류: ${error.message}`);
         throw error;
@@ -399,7 +399,7 @@ const registerUserCrawlingTask = async (user) => {
         };
 
         // 게시물 목록 크롤링
-        await crawlController.getPostsInfoOnly(req, res);
+        await crawlController.startPostDetailCrawling(req, res);
       } catch (error) {
         logger.error(`자동 크롤링 실행 오류: ${error.message}`);
         throw error;

@@ -1,34 +1,48 @@
 # 1. 베이스 Node.js 이미지 선택
 FROM node:18-slim
 
-# 2. 시스템 업데이트 및 Puppeteer 실행에 필요한 라이브러리 설치
-#    Chromium 자체는 설치하지 않음 (Puppeteer가 다운로드)
+# 2. 필수 도구 및 인증서 먼저 설치
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       # 필수 종속 라이브러리 (제거하면 안됨!)
-       libasound2 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 \
-       libexpat1 libfontconfig1 libgcc1 libglib2.0-0 \
-       libgtk-3-0 libnspr4 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 \
-       libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 \
-       libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 \
-       fonts-liberation libnss3 xdg-utils \
-       # wget은 Puppeteer 다운로드를 위해 필요할 수 있음
-       wget \
-    # apt 캐시 정리
+        ca-certificates \
+        wget \
+        gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. 작업 디렉토리 설정
+# 3. Google Chrome 저장소 키 추가 및 설정
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg \
+    && sh -c 'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
+
+# 4. 패키지 목록 업데이트 및 Google Chrome 설치
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        google-chrome-stable \
+        libgbm-dev \
+        # 다양한 문자 세트 지원을 위한 폰트 (선택 사항이지만 권장)
+        fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf \
+    && rm -rf /var/lib/apt/lists/*
+
+# 5. Puppeteer 사용자 생성 (이후 과정은 동일)
+RUN groupadd -r pptruser && useradd -r -g pptruser -G audio,video pptruser \
+    && mkdir -p /home/pptruser/Downloads \
+    && chown -R pptruser:pptruser /home/pptruser
+
+# 작업 디렉토리 설정 및 권한 부여
 WORKDIR /app
+RUN chown -R pptruser:pptruser /app
 
-# 4. package.json 및 package-lock.json 복사
-COPY package*.json ./
+# package.json 및 package-lock.json 복사
+COPY --chown=pptruser:pptruser package*.json ./
 
-# 5. 종속성 설치 (이제 Puppeteer가 Chromium 다운로드)
-#    관련 환경 변수 제거됨
-RUN npm install
+# Puppeteer 사용자로 전환
+USER pptruser
 
-# 6. 애플리케이션 소스 코드 복사
-COPY . .
+# 종속성 설치
+RUN npm install \
+    && npm cache clean --force
 
-# 7. 애플리케이션 실행 명령어
+# 애플리케이션 소스 코드 복사
+COPY --chown=pptruser:pptruser . .
+
+# 애플리케이션 실행 명령어
 CMD [ "node", "src/server.js" ]
