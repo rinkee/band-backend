@@ -96,7 +96,7 @@ class BandAuth {
   }
 
   // 브라우저 초기화 (원래 BaseCrawler의 메서드)
-  async initialize(naverId, naverPassword) {
+  async initialize(userId, naverId, naverPassword) {
     try {
       this.updateTaskStatus("processing", "initialize", 0);
 
@@ -124,9 +124,14 @@ class BandAuth {
 
       this.updateTaskStatus("processing", "브라우저 초기화 완료", 5);
 
+      await this.page.goto("https://band.us/band/82443310/", {
+        waitUntil: "networkidle2",
+        timeout: 30000,
+      });
+
       if (naverId) {
         // 먼저 쿠키 로그인 시도
-        const cookieLoginResult = await this.cookieLogin(naverId);
+        const cookieLoginResult = await this.cookieLogin(userId, naverId);
 
         // 쿠키 로그인 성공 시 종료
         if (cookieLoginResult) {
@@ -136,7 +141,7 @@ class BandAuth {
         // 쿠키 로그인 실패하고 비밀번호가 있으면 UI 로그인 시도
         if (naverPassword) {
           this.updateTaskStatus("processing", "직접 로그인 시도", 30);
-          return await this.naverLogin(naverId, naverPassword);
+          return await this.naverLogin(userId, naverId, naverPassword);
         } else {
           this.updateTaskStatus(
             "failed",
@@ -164,36 +169,27 @@ class BandAuth {
     }
   }
 
-  async saveCookies(naverId, cookies) {
+  async saveCookies(userId, naverId, cookies) {
+    // Supabase 업데이트를 위해 userId가 설정되어 있는지 확인
+    if (!userId) {
+      console.error("saveCookies 호출 전 userId가 설정되어야 합니다.");
+      return false;
+    }
+
     try {
+      // 1. 입력 유효성 검사
       if (!naverId || !cookies || !Array.isArray(cookies)) {
-        this.updateTaskStatus(
-          "processing",
-          "유효하지 않은 쿠키 또는 ID 정보",
-          80
-        );
+        console.error("유효하지 않은 쿠키 또는 ID 정보:", {
+          naverId,
+          cookiesType: typeof cookies,
+          isArray: Array.isArray(cookies),
+        });
+        // 실패 상태를 Supabase에 기록할 수도 있음 (선택 사항)
+        // await supabase.from("users").update({ naver_login_status: "failed_invalid_input" }).eq("user_id", this.userId);
         return false;
       }
 
-      this.updateTaskStatus("processing", "쿠키 저장 시작", 80);
-
-      // 밴드 홈으로 이동 시도 (실패해도 계속 진행)
-      try {
-        await this.page.goto("https://band.us/home", {
-          waitUntil: "networkidle2",
-          timeout: 30000,
-        });
-      } catch (navError) {
-        console.log(
-          "밴드 홈 이동 실패 (무시하고 계속 진행):",
-          navError.message
-        );
-      }
-
-      // 쿠키 디렉토리가 없으면 생성
-      await fs.mkdir(COOKIES_PATH, { recursive: true });
-
-      // 모든 밴드 관련 쿠키 필터링 (서브도메인 포함)
+      // 2. 관련 쿠키 필터링 (밴드 및 인증 관련 도메인)
       const relevantCookies = cookies.filter(
         (cookie) =>
           cookie &&
@@ -202,608 +198,557 @@ class BandAuth {
             cookie.domain.includes("auth.band.us"))
       );
 
-      // 쿠키 수 로깅
-      this.updateTaskStatus(
-        "processing",
-        `총 쿠키 수: ${cookies.length}, 필터링 후 쿠키 수: ${relevantCookies.length}`,
-        82
-      );
-
+      // 3. 저장할 쿠키 유무 확인
       if (relevantCookies.length === 0) {
-        this.updateTaskStatus(
-          "processing",
-          "저장할 밴드 관련 쿠키가 없습니다.",
-          85
-        );
-        return false;
+        console.log("저장할 밴드 관련 쿠키가 없습니다.");
+        // 쿠키가 없더라도 로그인 시도 자체는 기록하고 실패 처리
+        const { error: updateError } = await supabase
+          .from("users")
+          .update({
+            cookies_updated_at: new Date().toISOString(),
+            naver_login_status: "failed_no_cookies", // 쿠키 없음 상태
+            cookies: [], // 빈 배열 저장
+            updated_at: new Date().toISOString(),
+          })
+          .eq("user_id", userId);
+
+        if (updateError) {
+          console.error(
+            "Supabase 상태 업데이트 오류 (쿠키 없음):",
+            updateError
+          );
+        }
+        return false; // 저장할 쿠키가 없으므로 실패 반환
       }
 
-      // 각 도메인별 쿠키 수 로깅 (디버깅용)
-      const bandCookies = cookies.filter(
-        (c) => c.domain && c.domain.includes(".band.us")
-      ).length;
-      const wwwBandCookies = cookies.filter(
-        (c) => c.domain && c.domain.includes("www.band.us")
-      ).length;
-      const authBandCookies = cookies.filter(
-        (c) => c.domain && c.domain.includes("auth.band.us")
-      ).length;
-
-      this.updateTaskStatus(
-        "processing",
-        `도메인별 쿠키 수: .band.us: ${bandCookies}, www.band.us: ${wwwBandCookies}, auth.band.us: ${authBandCookies}`,
-        84
+      // 4. Supabase에 사용자 정보 및 필터링된 쿠키 업데이트
+      console.log(
+        `Supabase에 ${relevantCookies.length}개의 밴드 쿠키 저장을 시도합니다.`
       );
+      const { error: supabaseError } = await supabase
+        .from("users")
+        .update({
+          cookies_updated_at: new Date().toISOString(),
+          naver_login_status: "success", // 성공 상태
+          cookies: relevantCookies, // 필터링된 쿠키 저장
+          updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", userId);
 
-      // 중요 밴드 쿠키 확인
-      const hasBandSession = relevantCookies.some(
-        (cookie) => cookie.name === "band_session"
-      );
-
-      const hasRtCookie = relevantCookies.some(
-        (cookie) => cookie.name === "rt"
-      );
-
-      const hasSecretKey = relevantCookies.some(
-        (cookie) => cookie.name === "secretKey"
-      );
-
-      if (!hasBandSession) {
-        this.updateTaskStatus(
-          "processing",
-          "중요 band_session 쿠키가 없습니다! 그래도 저장을 진행합니다.",
-          85
-        );
+      // 5. Supabase 업데이트 오류 처리
+      if (supabaseError) {
+        console.error("Supabase 쿠키 저장 오류:", supabaseError);
+        // 필요하다면 여기서도 naver_login_status를 'failed_db_error' 등으로 업데이트 시도 가능
+        return false; // Supabase 저장 실패 시 false 반환
       }
 
-      // 기존 쿠키 파일이 있는지 확인
-      const cookieFile = path.join(COOKIES_PATH, `${naverId}.json`);
-
-      // 항상 새로운 쿠키를 저장합니다 (이전 비교 로직 제거)
-      this.updateTaskStatus("processing", "새로운 쿠키를 저장합니다.", 86);
-
-      try {
-        await fs.writeFile(
-          cookieFile,
-          JSON.stringify(
-            {
-              cookies: relevantCookies,
-              timestamp: Date.now(),
-            },
-            null,
-            2
-          )
-        );
-
-        this.updateTaskStatus(
-          "processing",
-          `쿠키 저장됨: ${cookieFile} (${relevantCookies.length} 쿠키)`,
-          88
-        );
-      } catch (writeError) {
-        this.updateTaskStatus(
-          "processing",
-          `쿠키 파일 저장 실패: ${writeError.message}`,
-          88
-        );
-        return false;
-      }
-
-      // 디버깅을 위한 중요 쿠키 정보 로깅
-      this.updateTaskStatus(
-        "processing",
-        `중요 쿠키: BAND_SESSION=${hasBandSession}, RT=${hasRtCookie}, SECRET_KEY=${hasSecretKey}`,
-        90
-      );
-
-      // 중요 쿠키 정보 로깅
-      const bandSessionCookie = relevantCookies.find(
-        (c) => c.name === "band_session"
-      );
-      if (bandSessionCookie) {
-        const valueLength = bandSessionCookie.value.length;
-        this.updateTaskStatus(
-          "processing",
-          `band_session 쿠키 길이: ${valueLength}, 도메인: ${bandSessionCookie.domain}`,
-          92
-        );
-      }
-
-      const rtCookie = relevantCookies.find((c) => c.name === "rt");
-      if (rtCookie) {
-        const valueLength = rtCookie.value.length;
-        this.updateTaskStatus(
-          "processing",
-          `rt 쿠키 길이: ${valueLength}, 도메인: ${rtCookie.domain}`,
-          94
-        );
-      }
-
-      // 모든 저장된 쿠키 이름 로깅
-      const cookieNames = relevantCookies.map((c) => c.name).join(", ");
-      this.updateTaskStatus(
-        "processing",
-        `저장된 모든 쿠키 이름: ${cookieNames}`,
-        96
-      );
-
-      return true;
+      console.log("Supabase에 쿠키 저장 성공.");
+      return true; // 모든 과정 성공 시 true 반환
     } catch (error) {
-      this.updateTaskStatus(
-        "processing",
-        `쿠키 저장 중 오류: ${error.message}`,
-        80
-      );
-      console.error("쿠키 저장 오류:", error);
-      // 오류가 있어도 프로세스를 중단하지 않고 계속 진행
-      return false;
+      // 6. 예상치 못한 오류 처리
+      console.error("쿠키 저장 중 예상치 못한 오류:", error);
+      // 오류 발생 시 Supabase 상태 업데이트 (선택적)
+      try {
+        await supabase
+          .from("users")
+          .update({
+            naver_login_status: "failed_exception", // 예외 발생 상태
+            updated_at: new Date().toISOString(),
+          })
+          .eq("user_id", userId);
+      } catch (dbError) {
+        console.error("오류 상태 업데이트 중 DB 오류:", dbError);
+      }
+      return false; // 실패 반환
     }
   }
 
-  async loadCookies(naverId) {
+  /**
+   * Supabase에서 특정 사용자의 저장된 쿠키를 로드합니다.
+   * @param {string} userId - 쿠키를 로드할 사용자의 Supabase user_id
+   * @returns {Promise<Array|null>} - 쿠키 배열 또는 찾을 수 없거나 오류 시 null
+   */
+  async loadCookies(userId) {
+    if (!userId) {
+      logger.error("loadCookies 호출 시 userId가 필요합니다.");
+      this.updateTaskStatus("failed", "쿠키 로드 실패: 사용자 ID 누락", 10);
+      return null;
+    }
+
+    this.updateTaskStatus(
+      "processing",
+      "Supabase에서 쿠키 로드 시도 중...",
+      11
+    );
+
     try {
-      const cookieFile = path.join(COOKIES_PATH, `${naverId}.json`);
-      const cookieData = await fs.readFile(cookieFile, "utf8");
-      const data = JSON.parse(cookieData);
+      // Supabase 'users' 테이블에서 user_id가 일치하는 레코드의 'cookies' 컬럼 선택
+      const { data, error } = await this.supabase
+        .from("users")
+        .select("cookies, cookies_updated_at") // 쿠키 데이터와 업데이트 시간 선택
+        .eq("user_id", userId) // 전달된 userId로 필터링
+        .single(); // 단일 레코드만 가져옴
 
-      // 쿠키 만료 시간 확인 제거 - 계속 유지되도록 수정
-      // const cookieAge = Date.now() - data.timestamp;
-      // if (cookieAge > 24 * 60 * 60 * 1000) {
-      //   this.updateTaskStatus(
-      //     "processing",
-      //     "저장된 쿠키가 만료되었습니다 (24시간 초과)",
-      //     12
-      //   );
-      //   return null;
-      // }
+      // 오류 처리
+      if (error) {
+        // 'PGRST116' 코드는 결과가 없음을 의미 (사용자 또는 쿠키가 없는 정상적인 경우)
+        if (error.code === "PGRST116") {
+          this.updateTaskStatus(
+            "processing",
+            "Supabase에 저장된 쿠키를 찾을 수 없습니다.",
+            12
+          );
+          logger.info(`사용자 ${userId}에 대해 Supabase에서 저장된 쿠키 없음.`);
+          return null;
+        } else {
+          // 그 외의 데이터베이스 오류
+          this.updateTaskStatus(
+            "failed",
+            `Supabase 쿠키 로드 오류: ${error.message}`,
+            12
+          );
+          logger.error(
+            `Supabase 쿠키 로드 중 DB 오류 (사용자: ${userId}):`,
+            error
+          );
+          return null;
+        }
+      }
 
-      this.updateTaskStatus("processing", "저장된 쿠키를 불러왔습니다", 12);
-      return data.cookies;
+      // 데이터 유효성 검사 (data가 있고, cookies 필드가 배열인지 확인)
+      if (data && Array.isArray(data.cookies)) {
+        // 쿠키가 비어있는 배열일 수도 있음 (로그인은 성공했으나 저장된 쿠키가 없는 경우)
+        if (data.cookies.length === 0) {
+          this.updateTaskStatus(
+            "processing",
+            "Supabase에서 빈 쿠키 배열 로드됨.",
+            12
+          );
+          logger.info(
+            `사용자 ${userId}에 대해 Supabase에서 빈 쿠키 배열 로드됨.`
+          );
+          // 빈 배열도 유효한 상태일 수 있으므로 그대로 반환
+          return data.cookies;
+        }
+
+        // 쿠키 데이터가 존재하고 배열 형태임
+        const loadedAt = data.cookies_updated_at
+          ? new Date(data.cookies_updated_at).toLocaleString()
+          : "N/A";
+        this.updateTaskStatus(
+          "processing",
+          `Supabase에서 쿠키 ${data.cookies.length}개 로드 완료 (최종 저장: ${loadedAt})`,
+          13
+        );
+        logger.info(
+          `사용자 ${userId}에 대해 Supabase에서 ${data.cookies.length}개의 쿠키 로드 성공.`
+        );
+        return data.cookies; // 쿠키 배열 반환
+      } else {
+        // 데이터는 있지만 cookies 필드가 배열이 아니거나 없는 경우
+        this.updateTaskStatus(
+          "processing",
+          "Supabase에서 유효하지 않은 쿠키 데이터 발견.",
+          12
+        );
+        logger.warn(
+          `사용자 ${userId}의 Supabase 레코드에 유효한 쿠키 배열이 없습니다. data:`,
+          data
+        );
+        return null;
+      }
     } catch (error) {
-      this.updateTaskStatus("processing", "저장된 쿠키를 찾을 수 없습니다", 12);
+      // try 블록 전체를 감싸는 예상치 못한 오류 처리
+      this.updateTaskStatus(
+        "failed",
+        `쿠키 로드 중 예상치 못한 오류: ${error.message}`,
+        12
+      );
+      logger.error(
+        `Supabase 쿠키 로드 중 예상치 못한 오류 (사용자: ${userId}):`,
+        error
+      );
       return null;
     }
   }
 
   /**
-   * 네이버 로그인 시도
+   * 네이버 로그인 시도 (리캡챠 감지 시 홈 이동 후 재시도 로직 포함)
    */
-  async naverLogin(naverId, naverPassword) {
-    const randomDelay = Math.floor(Math.random() * (3000 - 1000 + 1)) + 1000;
-    this.updateTaskStatus("processing", "네이버 로그인 시작", 40);
+  async naverLogin(userId, naverId, naverPassword) {
+    const randomDelay = () =>
+      Math.floor(Math.random() * (2500 - 1000 + 1)) + 1000; // 1~2.5초 랜덤 딜레이 함수
+
+    this.updateTaskStatus("processing", "네이버 로그인 시도 시작", 40);
 
     try {
-      await this.page.goto("https://auth.band.us/login_page", {
-        waitUntil: "networkidle2",
-        timeout: 30000,
-      });
+      // --- 내부 헬퍼 함수: 실제 로그인 액션 수행 ---
+      const _performLoginActions = async () => {
+        this.updateTaskStatus("processing", "로그인 액션 수행 시작", 45);
+        await new Promise((resolve) => setTimeout(resolve, randomDelay()));
 
-      await new Promise((resolve) => setTimeout(resolve, randomDelay));
-
-      // 네이버 로그인 버튼 클릭
-      await this.page.evaluate(() => {
-        const naverBtn = document.querySelector(
-          "a.-naver.externalLogin, a.uButtonRound.-h56.-icoType.-naver"
-        );
-        if (naverBtn) naverBtn.click();
-      });
-
-      await this.page
-        .waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 })
-        .catch(() => {});
-
-      // 3. 네이버 로그인 페이지에서 아이디/비밀번호 입력
-      this.updateTaskStatus("processing", "네이버 아이디/비밀번호 입력", 50);
-
-      // 페이지가 완전히 로드될 때까지 기다림
-      await this.page
-        .waitForSelector("#id", { timeout: 30000 })
-        .catch((err) => {
-          this.updateTaskStatus(
-            "processing",
-            `ID 필드 대기 중 오류 (계속 진행): ${err.message}`,
-            51
-          );
-        });
-
-      // 잠시 대기하여 페이지가 안정화되도록 함
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-
-      try {
-        // 직접 자바스크립트 삽입으로 입력 (가장 안정적인 방법)
-        await this.page.evaluate(
-          (id, pw) => {
-            // ID 필드 입력
-            if (document.querySelector("#id")) {
-              document.querySelector("#id").value = id;
-              document
-                .querySelector("#id")
-                .dispatchEvent(new Event("input", { bubbles: true }));
-              document
-                .querySelector("#id")
-                .dispatchEvent(new Event("change", { bubbles: true }));
-            }
-
-            // 비밀번호 필드 입력
-            if (document.querySelector("#pw")) {
-              document.querySelector("#pw").value = pw;
-              document
-                .querySelector("#pw")
-                .dispatchEvent(new Event("input", { bubbles: true }));
-              document
-                .querySelector("#pw")
-                .dispatchEvent(new Event("change", { bubbles: true }));
-            }
-          },
-          naverId,
-          naverPassword
-        );
-
-        this.updateTaskStatus(
-          "processing",
-          "ID와 비밀번호 입력 완료 (직접 DOM 설정)",
-          58
-        );
-
-        // 확인을 위한 대기
-        await new Promise((resolve) => setTimeout(resolve, randomDelay));
-      } catch (inputError) {
-        this.updateTaskStatus(
-          "processing",
-          `입력 과정 오류 (계속 진행): ${inputError.message}`,
-          59
-        );
-
-        // 실패 시 대체 방법으로 type 메서드 사용
+        // 1. (필요시) 로그인 페이지 이동 확인 및 네이버 로그인 버튼 클릭
+        // 현재 페이지가 이미 로그인 페이지가 아닐 수 있으므로, 먼저 로그인 페이지로 이동하거나 확인 필요
+        // 여기서는 naverLogin 함수 초입에서 이미 로그인 페이지 근처라고 가정
         try {
-          // ID 직접 입력
-          await this.page.evaluate(() => {
-            if (document.querySelector("#id")) {
-              document.querySelector("#id").value = "";
-            }
-          });
-
-          await this.page.type("#id", naverId, { delay: 150 });
-          this.updateTaskStatus("processing", "ID 입력 완료 (type 메서드)", 55);
-
-          await new Promise((resolve) => setTimeout(resolve, randomDelay));
-
-          // 비밀번호 입력
-          await this.page.evaluate(() => {
-            if (document.querySelector("#pw")) {
-              document.querySelector("#pw").value = "";
-            }
-          });
-
-          await this.page.type("#pw", naverPassword, { delay: 150 });
-          this.updateTaskStatus(
-            "processing",
-            "비밀번호 입력 완료 (type 메서드)",
-            58
-          );
-
-          await new Promise((resolve) => setTimeout(resolve, randomDelay));
-        } catch (e) {
-          this.updateTaskStatus(
-            "processing",
-            `대체 입력 방식도 실패: ${e.message}`,
-            59
-          );
-        }
-      }
-
-      // 엔터키 입력으로 로그인
-      this.updateTaskStatus("processing", "Enter 키로 로그인", 60);
-      try {
-        await this.page.keyboard.press("Enter").catch((e) => {
-          this.updateTaskStatus(
-            "processing",
-            `엔터키 입력 오류: ${e.message}`,
-            61
-          );
-        });
-      } catch (loginError) {
-        this.updateTaskStatus(
-          "processing",
-          `로그인 시도 오류 (계속 진행): ${loginError.message}`,
-          63
-        );
-      }
-
-      // 네비게이션 완료 대기
-      await this.page
-        .waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 })
-        .catch((e) => {
-          this.updateTaskStatus(
-            "processing",
-            `네비게이션 대기 오류 (계속 진행): ${e.message}`,
-            64
-          );
-        });
-
-      await new Promise((resolve) => setTimeout(resolve, randomDelay * 2));
-
-      // 밴드 홈페이지로 직접 이동
-      this.updateTaskStatus("processing", "밴드 홈페이지로 이동", 70);
-      await this.page
-        .goto("https://www.band.us/home", {
-          waitUntil: "networkidle2",
-          timeout: 30000,
-        })
-        .catch((e) => {
-          this.updateTaskStatus(
-            "processing",
-            `밴드 홈페이지 이동 오류 (계속 진행): ${e.message}`,
-            71
-          );
-        });
-
-      // 충분한 로딩 시간 대기
-      await new Promise((resolve) => setTimeout(resolve, randomDelay));
-
-      // 로그인 확인
-      const isLoggedIn = await this.checkLoginStatus().catch(() => false);
-
-      if (isLoggedIn) {
-        this.updateTaskStatus("processing", "네이버 로그인 성공", 75);
-        this.isLoggedIn = true;
-
-        // 쿠키 저장
-        const naverCookies = await this.browser.cookies();
-        await this.saveCookies(naverId, naverCookies);
-
-        this.updateTaskStatus("completed", "로그인 프로세스 완료", 100);
-        return true;
-      }
-
-      // 로그인 실패 - 리캡챠 확인
-      const hasRecaptcha = await this.detectRecaptcha();
-      if (hasRecaptcha) {
-        this.updateTaskStatus(
-          "processing",
-          "리캡챠 감지됨, headless 모드 비활성화 후 브라우저 재시작",
-          65
-        );
-
-        try {
-          // 기존 브라우저 닫기
-          if (this.browser) {
-            // 열려 있는 모든 페이지 먼저 닫기
-            const pages = await this.browser.pages().catch(() => []);
-            for (const page of pages) {
-              if (page && !page.isClosed()) {
-                await page.close().catch(() => {});
-              }
-            }
-
-            // 짧은 딜레이 추가
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-
-            // 브라우저 종료
-            await this.browser.close().catch((err) => {
-              console.error("브라우저 종료 오류 (무시됨):", err.message);
+          // 페이지 URL 확인
+          const currentUrl = this.page.url();
+          if (!currentUrl.includes("auth.band.us/login_page")) {
+            this.updateTaskStatus(
+              "processing",
+              "로그인 페이지로 이동 시도",
+              46
+            );
+            await this.page.goto("https://auth.band.us/login_page", {
+              waitUntil: "networkidle2",
+              timeout: 30000,
             });
+            await new Promise((resolve) => setTimeout(resolve, randomDelay()));
           }
 
-          // 잠시 대기 후 새 브라우저 시작
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-
-          // headless: false로 새 브라우저 시작
-          this.browser = await puppeteer.launch({
-            headless: false,
-            args: [
-              "--no-sandbox",
-              "--disable-setuid-sandbox",
-              "--start-maximized",
-            ],
-            defaultViewport: null,
+          this.updateTaskStatus(
+            "processing",
+            "네이버 로그인 버튼 클릭 시도",
+            47
+          );
+          await this.page.evaluate(() => {
+            // 여러 선택자를 시도하여 네이버 로그인 버튼 클릭
+            const buttons = [
+              "a.-naver.externalLogin",
+              "a.uButtonRound.-h56.-icoType.-naver",
+              'button[data-type="naver"]', // 추가적인 선택자 예시
+              // ... 다른 가능한 선택자
+            ];
+            for (const selector of buttons) {
+              const btn = document.querySelector(selector);
+              if (btn) {
+                btn.click();
+                return true; // 클릭 성공 시 루프 종료
+              }
+            }
+            return false; // 버튼 못 찾음
           });
-
-          this.page = await this.browser.newPage();
-          await this.page.setViewport({ width: 1920, height: 1080 });
-
-          // 쿠키를 유지하기 위한 설정
-          await this.page.setExtraHTTPHeaders({
-            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-          });
-
-          // 네이버 로그인 페이지로 이동
-          await this.page.goto("https://auth.band.us/login_page", {
-            waitUntil: "networkidle2",
-            timeout: 30000,
-          });
-
-          // 네이버 로그인 버튼 클릭
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-
-          // 네이버 로그인 버튼 클릭
+          this.updateTaskStatus(
+            "processing",
+            "네이버 로그인 버튼 클릭 완료",
+            48
+          );
+          // 네비게이션 대기 (네이버 로그인 페이지로 이동)
           await this.page
-            .evaluate(() => {
-              const naverBtn = document.querySelector(
-                "a.-naver.externalLogin, a.uButtonRound.-h56.-icoType.-naver"
-              );
-              if (naverBtn) naverBtn.click();
-            })
+            .waitForNavigation({ waitUntil: "networkidle2", timeout: 45000 })
             .catch((e) => {
               this.updateTaskStatus(
                 "processing",
-                `네이버 로그인 버튼 클릭 오류: ${e.message}`,
-                67
+                `네이버 로그인 페이지 네비게이션 대기 중 경고(무시): ${e.message}`,
+                49
               );
             });
-
-          // 네이버 로그인 페이지로 이동 대기
-          await this.page
-            .waitForNavigation({ waitUntil: "networkidle2", timeout: 30000 })
-            .catch(() => {});
-
-          // 로그인 입력 필드 기다리기
-          await this.page
-            .waitForSelector("#id", { timeout: 10000 })
-            .catch(() => {});
-
-          // 잠시 대기
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-
-          // 아이디와 비밀번호 입력 시도
-          try {
-            // ID 값을 먼저 지우고 새로 입력
-            await this.page.evaluate(() => {
-              if (document.querySelector("#id")) {
-                document.querySelector("#id").value = "";
-              }
-            });
-
-            await this.page.type("#id", naverId, { delay: 150 });
-            this.updateTaskStatus(
-              "processing",
-              "리캡챠 모드에서 ID 입력 완료",
-              68
-            );
-
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-
-            // 비밀번호도 동일하게 처리
-            await this.page.evaluate(() => {
-              if (document.querySelector("#pw")) {
-                document.querySelector("#pw").value = "";
-              }
-            });
-
-            await this.page.type("#pw", naverPassword, { delay: 150 });
-            this.updateTaskStatus(
-              "processing",
-              "리캡챠 모드에서 비밀번호 입력 완료",
-              69
-            );
-
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-          } catch (e) {
-            this.updateTaskStatus(
-              "processing",
-              `리캡챠 모드에서 입력 오류: ${e.message}`,
-              69
-            );
-
-            // 실패 시 직접 DOM 조작 시도
-            try {
-              await this.page.evaluate(
-                (id, pw) => {
-                  if (document.querySelector("#id")) {
-                    document.querySelector("#id").value = id;
-                    document
-                      .querySelector("#id")
-                      .dispatchEvent(new Event("input", { bubbles: true }));
-                    document
-                      .querySelector("#id")
-                      .dispatchEvent(new Event("change", { bubbles: true }));
-                  }
-
-                  if (document.querySelector("#pw")) {
-                    document.querySelector("#pw").value = pw;
-                    document
-                      .querySelector("#pw")
-                      .dispatchEvent(new Event("input", { bubbles: true }));
-                    document
-                      .querySelector("#pw")
-                      .dispatchEvent(new Event("change", { bubbles: true }));
-                  }
-                },
-                naverId,
-                naverPassword
-              );
-
-              this.updateTaskStatus(
-                "processing",
-                "리캡챠 모드에서 DOM 조작으로 입력 완료",
-                69
-              );
-            } catch (err) {
-              this.updateTaskStatus(
-                "processing",
-                `리캡챠 모드 입력 완전 실패: ${err.message}`,
-                69
-              );
-            }
-          }
-
+          await new Promise((resolve) => setTimeout(resolve, randomDelay())); // 네이버 페이지 로딩 대기
+        } catch (e) {
           this.updateTaskStatus(
-            "waiting",
-            "리캡챠가 감지되었습니다. 사용자가 직접 로그인하도록 브라우저가 열렸습니다. 로그인을 완료해주세요.",
-            65
+            "processing",
+            `네이버 로그인 버튼 클릭 또는 네비게이션 오류: ${e.message}`,
+            49
+          );
+          // 오류 발생 시에도 다음 단계 시도
+        }
+
+        // 2. 네이버 로그인 페이지에서 아이디/비밀번호 입력
+        this.updateTaskStatus(
+          "processing",
+          "네이버 아이디/비밀번호 입력 시도",
+          50
+        );
+        await this.page
+          .waitForSelector("#id", { timeout: 30000 })
+          .catch((err) => {
+            this.updateTaskStatus(
+              "processing",
+              `ID 필드 대기 중 경고(무시): ${err.message}`,
+              51
+            );
+          });
+        await new Promise((resolve) => setTimeout(resolve, randomDelay())); // 안정화 대기
+
+        try {
+          await this.page.evaluate(
+            (id, pw) => {
+              // 입력 필드 값 초기화 후 입력 시도
+              const idInput = document.querySelector("#id");
+              const pwInput = document.querySelector("#pw");
+              if (idInput) idInput.value = "";
+              if (pwInput) pwInput.value = "";
+              // 짧은 딜레이 후 값 설정 및 이벤트 발생
+              setTimeout(() => {
+                if (idInput) {
+                  idInput.value = id;
+                  idInput.dispatchEvent(new Event("input", { bubbles: true }));
+                  idInput.dispatchEvent(new Event("change", { bubbles: true }));
+                }
+                if (pwInput) {
+                  pwInput.value = pw;
+                  pwInput.dispatchEvent(new Event("input", { bubbles: true }));
+                  pwInput.dispatchEvent(new Event("change", { bubbles: true }));
+                }
+              }, 100); // 약간의 딜레이
+            },
+            naverId,
+            naverPassword
+          );
+          this.updateTaskStatus("processing", "ID/PW 입력 완료 (evaluate)", 58);
+        } catch (inputError) {
+          this.updateTaskStatus(
+            "processing",
+            `입력 오류(evaluate), type 시도: ${inputError.message}`,
+            59
+          );
+          // evaluate 실패 시 type 시도
+          try {
+            await this.page.type("#id", naverId, {
+              delay: 100 + Math.random() * 50,
+            });
+            await new Promise((resolve) =>
+              setTimeout(resolve, randomDelay() / 2)
+            );
+            await this.page.type("#pw", naverPassword, {
+              delay: 100 + Math.random() * 50,
+            });
+            this.updateTaskStatus("processing", "ID/PW 입력 완료 (type)", 58);
+          } catch (typeError) {
+            this.updateTaskStatus(
+              "failed",
+              `ID/PW 입력 완전 실패: ${typeError.message}`,
+              59
+            );
+            throw new Error("아이디/비밀번호 입력 실패"); // 입력 실패 시 진행 불가
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, randomDelay())); // 입력 후 대기
+
+        // 3. 엔터키 입력으로 로그인
+        this.updateTaskStatus("processing", "Enter 키로 로그인 시도", 60);
+        await this.page.keyboard.press("Enter").catch((e) => {
+          this.updateTaskStatus(
+            "processing",
+            `Enter키 입력 오류(무시): ${e.message}`,
+            61
+          );
+          // 엔터 실패 시 로그인 버튼 클릭 시도 (선택적)
+          // await this.page.click('.btn_login, #log\.login').catch(() => {});
+        });
+
+        // 4. 네비게이션 완료 대기 (로그인 후 페이지 이동)
+        this.updateTaskStatus("processing", "로그인 후 네비게이션 대기", 62);
+        await this.page
+          .waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 })
+          .catch((e) => {
+            // 타임아웃 증가
+            this.updateTaskStatus(
+              "processing",
+              `로그인 후 네비게이션 대기 중 경고(무시): ${e.message}`,
+              64
+            );
+          });
+        await new Promise((resolve) => setTimeout(resolve, randomDelay() * 2)); // 로그인 후 로딩 대기 시간 추가
+        this.updateTaskStatus("processing", "로그인 액션 수행 완료", 65);
+      };
+      // --- 내부 헬퍼 함수 끝 ---
+
+      // --- 1차 로그인 시도 ---
+      this.updateTaskStatus("processing", "1차 로그인 액션 시도", 44);
+      await _performLoginActions();
+
+      // 1차 로그인 확인
+      this.updateTaskStatus("processing", "1차 로그인 상태 확인", 66);
+      let isLoggedIn = await this.checkLoginStatus().catch(() => false);
+
+      if (isLoggedIn) {
+        this.updateTaskStatus("processing", "1차 로그인 성공", 75);
+        // 성공 시 처리 (아래 공통 로직으로 이동)
+      } else {
+        // 1차 로그인 실패 시 리캡챠 확인
+        this.updateTaskStatus(
+          "processing",
+          "1차 로그인 실패, 리캡챠 확인 중...",
+          67
+        );
+        const hasRecaptcha = await this.detectRecaptcha();
+
+        if (hasRecaptcha) {
+          this.updateTaskStatus(
+            "processing",
+            "리캡챠 감지됨. 홈 이동 후 2차 로그인 시도",
+            68
           );
 
-          // 수동 로그인 대기 (최대 5분)
-          let isLoggedIn = false;
-          let checkCount = 0;
-          const maxChecks = 30; // 10초 간격으로 30번 체크 (약 5분)
+          // --- 리캡챠 우회 시도: 홈 이동 후 재로그인 ---
+          try {
+            // 1. 밴드 홈으로 이동
+            this.updateTaskStatus("processing", "밴드 홈으로 이동 중...", 69);
+            await this.page.goto("https://band.us/home", {
+              waitUntil: "networkidle2",
+              timeout: 30000,
+            });
+            await new Promise((resolve) =>
+              setTimeout(resolve, randomDelay() * 2)
+            ); // 홈 로딩 대기
 
-          while (!isLoggedIn && checkCount < maxChecks) {
-            await new Promise((resolve) => setTimeout(resolve, 10000)); // 10초마다 확인
+            // 2. 다시 로그인 페이지로 이동
+            this.updateTaskStatus(
+              "processing",
+              "다시 로그인 페이지로 이동 중...",
+              70
+            );
+            await this.page.goto("https://auth.band.us/login_page", {
+              waitUntil: "networkidle2",
+              timeout: 30000,
+            });
+            await new Promise((resolve) => setTimeout(resolve, randomDelay())); // 로그인 페이지 로딩 대기
 
-            try {
-              // URL로 판단하지 않고 실제 프로필 요소 확인으로 로그인 상태 판별
-              isLoggedIn = await this.page
-                .evaluate(() => {
-                  // profileInner 요소가 존재하면 로그인된 상태
-                  const profileElement =
-                    document.querySelector(".profileInner");
-                  return !!profileElement;
-                })
-                .catch(() => false);
+            // 3. 2차 로그인 시도
+            this.updateTaskStatus("processing", "2차 로그인 액션 시도", 71);
+            await _performLoginActions(); // 로그인 액션 재수행
 
+            // 4. 2차 로그인 확인
+            this.updateTaskStatus("processing", "2차 로그인 상태 확인", 72);
+            isLoggedIn = await this.checkLoginStatus().catch(() => false);
+
+            if (isLoggedIn) {
               this.updateTaskStatus(
-                "waiting",
-                `수동 로그인 대기 중... (${
-                  checkCount + 1
-                }/${maxChecks}) - profileInner ${
-                  isLoggedIn ? "확인됨" : "확인되지 않음"
-                }`,
-                65 + Math.floor((checkCount / maxChecks) * 10)
+                "processing",
+                "2차 로그인 성공 (리캡챠 우회 성공)",
+                75
               );
-
-              if (isLoggedIn) {
-                this.updateTaskStatus("processing", "수동 로그인 성공", 75);
-
-                // 사용자가 로그인 완료 후 페이지를 확인할 수 있도록 충분한 시간 제공
+              // 성공 시 처리 (아래 공통 로직으로 이동)
+            } else {
+              this.updateTaskStatus(
+                "failed",
+                "2차 로그인 시도 실패 (리캡챠 우회 실패)",
+                73
+              );
+              // 여기서 추가적으로 리캡챠가 또 나왔는지 확인하거나, 그냥 실패 처리
+              const stillHasRecaptcha = await this.detectRecaptcha();
+              if (stillHasRecaptcha) {
                 this.updateTaskStatus(
-                  "waiting",
-                  "로그인이 완료되었습니다. 10초 후 자동으로 진행합니다. 페이지를 확인하세요.",
-                  75
+                  "failed",
+                  "리캡챠가 계속 감지됩니다. 자동 로그인 불가.",
+                  74
                 );
-
-                // 10초 대기
-                await new Promise((resolve) => setTimeout(resolve, 10000));
-
-                break;
               }
-            } catch (e) {
-              console.error("로그인 상태 확인 중 오류:", e.message);
+              return false; // 최종 실패
             }
-
-            checkCount++;
+          } catch (retryError) {
+            this.updateTaskStatus(
+              "failed",
+              `리캡챠 우회 시도 중 오류: ${retryError.message}`,
+              70
+            );
+            return false; // 재시도 중 오류 발생 시 실패
           }
-
-          if (!isLoggedIn) {
-            this.updateTaskStatus("failed", "수동 로그인 시간 초과", 75);
-            throw new Error("수동 로그인 시간 초과");
-          }
-        } catch (error) {
-          console.error("리캡챠 처리 중 오류:", error.message);
+          // --- 리캡챠 우회 시도 끝 ---
+        } else {
+          // 리캡챠도 없는데 로그인 실패한 경우 (예: 비밀번호 오류)
           this.updateTaskStatus(
             "failed",
-            `리캡챠 처리 중 오류 발생: ${error.message}`,
-            66
+            "로그인 실패 (리캡챠 없음 - 정보 확인 필요)",
+            70
           );
-          return false;
+          // 로그인 실패 원인 파악을 위한 추가 정보 로깅 (선택적)
+          const pageContent = await this.page.content().catch(() => "");
+          if (
+            pageContent.includes("비밀번호") ||
+            pageContent.includes("password")
+          ) {
+            this.updateTaskStatus(
+              "failed",
+              "로그인 실패 - 비밀번호 오류 가능성",
+              71
+            );
+          } else if (
+            pageContent.includes("아이디") ||
+            pageContent.includes("ID")
+          ) {
+            this.updateTaskStatus(
+              "failed",
+              "로그인 실패 - 아이디 오류 가능성",
+              71
+            );
+          }
+          // 스크린샷 등 추가 디버깅 정보 저장 가능
+          // await this.page.screenshot({ path: `login_fail_no_recaptcha_${Date.now()}.png` });
+          return false; // 최종 실패
         }
       }
+
+      // --- 로그인 성공 공통 처리 ---
+      if (isLoggedIn) {
+        this.isLoggedIn = true;
+        this.updateTaskStatus(
+          "processing",
+          "로그인 성공 확인, 쿠키 저장 시도",
+          80
+        );
+        // 현재 페이지의 모든 쿠키 가져오기
+        // const finalCookies = await this.page.cookies(); // 특정 도메인만 가져오려면 URL 지정 가능: await this.page.cookies('https://band.us', 'https://auth.band.us')
+        // 또는 브라우저 전체 쿠키
+        const finalCookies = await this.browser.cookies();
+
+        const saveResult = await this.saveCookies(
+          userId,
+          naverId,
+          finalCookies
+        ); // userId 전달 확인
+
+        if (saveResult) {
+          this.updateTaskStatus("completed", "로그인 및 쿠키 저장 완료", 100);
+          return true;
+        } else {
+          this.updateTaskStatus(
+            "failed",
+            "로그인 성공했으나 쿠키 저장 실패",
+            95
+          );
+          return false; // 쿠키 저장이 중요하면 실패 처리
+        }
+      } else {
+        // 이 지점에 도달하면 안 되지만, 방어적으로 실패 처리
+        this.updateTaskStatus(
+          "failed",
+          "로그인 최종 실패 (알 수 없는 상태)",
+          80
+        );
+        return false;
+      }
     } catch (error) {
+      // naverLogin 함수 전체의 try-catch
       this.isLoggedIn = false;
-      this.updateTaskStatus("failed", `로그인 실패: ${error.message}`, 60);
-      throw error;
+      // 오류 메시지에 스택 트레이스 포함하여 더 자세한 정보 로깅
+      logger.error(
+        `네이버 로그인 프로세스 중 심각한 오류: ${error.message}\n${error.stack}`
+      );
+      this.updateTaskStatus(
+        "failed",
+        `로그인 프로세스 오류: ${error.message}`,
+        60
+      );
+      // 오류 발생 시 스크린샷 저장 (디버깅 목적)
+      try {
+        if (this.page && !this.page.isClosed()) {
+          await this.page.screenshot({
+            path: `naverLogin_error_${Date.now()}.png`,
+            fullPage: true,
+          });
+          this.updateTaskStatus(
+            "processing",
+            "오류 발생 시점 스크린샷 저장됨",
+            61
+          );
+        }
+      } catch (screenshotError) {
+        logger.error(`오류 스크린샷 저장 실패: ${screenshotError.message}`);
+      }
+      // throw error; // 에러를 상위로 전파하려면 주석 해제
+      return false; // 에러 발생 시 false 반환
     }
   }
 
@@ -901,36 +846,65 @@ class BandAuth {
 
   async checkLoginStatus() {
     try {
-      // 밴드 페이지로 직접 이동하여 로그인 상태 확인
+      const targetBandUrl = `https://www.band.us/band/${this.bandNumber}`; // 일관된 URL 사용
       this.updateTaskStatus(
         "processing",
         `밴드 페이지(${this.bandNumber})로 이동하여 로그인 상태 확인 중`,
         20
       );
+      logger.info(`Navigating to ${targetBandUrl} for login check...`); // 디버깅 로그 추가
 
-      // 밴드 페이지로 이동
-      await this.page
-        .goto(`https://www.band.us/band/${this.bandNumber}`, {
-          waitUntil: "networkidle2",
-          timeout: 30000,
-        })
-        .catch((err) => {
-          this.updateTaskStatus(
-            "processing",
-            `밴드 페이지 이동 중 오류 (계속 진행): ${err.message}`,
-            21
-          );
-        });
-
-      // 추가 로딩 시간 대기
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-
-      // profileInner 요소로 로그인 상태 확인
-      const isLoggedIn = await this.page.evaluate(() => {
-        // profileInner 요소가 존재하면 로그인된 상태
-        const profileElement = document.querySelector(".profileInner");
-        return !!profileElement;
+      await this.page.goto(targetBandUrl, {
+        waitUntil: "networkidle2", // 또는 'load', 'domcontentloaded' 시도
+        timeout: 45000, // 타임아웃 약간 증가
       });
+
+      logger.info(
+        `Navigation to ${targetBandUrl} complete. Waiting for page stability...`
+      ); // 디버깅 로그 추가
+
+      // --- 여기가 중요 ---
+      // 페이지 이동 후 안정화될 시간을 확보합니다.
+
+      // 방법 1: 특정 요소가 나타날 때까지 기다리기 (더 안정적)
+      const profileSelector = ".profileInner"; // 로그인 시 나타나는 요소
+      try {
+        logger.info(`Waiting for selector "${profileSelector}"...`);
+        await this.page.waitForSelector(profileSelector, { timeout: 15000 }); // 최대 15초 대기
+        logger.info(
+          `Selector "${profileSelector}" found. Proceeding with evaluate.`
+        );
+      } catch (waitError) {
+        // 요소를 찾지 못하면 로그인되지 않은 상태일 가능성이 높음
+        logger.warn(
+          `Selector "${profileSelector}" not found after navigation. Assuming not logged in. Error: ${waitError.message}`
+        );
+        this.updateTaskStatus(
+          "processing",
+          "프로필 요소 없음 (waitForSelector) - 로그인 필요",
+          23
+        );
+        return false; // 요소를 못 찾으면 false 반환
+      }
+
+      // 방법 2: 고정 시간 대기 (덜 안정적일 수 있음)
+      // logger.info('Waiting 3 seconds after navigation for stability...');
+      // await new Promise(resolve => setTimeout(resolve, 3000)); // 3초 대기
+      // logger.info('Wait complete. Proceeding with evaluate.');
+      // --- 대기 로직 끝 ---
+
+      logger.info("Executing page.evaluate to check login status..."); // 디버깅 로그 추가
+      // 이제 페이지 상태 평가
+      const isLoggedIn = await this.page.evaluate((selector) => {
+        try {
+          // evaluate 내부에서도 try-catch 추가
+          const profileElement = document.querySelector(selector);
+          return !!profileElement;
+        } catch (evalError) {
+          console.error("Error inside page.evaluate:", evalError);
+          return false;
+        }
+      }, profileSelector); // 셀렉터를 인자로 전달
 
       if (isLoggedIn) {
         this.updateTaskStatus(
@@ -940,141 +914,127 @@ class BandAuth {
         );
         return true;
       } else {
+        // evaluate는 성공했지만 요소를 찾지 못한 경우
         this.updateTaskStatus(
           "processing",
-          "profileInner 요소 없음 - 로그인 필요",
+          "profileInner 요소 없음 (evaluate) - 로그인 필요",
           23
         );
         return false;
       }
     } catch (error) {
+      // 여기서 Detached Frame 오류 등이 잡힐 수 있음
+      logger.error(`Error during checkLoginStatus: ${error.message}`, error); // 실제 에러 로깅
+      // 상태 업데이트 메시지에 실제 오류 반영
       this.updateTaskStatus(
-        "processing",
+        "processing", // 실패 상태 대신 processing 유지하고, 메시지에 오류 명시
         `로그인 상태 확인 중 오류: ${error.message}`,
         25
       );
-      return false;
+      return false; // 오류 발생 시 false 반환
     }
   }
 
-  // (쿠키 처리, 로그인, 리캡챠 감지 등 기존 BaseCrawler 메서드들)
-  async cookieLogin(naverId) {
+  // cookieLogin 메서드 내에서 loadCookies 호출 방식 변경 필요
+  async cookieLogin(userId, naverId) {
+    // userId 파라미터 추가 또는 클래스 멤버 사용
     try {
       this.updateTaskStatus("processing", "쿠키 로그인 시도", 10);
 
-      // 저장된 쿠키 로드
-      const savedCookies = await this.loadCookies(naverId);
+      // *** 변경된 부분: userId로 쿠키 로드 ***
+      const savedCookies = await this.loadCookies(userId); // naverId 대신 userId 사용
+
       if (!savedCookies) {
-        this.updateTaskStatus("processing", "저장된 쿠키가 없습니다", 15);
-        // 쿠키가 없는 경우 로그인 페이지로 이동
-        await this.page.goto("https://www.band.us/home", {
-          waitUntil: "networkidle2",
-          timeout: 30000,
-        });
-        this.updateTaskStatus("processing", "로그인 페이지로 이동 완료", 16);
+        // loadCookies 내부에서 이미 상태 업데이트 및 로깅 처리됨
+        // 여기서 추가 메시지 필요 시 추가
+        this.updateTaskStatus(
+          "processing",
+          "사용 가능한 저장된 쿠키 없음, 직접 로그인 필요",
+          15
+        );
         return false;
       }
 
-      // 쿠키 설정
-      await this.browser.setCookie(...savedCookies);
-      this.updateTaskStatus("processing", "저장된 쿠키 로드됨", 20);
+      // 쿠키 설정 (browser 객체가 준비되었다고 가정)
+      // this.page.setCookie 대신 browser.setCookie 사용 고려 (더 넓은 범위 적용)
+      if (!this.browser)
+        throw new Error("쿠키 설정을 위한 브라우저가 초기화되지 않았습니다.");
+      await Promise.all(
+        savedCookies.map((cookie) =>
+          this.page
+            .setCookie(cookie)
+            .catch((e) =>
+              logger.warn(
+                `쿠키 설정 오류 (무시됨): ${cookie.name} - ${e.message}`
+              )
+            )
+        )
+      );
+      // await this.browser.setCookie(...savedCookies); // setCookie는 가변 인자를 받으므로 spread 연산자 사용
 
-      // 로그인 상태 확인하는 메서드 호출
-      const isLoggedIn = await this.checkLoginStatus();
+      this.updateTaskStatus("processing", "저장된 쿠키 적용 완료", 20);
+
+      // 로그인 상태 확인
+      const isLoggedIn = await this.checkLoginStatus(); // checkLoginStatus가 userId 없이 작동한다고 가정
       if (isLoggedIn) {
         this.updateTaskStatus("processing", "쿠키로 로그인 성공", 30);
         this.isLoggedIn = true;
         return true;
       }
 
+      // 로그인 실패 시 (쿠키 만료 등)
       this.updateTaskStatus(
         "processing",
-        "쿠키가 만료되었거나 유효하지 않습니다",
+        "쿠키가 만료되었거나 유효하지 않아 로그인 실패",
         25
       );
 
-      // 쿠키 로그인 실패 시 쿠키 파일 삭제
-      try {
-        const cookieFile = path.join(COOKIES_PATH, `${naverId}.json`);
-        await fs.unlink(cookieFile);
-        this.updateTaskStatus("processing", "만료된 쿠키 파일 삭제됨", 26);
-      } catch (deleteError) {
-        this.updateTaskStatus(
-          "processing",
-          `쿠키 파일 삭제 실패: ${deleteError.message}`,
-          26
-        );
-      }
+      // *** Supabase 쿠키 삭제는 주의 필요 ***
+      // 쿠키가 유효하지 않다고 해서 바로 DB에서 삭제하는 것은 위험할 수 있음.
+      // 실패 카운트를 두거나 다른 정책을 고려하는 것이 좋음.
+      // 여기서는 일단 DB 삭제 로직은 제외. 필요 시 추가.
+      /*
+       try {
+           const { error: deleteError } = await this.supabase
+               .from('users')
+               .update({ cookies: [], cookies_updated_at: new Date().toISOString(), naver_login_status: 'cookie_expired' })
+               .eq('user_id', userId);
+           if (deleteError) throw deleteError;
+           this.updateTaskStatus("processing", "DB에서 만료된 쿠키 정보 업데이트됨", 26);
+       } catch (dbError) {
+           this.updateTaskStatus("processing", `DB 쿠키 업데이트/삭제 실패: ${dbError.message}`, 26);
+           logger.error(`Supabase 쿠키 업데이트 실패 (사용자: ${userId}):`, dbError);
+       }
+       */
 
-      // 쿠키 로그인 실패 시 로그인 페이지로 이동
-      await this.page.goto(
-        "https://auth.band.us/login_page?next_url=https%3A%2F%2Fwww.band.us%2Fhome%3Freferrer%3Dhttps%253A%252F%252Fwww.band.us%252F",
-        {
-          waitUntil: "networkidle2",
-          timeout: 30000,
-        }
-      );
-      this.updateTaskStatus("processing", "로그인 페이지로 이동 완료", 27);
+      // 로그인 페이지로 이동 (선택적)
+      // ... (기존 이동 로직) ...
 
-      return false;
+      return false; // 쿠키 로그인 실패
     } catch (error) {
       this.updateTaskStatus(
-        "processing",
-        `쿠키 로그인 실패: ${error.message}`,
+        "failed",
+        `쿠키 로그인 중 오류: ${error.message}`,
         20
       );
-
-      // 에러 발생 시에도 쿠키 파일 삭제 시도
-      try {
-        const cookieFile = path.join(COOKIES_PATH, `${naverId}.json`);
-        await fs.unlink(cookieFile);
-        this.updateTaskStatus(
-          "processing",
-          "에러 발생으로 쿠키 파일 삭제됨",
-          21
-        );
-      } catch (deleteError) {
-        this.updateTaskStatus(
-          "processing",
-          `쿠키 파일 삭제 실패: ${deleteError.message}`,
-          21
-        );
-      }
-
-      // 에러 발생 시에도 로그인 페이지로 이동
-      try {
-        await this.page.goto("https://auth.band.us/login_page", {
-          waitUntil: "networkidle2",
-          timeout: 30000,
-        });
-        this.updateTaskStatus(
-          "processing",
-          "에러 발생 후 로그인 페이지로 이동 완료",
-          22
-        );
-      } catch (navError) {
-        this.updateTaskStatus(
-          "processing",
-          `로그인 페이지 이동 실패: ${navError.message}`,
-          22
-        );
-      }
-
+      logger.error(`쿠키 로그인 프로세스 오류 (사용자: ${userId}):`, error);
+      // 에러 발생 시에도 DB 삭제는 신중하게 결정
       return false;
     }
   }
 
   /**
    * 밴드 페이지 접근 처리
+   * @param {string} userId - 사용자 ID
    * @param {string} naverId - 네이버 ID
    * @param {string} naverPassword - 네이버 비밀번호
    * @returns {Promise<boolean>} - 접근 성공 여부
    */
-  async accessBandPage(naverId, naverPassword) {
+  async accessBandPage(userId, naverId, naverPassword) {
     // 브라우저 초기화 확인
     if (!this.browser || !this.page) {
       logger.info("브라우저 초기화 중...");
-      await this.initialize(naverId, naverPassword);
+      await this.initialize(userId, naverId, naverPassword);
     }
 
     logger.info(`밴드 페이지로 이동: https://band.us/band/${this.bandNumber}`);
@@ -1125,12 +1085,16 @@ class BandAuth {
         logger.info("로그인 페이지 감지됨, 로그인 시도 중...");
 
         // 쿠키 로그인 시도
-        const cookieLoginResult = await this.cookieLogin(naverId);
+        const cookieLoginResult = await this.cookieLogin(userId, naverId);
 
         // 쿠키 로그인 실패 시 직접 로그인 시도
         if (!cookieLoginResult && naverId && naverPassword) {
           logger.info("쿠키 로그인 실패, 직접 로그인 시도 중...");
-          const loginSuccess = await this.naverLogin(naverId, naverPassword);
+          const loginSuccess = await this.naverLogin(
+            userId,
+            naverId,
+            naverPassword
+          );
 
           if (loginSuccess) {
             logger.info("로그인 성공, 밴드 페이지 다시 접근 시도 중...");
@@ -1476,7 +1440,7 @@ class BandAuth {
 
         // 쿠키 추출 (목표 도메인 기준)
         const cookies = await this.browser.cookies();
-        await this.saveCookies(naverId, cookies); // this.saveCookies는 그대로 사용
+        await this.saveCookies(userId, naverId, cookies); // this.saveCookies는 그대로 사용
         console.log(`[Manual Login] Cookies saved for user ${userId}.`);
         this._updateStatus("completed", "수동 로그인 및 쿠키 저장 완료", 100);
 

@@ -233,6 +233,7 @@ class CrawlController {
 
       // 게시물 상세 정보 크롤링
       const result = await crawler.crawlPostDetail(
+        userId,
         userAccount.naverId,
         userAccount.naverPassword,
         maxPosts || 30
@@ -607,6 +608,7 @@ class CrawlController {
 
       // 실제 크롤링 실행
       const result = await crawler.crawlPostDetail(
+        userId,
         userAccount.naverId,
         userAccount.naverPassword,
         maxPosts || 20

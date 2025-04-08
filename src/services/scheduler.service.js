@@ -265,13 +265,13 @@ const getJob = (jobId) => {
 /**
  * 밴드 게시물 자동 크롤링 작업 등록 함수
  * @param {string} userId - 사용자 ID
- * @param {string} bandId - 밴드 ID
+ * @param {string} bandNumber - 밴드 ID
  * @param {string} cronExpression - 크론 표현식
  * @returns {string|null} - 등록된 작업 ID 또는 null
  */
-const scheduleBandCrawling = (userId, bandId, cronExpression) => {
+const scheduleBandCrawling = (userId, bandNumber, cronExpression) => {
   try {
-    const jobId = `band-crawl-${userId}-${bandId}`;
+    const jobId = `band-crawl-${userId}-${bandNumber}`;
 
     // 이미 같은 ID로 작업이 있는지 확인
     if (scheduledJobs.has(jobId)) {
@@ -291,7 +291,7 @@ const scheduleBandCrawling = (userId, bandId, cronExpression) => {
 
         // 임시 요청/응답 객체 생성
         const req = {
-          params: { bandId },
+          params: { bandNumber },
           body: { userId },
           user: { userId },
         };
@@ -323,7 +323,7 @@ const scheduleBandCrawling = (userId, bandId, cronExpression) => {
       jobId,
       cronExpression,
       crawlFunction,
-      `${bandId} 밴드 게시물 자동 크롤링`
+      `${bandNumber} 밴드 게시물 자동 크롤링`
     );
 
     return created ? jobId : null;
@@ -346,7 +346,7 @@ const registerUserCrawlingTask = async (user) => {
     const jobId = `band-crawl-system-${band_number}`;
 
     // 사용자 설정 크롤링 간격을 사용하거나 기본값 10분 사용
-    const interval = crawl_interval || 10;
+    const interval = crawl_interval || 5;
 
     // 크론 표현식 생성 (사용자 설정 간격 사용)
     const cronExpression =
@@ -377,7 +377,7 @@ const registerUserCrawlingTask = async (user) => {
       try {
         // 임시 요청/응답 객체 생성
         const req = {
-          params: { bandId: band_number },
+          params: { bandNumber: band_number },
           body: { userId: user_id },
           user: { userId: user_id },
         };

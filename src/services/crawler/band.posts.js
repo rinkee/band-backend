@@ -382,7 +382,7 @@ class BandPosts extends BandAuth {
    * @param {number} maxPosts - 크롤링할 최대 게시물 수
    * @returns {Promise<Object>} - 크롤링 결과
    */
-  async crawlPostDetail(naverId, naverPassword, maxPosts = 100) {
+  async crawlPostDetail(userId, naverId, naverPassword, maxPosts = 100) {
     try {
       this.crawlStartTime = Date.now();
       logger.info(`밴드 게시물 크롤링 시작 (최대 ${maxPosts}개)`);
@@ -393,7 +393,7 @@ class BandPosts extends BandAuth {
       }
 
       // 밴드 페이지 접속
-      await this.accessBandPage(naverId, naverPassword);
+      await this.accessBandPage(userId, naverId, naverPassword);
 
       // 최신 게시물로 이동 (밴드 메인 페이지)
       const bandMainUrl = `https://band.us/band/${this.bandNumber}`;
@@ -1083,10 +1083,11 @@ class BandPosts extends BandAuth {
               band_comment_url: originalBandPostIdNum
                 ? `${postUrl}#${bandCommentId}`
                 : null,
+              customer_name: customerName,
               // --- 주문 관련 필드 초기화 ---
               product_id: null,
               quantity: null,
-              item_number: null, // 추가됨
+              item_number: 1, // 추가됨
               price: null,
               // price_per_unit: null, // 옵션 1 (단가만 저장) 선택 시 제거
               total_amount: null, // <<<--- price와 의미가 겹치므로 명확화 필요. 여기서는 첫 항목 총액 저장 가정.
@@ -1309,6 +1310,7 @@ class BandPosts extends BandAuth {
         return;
       }
       const payload = {
+        userId: userId,
         customers: customersArray,
         posts: postsToUpsert,
         products: productsToUpsert,

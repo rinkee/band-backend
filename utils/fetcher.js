@@ -4,7 +4,10 @@ import axios from "axios";
 // const API_BASE_URL =
 //   "https://band-backend-694263941742.asia-northeast3.run.app/api";
 
-const API_BASE_URL = process.env.API_BASE_URL;
+const API_BASE_URL =
+  process.env.NODE_ENV === "development"
+    ? "http://localhost:8080/api"
+    : process.env.API_BASE_URL;
 
 console.log("API 기본 URL 설정:", API_BASE_URL);
 

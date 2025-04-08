@@ -32,7 +32,13 @@ serve(async (req: Request) => {
     console.log("Received request:", req.method, req.url);
     // 요청 본문에서 데이터 추출 (JSON 형식 가정)
     const payload = await req.json();
-    const { customers = [], posts = [], products = [], orders = [] } = payload;
+    const {
+      userId,
+      customers = [],
+      posts = [],
+      products = [],
+      orders = [],
+    } = payload;
 
     // 간단한 데이터 유효성 검사
     if (
@@ -199,7 +205,7 @@ serve(async (req: Request) => {
             }
 
             console.log(
-              `[Order Loop] 주문 처리 시도: order_id=${order.order_id}, product_id=${order.product_id}, customer_id=${order.customer_id}, quantity=${order.quantity}`
+              `[Order Loop] 주문 처리 시도: order_id=${order.order_id}, product_id=${order.product_id}, customer_id=${order.customer_id}, quantity=${order.quantity}, customer_id=${order.customer_id}, customer_name=${order.customer_name}`
             );
 
             // --- VVV SQL 쿼리 및 값 배열 수정 VVV ---
@@ -223,10 +229,11 @@ serve(async (req: Request) => {
                   created_at,                -- $15
                   updated_at,                -- $16
                   item_number,               -- $17 (추가됨)
-                  band_number                -- $18 (band_number 추가 가정, 없다면 제거하고 $17까지)
+                  band_number,                -- $18 (band_number 추가 가정, 없다면 제거하고 $17까지)
+                  customer_name              -- $19 (추가됨)
                   -- extracted_items_details, is_ambiguous 등 추가 컬럼 필요 시 여기에 추가하고 값 배열에도 반영
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) -- 18개
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) -- 18개
                 ON CONFLICT (order_id) DO UPDATE SET
                   user_id = EXCLUDED.user_id,
                   product_id = EXCLUDED.product_id,
@@ -243,7 +250,8 @@ serve(async (req: Request) => {
                   band_comment_url = EXCLUDED.band_comment_url,
                   updated_at = EXCLUDED.updated_at,           -- 업데이트 시간 갱신 필수
                   item_number = EXCLUDED.item_number,         -- 수정됨: .item 제거
-                  band_number = EXCLUDED.band_number          -- 추가됨 (마지막 콤마 없음)
+                  band_number = EXCLUDED.band_number,          -- 추가됨 (마지막 콤마 없음)
+                  customer_name = EXCLUDED.customer_name       -- 추가됨
                   -- is_ambiguous = EXCLUDED.is_ambiguous 등 업데이트할 컬럼 추가
                `, // <-- 쿼리 문자열 끝
               [
@@ -266,6 +274,7 @@ serve(async (req: Request) => {
                 order.updated_at, // $16
                 order.item_number, // $17 (추가됨)
                 order.band_number, // $18 (추가됨, 없다면 제거)
+                order.customer_name, // $19 (추가됨)
                 // order.extracted_items_details, order.is_ambiguous 등 추가 컬럼 값
               ]
             );
@@ -287,6 +296,51 @@ serve(async (req: Request) => {
       } else {
         console.log("[Order Loop] 처리할 주문 데이터 없음.");
       }
+
+      console.log("===> orders upsert 완료, user update 진입 전");
+      console.log(
+        `[User Update] 사용자 ${userId}의 last_crawl_at 업데이트 시도...`
+      );
+
+      // --- VVV 사용자 last_crawl_at 업데이트 로직 추가 VVV ---
+      console.log(
+        `[User Update] 사용자 ${userId}의 last_crawl_at 업데이트 시도...`
+      );
+      const now = new Date().toISOString();
+      try {
+        // users 테이블의 기본 키 컬럼명이 'user_id'라고 가정
+        const updateResult = await connection.queryObject(
+          `UPDATE users
+           SET
+             last_crawl_at = $1,
+             updated_at = $2  -- 일반 updated_at도 함께 갱신
+           WHERE
+             user_id = $3;`,
+          [
+            now, // $1: 현재 시각
+            now, // $2: 현재 시각
+            userId, // $3: 업데이트할 사용자 ID
+          ]
+        );
+        // rowCount를 확인하여 실제로 업데이트가 발생했는지 확인 가능 (선택 사항)
+        if (updateResult.rowCount && updateResult.rowCount > 0) {
+          console.log(
+            `[User Update] 사용자 ${userId}의 last_crawl_at 업데이트 성공.`
+          );
+        } else {
+          console.warn(
+            `[User Update] 사용자 ${userId}를 찾을 수 없거나 업데이트되지 않았습니다.`
+          );
+          // 사용자를 찾지 못하는 경우, 심각한 문제일 수 있으므로 오류 처리 필요 가능성 있음
+        }
+      } catch (userUpdateError) {
+        console.error(
+          `[User Update] 사용자 ${userId} 업데이트 중 오류: ${userUpdateError.message}`
+        );
+        // 이 오류 발생 시 트랜잭션 롤백을 위해 에러를 다시 throw 하는 것이 좋음
+        throw userUpdateError;
+      }
+      // --- ^^^ 사용자 last_crawl_at 업데이트 로직 완료 ^^^ ---
 
       // =============================================
       // === 트랜잭션 커밋 ===

@@ -16,12 +16,12 @@ const supabase = createClient(
  */
 const getAllOrders = async (req, res) => {
   try {
-    const { userId } = req.query;
+    const { userId, status, search, startDate, endDate } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 30;
     const startIndex = (page - 1) * limit;
-    const sortBy = req.query.sortBy || "ordered_at";
-    const sortOrder = req.query.sortOrder === "asc" ? true : false;
+    const sortBy = req.query.sortBy || "ordered_at"; // 기본 정렬: 주문 시간
+    const sortOrder = req.query.sortOrder === "asc" ? true : false; // 기본 정렬: 내림차순
 
     if (!userId) {
       return res.status(400).json({
@@ -30,38 +30,58 @@ const getAllOrders = async (req, res) => {
       });
     }
 
-    // 주문 목록 조회 쿼리
+    // --- 쿼리 시작 ---
     let query = supabase
-      .from("orders")
-      .select(
-        `
-        *
-        
-      `,
-        { count: "exact" }
-      )
-      .eq("user_id", userId)
+      .from("orders_with_products")
+      .select("*", { count: "exact" })
+      .eq("user_id", userId);
+
+    // --- 필터링 조건 추가 ---
+
+    // 1. 상태 필터링
+    if (status && status !== "undefined") {
+      query = query.eq("status", status);
+    }
+
+    // 2. 검색 조건 (고객명과 평탄화된 상품명(product_title)을 OR 조건으로 검색)
+    if (search && search !== "undefined") {
+      query = query.or(
+        `customer_name.ilike.%${search}%,product_title.ilike.%${search}%,product_barcode.ilike.%${search}%`
+      );
+    }
+
+    // 4. 기간 필터링
+    if (startDate && endDate) {
+      // 날짜 형식 유효성 검사 추가 권장
+      query = query
+        .gte("ordered_at", startDate) // 시작일 이후
+        .lte("ordered_at", endDate); // 종료일 이전
+    }
+
+    // --- 정렬 및 페이지네이션 적용 (모든 필터링 후에 적용) ---
+    query = query
       .order(sortBy, { ascending: sortOrder })
       .range(startIndex, startIndex + limit - 1);
 
-    // 필터링 조건 추가
-    if (req.query.status && req.query.status !== "undefined") {
-      query = query.eq("status", req.query.status);
-    }
-
-    if (req.query.search && req.query.search !== "undefined") {
-      query = query.ilike("customer_name", `%${req.query.search}%`);
-    }
-
-    if (req.query.startDate && req.query.endDate) {
-      query = query
-        .gte("ordered_at", req.query.startDate)
-        .lte("ordered_at", req.query.endDate);
-    }
-
+    // --- 쿼리 실행 ---
     const { data, error, count } = await query;
 
     if (error) {
+      // 관계 설정 오류 등 특정 오류 메시지 확인
+      if (
+        error.message.includes("relationship") &&
+        error.message.includes("products")
+      ) {
+        logger.error(
+          "Supabase 오류: 'orders'와 'products' 간의 관계 설정이 DB에 없거나 잘못되었을 수 있습니다."
+        );
+        return res.status(500).json({
+          success: false,
+          message: "데이터베이스 관계 설정 오류. 관리자에게 문의하세요.",
+          error: "Missing or incorrect relationship: orders -> products",
+        });
+      }
+      // 그 외 일반 오류
       throw error;
     }
 

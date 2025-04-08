@@ -775,9 +775,12 @@ const naverLogin = async (req, res) => {
         await supabase
           .from("users")
           .update({
-            last_naver_login: new Date().toISOString(),
+            cookies_updated_at: new Date().toISOString(),
             naver_login_status: "success",
+            cookies: cookies,
+            updated_at: new Date().toISOString(),
           })
+
           .eq("user_id", userId);
 
         naverLoginStatus.set(userId, {
@@ -976,7 +979,7 @@ const handleManualNaverLogin = async (req, res) => {
         await supabase
           .from("users")
           .update({
-            last_naver_login: new Date().toISOString(),
+            cookies_updated_at: new Date().toISOString(),
             naver_login_status: "success",
           })
           .eq("user_id", userId);

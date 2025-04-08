@@ -610,7 +610,7 @@ class BandComments extends BandPosts {
       logger.info(`게시물 ${postId} 댓글 크롤링 시작`);
 
       // 밴드 페이지 접속
-      await this.accessBandPage(naverId, naverPassword);
+      await this.accessBandPage(userId, naverId, naverPassword);
 
       // 게시물 페이지로 이동
       const postUrl = `https://band.us/band/${this.bandNumber}/post/${postId}`;
