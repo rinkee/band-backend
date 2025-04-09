@@ -17,6 +17,123 @@ const COOKIES_PATH = path.join(__dirname, "../../../cookies");
 // 가격 추출 함수와 ID 생성 함수는 utils에서 가져옴
 const { extractPriceFromContent, generateSimpleId } = utils;
 
+// --- 실제 크롤링 로직을 수행하는 내부 함수 ---
+// 이 함수는 req, res를 직접 받지 않고 필요한 데이터만 받습니다.
+async function _performCrawling(params) {
+  let crawler = null;
+  const { userId, bandNumber, maxPosts, processProducts, taskId } = params;
+
+  try {
+    // 1. 사용자 계정 정보 조회
+    const userAccount = await getUserNaverAccount(userId); // 아래에 정의된 함수 사용
+    if (!userAccount) {
+      throw new Error(
+        `네이버 계정 정보를 가져올 수 없습니다 (userId: ${userId}).`
+      );
+    }
+
+    // 2. 작업 상태 업데이트 (시작)
+    taskStatusMap.set(taskId, {
+      status: "processing",
+      message: "크롤링 엔진 초기화 및 로그인 시도...",
+      progress: 5,
+      updatedAt: new Date().toISOString(),
+      params, // 전달받은 파라미터 저장
+    });
+
+    // 3. 크롤러 인스턴스 생성
+    crawler = new BandPosts(bandNumber, { numPostsToLoad: maxPosts || 30 });
+
+    // 4. 상태 업데이트 콜백 설정
+    crawler.onStatusUpdate = (status, message, progress) => {
+      taskStatusMap.set(taskId, {
+        status,
+        message,
+        progress,
+        updatedAt: new Date().toISOString(),
+        params,
+      });
+    };
+
+    // 5. 크롤링 실행
+    const result = await crawler.crawlPostDetail(
+      userId,
+      userAccount.naverId,
+      userAccount.naverPassword,
+      maxPosts || 30
+    );
+
+    // 6. 결과 처리 및 저장
+    if (result?.success && result.data?.length > 0) {
+      taskStatusMap.set(taskId, {
+        status: "processing",
+        message: `${result.data.length}개 저장 중...`,
+        progress: 85,
+        updatedAt: new Date().toISOString(),
+        params,
+      });
+      // processProducts 기본값 true로 설정
+      await crawler.saveDetailPostsToSupabase(
+        result.data,
+        userId,
+        processProducts ?? true
+      );
+      taskStatusMap.set(taskId, {
+        status: "completed",
+        message: `${result.data.length}개 저장 완료`,
+        progress: 100,
+        completedAt: new Date().toISOString(),
+        params,
+      });
+      logger.info(
+        `크롤링 작업 완료 (Task ID: ${taskId}): ${result.data.length}개 저장`
+      );
+    } else {
+      // 크롤링은 성공했으나 데이터가 없는 경우도 성공으로 처리할지, 오류로 처리할지 결정 필요
+      // 여기서는 오류로 간주
+      throw new Error(result?.error || "크롤링된 데이터가 없습니다.");
+    }
+  } catch (error) {
+    // 7. 오류 처리
+    logger.error(
+      `백그라운드 크롤링 오류 (Task ID: ${taskId}): ${error.message}`,
+      error.stack
+    ); // 스택 트레이스 로깅 추가
+    taskStatusMap.set(taskId, {
+      status: "failed",
+      message: `크롤링 실패: ${error.message}`,
+      progress: 0,
+      error: error.message,
+      stack: error.stack, // 스택 정보도 저장 (디버깅용)
+      endTime: new Date(),
+      params,
+    });
+    // 오류를 다시 던져서 호출한 쪽(스케줄러 등)에서도 알 수 있게 함
+    throw error;
+  } finally {
+    // 8. 리소스 정리 (오류 발생 여부와 관계없이 실행)
+    if (crawler && crawler.close) {
+      try {
+        logger.info(`리소스 정리 시작 (Task ID: ${taskId})`);
+        await crawler.close();
+        logger.info(`리소스 정리 완료 (Task ID: ${taskId})`);
+        const currentStatus = taskStatusMap.get(taskId);
+        if (currentStatus && currentStatus.status !== "failed") {
+          taskStatusMap.set(taskId, {
+            ...currentStatus,
+            message: currentStatus.message + " (리소스 정리됨)",
+          });
+        }
+      } catch (closeError) {
+        logger.error(
+          `리소스 정리 오류 (Task ID: ${taskId}): ${closeError.message}`
+        );
+      }
+    }
+  }
+}
+// --- 내부 함수 끝 ---
+
 /**
  * 쿠키 유효성을 확인하는 함수
  * @param {string} naverId - 네이버 ID
@@ -80,12 +197,20 @@ const getUserNaverAccount = async (userId) => {
   try {
     const { data: userData, error } = await supabase
       .from("users")
-      .select("*")
+      .select("user_id, naver_id, naver_password, band_number") // 필요한 컬럼만 명시적 선택 권장
       .eq("user_id", userId)
       .single();
 
     if (error) {
-      logger.error(`사용자 조회 오류 (${userId}):`, error);
+      // 사용자가 없는 경우(supabase single()에서 에러 발생)는 일반적일 수 있으므로 warn 레벨 고려
+      if (error.code === "PGRST116") {
+        // PostgREST 에러 코드 (정확한 코드 확인 필요)
+        logger.warn(
+          `사용자 조회 실패 (아마도 존재하지 않음) (${userId}): ${error.message}`
+        );
+      } else {
+        logger.error(`사용자 조회 오류 (${userId}):`, error);
+      }
       return null;
     }
 
@@ -95,7 +220,7 @@ const getUserNaverAccount = async (userId) => {
     }
 
     return {
-      userId,
+      userId: userData.user_id,
       naverId: userData.naver_id,
       naverPassword: userData.naver_password,
       bandNumber: userData.band_number,
@@ -154,187 +279,88 @@ class CrawlController {
     this.taskStatusMap = taskStatusMap;
   }
 
-  /**
-   * 게시물 상세 정보 크롤링 시작
-   */
-  async startPostDetailCrawling(req, res) {
-    let crawler = null;
-    const taskId = `task_${Date.now()}`;
+  async startPostDetailCrawling(req, res, next) {
+    // Express 핸들러 표준 인자
+    const taskId = `task_http_${Date.now()}`; // HTTP 요청임을 나타내는 ID
+    let bandNumber, userId, maxPosts, processProducts;
 
     try {
-      // URL 경로 매개변수에서 bandNumber 가져오기
-      const { bandNumber } = req.params;
-      const { userId, maxPosts, processProducts } = req.body;
+      // 1. 요청에서 파라미터 추출 및 검증
+      bandNumber = req.params?.bandNumber;
+      // 인증 미들웨어를 사용한다면 req.user.userId 같은 방식이 더 안전할 수 있음
+      userId = req.body?.userId || req.user?.userId;
+      maxPosts = req.body?.maxPosts;
+      processProducts = req.body?.processProducts;
 
-      // bandNumber 검증
-      if (!bandNumber) {
+      if (!bandNumber || !userId) {
+        // 요청 데이터 로그 추가 (디버깅 시 유용)
+        logger.warn(
+          `잘못된 크롤링 요청: bandNumber=${bandNumber}, userId=${userId}`
+        );
         return res.status(400).json({
           success: false,
-          message: "밴드 ID는 필수 값입니다.",
+          message: "밴드 ID와 사용자 ID는 필수입니다.",
         });
       }
 
-      // 사용자 ID 검증
-      if (!userId) {
-        return res.status(400).json({
-          success: false,
-          message: "사용자 ID는 필수 값입니다.",
-        });
-      }
-
-      // 사용자의 네이버 계정 정보 조회
-      const userAccount = await getUserNaverAccount(userId);
-      if (!userAccount) {
-        return res.status(400).json({
-          success: false,
-          message: "네이버 계정 정보를 가져올 수 없습니다.",
-        });
-      }
-
-      // 태스크 상태 초기화
+      // 2. Task 초기 상태 설정
+      const initialParams = { userId, bandNumber, maxPosts, processProducts };
       this.taskStatusMap.set(taskId, {
         status: "pending",
-        message: "크롤링 작업 준비 중...",
+        message: "크롤링 작업 요청 접수됨 (HTTP)",
         progress: 0,
         startTime: new Date(),
+        params: initialParams,
       });
 
-      // 응답을 먼저 보내고 백그라운드에서 크롤링 진행
-      res.json({
+      // --- 중요: 3. 클라이언트에게 즉시 응답 ---
+      res.status(200).json({
         success: true,
-        message: "게시물 상세 정보 크롤링이 시작되었습니다.",
-        taskId, // 태스크 ID 반환
-        data: {
-          taskId,
-          userId,
-          bandNumber,
-          maxPosts: maxPosts || 30,
-          processProducts: processProducts || false,
-        },
+        message: "크롤링 작업이 시작되었습니다. 백그라운드에서 실행됩니다.",
+        taskId,
+        data: { taskId, ...initialParams }, // 요청 정보 포함하여 반환
       });
+      // --- 응답 끝 ---
 
-      // BandPosts 인스턴스 생성 (모듈화된 코드 사용)
-      crawler = new BandPosts(bandNumber, {
-        numPostsToLoad: maxPosts || 30,
-      });
-
-      // 크롤링 작업 시작
-      logger.info(`네이버 계정으로 밴드 크롤링 시작: ${userAccount.naverId}`);
-
-      // 상태 업데이트 함수 추가
-      crawler.onStatusUpdate = (status, message, progress) => {
-        this.taskStatusMap.set(taskId, {
-          status,
-          message,
-          progress,
-          updatedAt: new Date().toISOString(),
-        });
-      };
-
-      // 게시물 상세 정보 크롤링
-      const result = await crawler.crawlPostDetail(
-        userId,
-        userAccount.naverId,
-        userAccount.naverPassword,
-        maxPosts || 30
-      );
-
-      // 결과 처리 및 Supabase에 저장
-      if (result && result.success && result.data && result.data.length > 0) {
-        this.taskStatusMap.set(taskId, {
-          status: "processing",
-          message: `${result.data.length}개의 게시물 상세 정보를 저장합니다.`,
-          progress: 85,
-          updatedAt: new Date().toISOString(),
-        });
-
-        // processProducts 파라미터를 전달하여 저장 시 AI 처리를 함께 수행
-        await crawler.saveDetailPostsToSupabase(result.data, userId, true);
-
-        // AI 처리 완료 후 상태 업데이트
-        this.taskStatusMap.set(taskId, {
-          status: "completed",
-          message: `${
-            result.data.length
-          }개의 게시물 상세 정보가 저장되었습니다${
-            processProducts === true ? " (상품 정보 AI 추출 포함)" : ""
-          }.`,
-          progress: 100,
-          completedAt: new Date().toISOString(),
-        });
-      } else {
-        this.taskStatusMap.set(taskId, {
-          status: "failed",
-          message: `게시물 상세 정보 크롤링 실패: ${
-            result ? result.error : "알 수 없는 오류"
-          }`,
-          progress: 0,
-          updatedAt: new Date().toISOString(),
-        });
-      }
-    } catch (error) {
-      logger.error("게시물 상세 정보 크롤링 오류:", error);
-
-      // 에러 상태 업데이트
-      this.taskStatusMap.set(taskId || `error_task_${Date.now()}`, {
-        status: "failed",
-        message: `크롤링 실패: ${error.message}`,
-        progress: 0,
-        error: error.message,
-        endTime: new Date(),
-      });
-    } finally {
-      // 브라우저 리소스 정리
-      try {
-        if (crawler && crawler.close) {
-          logger.info("크롤링 완료 후 브라우저 리소스 정리 시작");
-          await crawler.close();
-
-          // 브라우저가 종료되었는지 확인
-          if (!crawler.browser) {
-            logger.info("브라우저 리소스 정리 완료");
-
-            // 작업 상태 업데이트
-            const currentStatus = this.taskStatusMap.get(taskId);
-            if (currentStatus) {
-              this.taskStatusMap.set(taskId, {
-                ...currentStatus,
-                message: currentStatus.message + " (브라우저 종료됨)",
-              });
-            }
-          } else {
-            logger.warn(
-              "브라우저가 여전히 종료되지 않았습니다. 강제 종료 시도..."
+      // --- 중요: 4. 백그라운드에서 실제 크롤링 로직 실행 ---
+      // setImmediate나 process.nextTick으로 감싸면 이벤트 루프에 더 빨리 넘길 수 있음
+      setImmediate(() => {
+        _performCrawling({ ...initialParams, taskId })
+          .then(() => {
+            logger.info(
+              `백그라운드 크롤링 작업 성공적으로 완료됨 (Task ID: ${taskId})`
             );
-
-            // 강제 종료 시도
-            try {
-              if (
-                crawler.browser &&
-                typeof crawler.browser.close === "function"
-              ) {
-                await crawler.browser.close().catch(() => {});
-                crawler.browser = null;
-                crawler.page = null;
-                logger.info("브라우저 강제 종료 성공");
-              }
-            } catch (forceCloseError) {
-              logger.error(
-                `브라우저 강제 종료 중 오류: ${forceCloseError.message}`
-              );
-              crawler.browser = null;
-              crawler.page = null;
-            }
-          }
-        }
-      } catch (closeError) {
-        logger.error(`브라우저 종료 오류: ${closeError.message}`);
-
-        // 오류가 발생해도 참조는 정리
-        if (crawler) {
-          crawler.browser = null;
-          crawler.page = null;
-        }
+          })
+          .catch((err) => {
+            // 백그라운드에서 발생한 오류는 _performCrawling 내부에서 이미 로깅됨
+            // 추가 로깅이나 처리가 필요하다면 여기에 작성
+            logger.error(
+              `(추가 로깅) 백그라운드 크롤링 실패 (Task ID: ${taskId}): ${err.message}`
+            );
+          });
+      });
+      // --- 백그라운드 실행 끝 ---
+    } catch (error) {
+      // 동기적 요청 처리 중 오류 (예: 파라미터 검증 실패 등은 위에서 처리됨)
+      // 주로 예상치 못한 내부 서버 오류
+      logger.error(
+        `크롤링 HTTP 요청 처리 중 심각한 오류 (Task ID: ${taskId}): ${error.message}`,
+        error.stack
+      );
+      // 응답을 아직 보내지 않았다면 (거의 발생하지 않겠지만 방어 코드)
+      if (!res.headersSent) {
+        this.taskStatusMap.set(taskId || `error_task_${Date.now()}`, {
+          status: "failed",
+          message: `요청 처리 중 심각한 오류: ${error.message}`,
+          error: error.message,
+          endTime: new Date(),
+        });
+        return res.status(500).json({
+          success: false,
+          message: "크롤링 요청 처리 중 서버 오류 발생",
+          error: error.message,
+          taskId,
+        });
       }
     }
   }
@@ -878,4 +904,5 @@ module.exports = {
   getTaskStatus,
   extractPriceFromContent,
   generateSimpleId,
+  _performCrawling,
 };

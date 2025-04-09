@@ -357,6 +357,7 @@ const login = async (req, res) => {
         subscription: userData.subscription,
         createdAt: userData.created_at,
         updatedAt: userData.updated_at,
+        token: token,
       },
     });
   } catch (error) {

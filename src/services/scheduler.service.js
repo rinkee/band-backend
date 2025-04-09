@@ -1,11 +1,10 @@
 // src/services/scheduler.service.js - 정기적인 작업 스케줄링을 위한 서비스
 const cron = require("node-cron");
 const logger = require("../config/logger");
-const { CrawlController } = require("../controllers/crawl.controller");
 const userService = require("./user.service");
 
 // 크롤링 컨트롤러 인스턴스 생성
-const crawlController = new CrawlController();
+const { _performCrawling } = require("../controllers/crawl.controller");
 
 // 활성화된 스케줄 작업 목록을 저장하는 맵
 // key: jobId, value: { cron, description, status, lastRun, nextRun, task }
@@ -84,43 +83,59 @@ const createJob = (jobId, cronExpression, jobFunction, description = "") => {
 
     // 크론 작업 생성
     const task = cron.schedule(cronExpression, async () => {
+      const jobInfo = scheduledJobs.get(jobId); // 작업 정보 가져오기
+      if (!jobInfo) {
+        logger.error(
+          `스케줄된 작업 정보를 찾을 수 없습니다: ${jobId}. 작업 중단.`
+        );
+        task.stop(); // 작업 자체를 중지시킬 수도 있음
+        return;
+      }
+      // 이미 실행 중인지 체크 (선택적, 동시 실행 방지 강화)
+      if (jobInfo.status === "running") {
+        logger.warn(
+          `작업 ${jobId}가 이미 실행 중입니다. 이번 실행 건너뜁니다.`
+        );
+        return;
+      }
       try {
-        logger.info(`작업 실행: ${jobId}`);
+        logger.info(`작업 실행 시작: ${jobId}`);
+        // 상태 업데이트: 실행 중
+        jobInfo.lastRun = new Date();
+        jobInfo.nextRun = getNextExecutionTime(cronExpression); // 다음 실행 시간 계산 (구현 확인 필요)
+        jobInfo.status = "running";
+        jobInfo.error = null; // 이전 오류 정보 초기화
+        scheduledJobs.set(jobId, jobInfo);
 
-        // 작업 상태 업데이트
-        const job = scheduledJobs.get(jobId);
-        job.lastRun = new Date();
-        job.nextRun = getNextExecutionTime(cronExpression);
-        job.status = "running";
-        scheduledJobs.set(jobId, job);
-
-        // 작업 실행
+        // 실제 작업 함수 실행
         await jobFunction();
 
-        // 작업 완료 상태 업데이트
-        job.status = "idle";
-        scheduledJobs.set(jobId, job);
-
-        logger.info(`작업 완료: ${jobId}`);
+        // 상태 업데이트: 완료 (idle)
+        jobInfo.status = "idle";
+        scheduledJobs.set(jobId, jobInfo);
+        logger.info(`작업 실행 완료: ${jobId}`);
       } catch (error) {
-        // 오류 발생 시 상태 업데이트
-        const job = scheduledJobs.get(jobId);
-        job.status = "failed";
-        job.error = error.message;
-        scheduledJobs.set(jobId, job);
-
-        logger.error(`작업 오류 (${jobId}): ${error.message}`);
+        logger.error(
+          `작업 실행 중 오류 발생 (${jobId}): ${error.message}`,
+          error.stack
+        );
+        // 상태 업데이트: 실패
+        jobInfo.status = "failed";
+        jobInfo.error = error.message; // 오류 메시지 저장
+        scheduledJobs.set(jobId, jobInfo);
+        // 여기서 오류를 다시 throw하지 않으면 스케줄러는 계속 실행됨
       }
     });
 
-    // 작업 정보 저장
+    // 새 작업 정보 저장
     scheduledJobs.set(jobId, {
       cronExpression,
       description,
-      status: "idle",
+      status: "idle", // 초기 상태는 idle
       lastRun: null,
-      nextRun: getNextExecutionTime(cronExpression),
-      task,
+      nextRun: getNextExecutionTime(cronExpression), // 최초 다음 실행 시간
+      task, // node-cron 태스크 객체
+      error: null, // 초기 오류 없음
     });
 
     logger.info(`작업 등록: ${jobId} (${cronExpression})`);
@@ -263,69 +278,53 @@ const getJob = (jobId) => {
 };
 
 /**
- * 밴드 게시물 자동 크롤링 작업 등록 함수
- * @param {string} userId - 사용자 ID
- * @param {string} bandNumber - 밴드 ID
- * @param {string} cronExpression - 크론 표현식
- * @returns {string|null} - 등록된 작업 ID 또는 null
+ * 밴드 게시물 자동 크롤링 작업 등록 함수 (수정됨)
  */
 const scheduleBandCrawling = (userId, bandNumber, cronExpression) => {
   try {
     const jobId = `band-crawl-${userId}-${bandNumber}`;
 
-    // 이미 같은 ID로 작업이 있는지 확인
     if (scheduledJobs.has(jobId)) {
       logger.warn(`이미 동일한 작업이 스케줄되어 있습니다: ${jobId}`);
-      return jobId; // 이미 존재하는 작업 ID 반환
+      return jobId;
     }
 
-    // 크롤링 작업 함수 정의
+    // --- 수정된 크롤링 함수 정의 ---
     const crawlFunction = async () => {
+      const taskId = `task_schedule_${Date.now()}`;
       try {
-        // 이미 실행 중인지 확인
-        const job = scheduledJobs.get(jobId);
-        if (job && job.status === "running") {
-          logger.warn(`작업이 이미 실행 중입니다: ${jobId}`);
-          return; // 이미 실행 중이면 중복 실행 방지
-        }
-
-        // 임시 요청/응답 객체 생성
-        const req = {
-          params: { bandNumber },
-          body: { userId },
-          user: { userId },
-        };
-
-        const res = {
-          status: (code) => ({
-            json: (data) => {
-              if (code >= 400) {
-                logger.error(`크롤링 작업 실패: ${JSON.stringify(data)}`);
-              } else {
-                logger.info(
-                  `크롤링 작업 완료: ${data.message || JSON.stringify(data)}`
-                );
-              }
-            },
-          }),
-        };
-
-        // 게시물 목록 크롤링
-        await crawlController.startPostDetailCrawling(req, res);
+        logger.info(
+          `스케줄된 크롤링 작업 시작 (일반): userId=${userId}, bandNumber=${bandNumber}, taskId=${taskId}`
+        );
+        // !!! 중요: _performCrawling 함수 직접 호출 !!!
+        await _performCrawling({
+          // crawl.controller.js에서 export된 함수 사용
+          userId: userId,
+          bandNumber: bandNumber,
+          maxPosts: 10, // 스케줄러 기본값
+          processProducts: true, // 스케줄러 기본값
+          taskId: taskId,
+        });
+        logger.info(
+          `스케줄된 크롤링 작업 완료 (일반): userId=${userId}, bandNumber=${bandNumber}, taskId=${taskId}`
+        );
       } catch (error) {
-        logger.error(`자동 크롤링 작업 오류: ${error.message}`);
+        // _performCrawling 내부에서 이미 로깅됨. 여기서는 오류 전파만.
+        logger.error(
+          `(상위 로깅) 스케줄된 자동 크롤링 작업 오류 (Task ID: ${taskId}): ${error.message}`
+        );
         throw error;
       }
     };
+    // --- 수정 끝 ---
 
-    // 크론 작업 등록
+    const description = `${bandNumber} 밴드 게시물 수동 예약 크롤링`;
     const created = createJob(
       jobId,
       cronExpression,
       crawlFunction,
-      `${bandNumber} 밴드 게시물 자동 크롤링`
+      description
     );
-
     return created ? jobId : null;
   } catch (error) {
     logger.error(`밴드 크롤링 작업 등록 중 오류: ${error.message}`);
@@ -334,79 +333,54 @@ const scheduleBandCrawling = (userId, bandNumber, cronExpression) => {
 };
 
 /**
- * 자동 크롤링이 활성화된 사용자의 크롤링 작업을 등록
- * @param {Object} user - 사용자 정보
- * @returns {string|null} - 등록된 작업 ID
+ * 자동 크롤링이 활성화된 사용자의 크롤링 작업을 등록 (수정됨)
  */
 const registerUserCrawlingTask = async (user) => {
   try {
     const { user_id, band_number, crawl_interval } = user;
-
-    // 시스템 자동 크롤링 작업의 경우 다른 ID 형식 사용
-    const jobId = `band-crawl-system-${band_number}`;
-
-    // 사용자 설정 크롤링 간격을 사용하거나 기본값 10분 사용
-    const interval = crawl_interval || 5;
-
-    // 크론 표현식 생성 (사용자 설정 간격 사용)
-    const cronExpression =
-      interval === 10
-        ? "*/10 * * * *"
-        : interval === 5
-        ? "*/5 * * * *"
-        : interval === 15
-        ? "*/15 * * * *"
-        : interval === 30
-        ? "*/30 * * * *"
-        : interval === 60
-        ? "0 * * * *"
-        : `*/${interval} * * * *`;
-
+    const jobId = `band-crawl-system-${band_number}`; // 시스템 작업용 ID
+    const interval = crawl_interval || 5; // 기본 5분
+    const cronExpression = `*/${interval} * * * *`;
     const description = `${band_number} 밴드 게시물 자동 크롤링 (${interval}분 간격)`;
 
-    // 기존 작업이 있다면 삭제
+    // 기존 작업 삭제 로직 (유지)
     if (scheduledJobs.has(jobId)) {
       const job = scheduledJobs.get(jobId);
       job.task.stop();
       scheduledJobs.delete(jobId);
-      logger.info(`기존 작업 삭제: ${jobId} (${interval}분 간격으로 업데이트)`);
+      logger.info(
+        `기존 자동 크롤링 작업 삭제 후 업데이트: ${jobId} (${interval}분 간격)`
+      );
     }
 
-    // 크롤링 함수 정의
+    // --- 수정된 크롤링 함수 정의 ---
     const crawlFunction = async () => {
+      const taskId = `task_schedule_system_${Date.now()}`;
       try {
-        // 임시 요청/응답 객체 생성
-        const req = {
-          params: { bandNumber: band_number },
-          body: { userId: user_id },
-          user: { userId: user_id },
-        };
-
-        const res = {
-          status: (code) => ({
-            json: (data) => {
-              if (code >= 400) {
-                logger.error(`자동 크롤링 작업 실패: ${JSON.stringify(data)}`);
-              } else {
-                logger.info(
-                  `자동 크롤링 작업 실행됨 (${interval}분 간격): ${
-                    data.message || JSON.stringify(data)
-                  }`
-                );
-              }
-            },
-          }),
-        };
-
-        // 게시물 목록 크롤링
-        await crawlController.startPostDetailCrawling(req, res);
+        logger.info(
+          `스케줄된 크롤링 작업 시작 (시스템): userId=${user_id}, bandNumber=${band_number}, taskId=${taskId}`
+        );
+        // !!! 중요: _performCrawling 함수 직접 호출 !!!
+        await _performCrawling({
+          // crawl.controller.js에서 export된 함수 사용
+          userId: user_id,
+          bandNumber: band_number,
+          maxPosts: 10, // 시스템 기본값 (조절 가능)
+          processProducts: true, // 시스템 기본값
+          taskId: taskId,
+        });
+        logger.info(
+          `스케줄된 크롤링 작업 완료 (시스템): userId=${user_id}, bandNumber=${band_number}, taskId=${taskId}`
+        );
       } catch (error) {
-        logger.error(`자동 크롤링 실행 오류: ${error.message}`);
+        logger.error(
+          `(상위 로깅) 스케줄된 자동 크롤링 실행 오류 (Task ID: ${taskId}): ${error.message}`
+        );
         throw error;
       }
     };
+    // --- 수정 끝 ---
 
-    // 작업 등록
     const created = createJob(
       jobId,
       cronExpression,
@@ -414,22 +388,17 @@ const registerUserCrawlingTask = async (user) => {
       description
     );
 
+    // DB 저장 및 로깅 (유지)
     if (created) {
       logger.info(
         `사용자 '${user_id}'의 자동 크롤링 작업 등록 완료 (밴드: ${band_number}, 간격: ${interval}분)`
       );
-
-      // DB에 작업 ID 저장
       try {
         await userService.updateUserJobId(user_id, jobId);
-        logger.info(
-          `사용자 '${user_id}'의 작업 ID(${jobId})가 DB에 저장되었습니다.`
-        );
+        logger.info(`사용자 '${user_id}'의 작업 ID(${jobId})가 DB에 저장됨`);
       } catch (dbError) {
         logger.error(`작업 ID 저장 오류: ${dbError.message}`);
-        // 작업 ID 저장 실패해도 작업은 계속 유지
       }
-
       return jobId;
     }
     return null;
