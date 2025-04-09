@@ -223,11 +223,15 @@ class BandPosts extends BandAuth {
       const $ = cheerio.load(content);
 
       const postIdMatch = currentUrl.match(/\/post\/(\d+)/);
-      const postId = postIdMatch?.[1] || `generated_${generateUUID()}`;
-      if (!postIdMatch)
-        logger.warn(
-          `표준 Post ID 형식 아님: ${currentUrl}. 임시 ID 생성: ${postId}`
+      // postIdMatch가 없거나, 그룹 1 (숫자 부분)이 없으면 처리 중단
+      if (!postIdMatch || !postIdMatch[1]) {
+        logger.error(
+          `표준 숫자 Post ID를 URL에서 찾을 수 없습니다: ${currentUrl}. 이 게시물 처리를 중단합니다.`
         );
+        return null; // <<<--- 즉시 null 반환하여 함수 종료
+      }
+      // 여기까지 왔다면 postIdMatch[1]에 유효한 숫자 형태의 문자열 ID가 있음
+      const postId = postIdMatch[1];
 
       const authorName =
         $(".postWriterInfoWrap .text, .userName").first().text().trim() ||
@@ -1113,6 +1117,8 @@ class BandPosts extends BandAuth {
             // --- 5. 주문 정보 추출 및 orderData 업데이트 (상품 게시물이고, 게시물이 마감되지 않았을 경우) ---
             // isProductPost: 게시물이 상품 게시물인지 여부 (AI 또는 가격 지표로 판단)
             // productMap: 게시물 내 상품 정보 (itemNumber -> productId 매핑)
+            let processedAsOrder = false; // 이 댓글이 주문으로 처리되었는지 플래그
+
             if (isProductPost && productMap.size > 0 && !isClosedByComment) {
               const extractedItems = extractEnhancedOrderFromComment(
                 commentContent,
@@ -1124,27 +1130,39 @@ class BandPosts extends BandAuth {
                 orderData.extracted_items_details = extractedItems; // 추출된 모든 항목 정보 저장
 
                 let firstValidItemProcessed = false; // 댓글 내 첫 유효 주문 처리 플래그
-                let commentTotalAmount = 0; // 댓글 내 총 주문 금액
 
                 // 추출된 각 주문 항목 처리
                 for (const orderItem of extractedItems) {
                   let itemNumberToUse = orderItem.itemNumber;
                   let targetProductId = null;
+                  let isAmbiguousNow = orderItem.isAmbiguous; // 현재 항목의 모호성
 
                   // 상품 번호 결정 (모호성 처리 포함)
-                  if (orderItem.isAmbiguous) {
+                  if (isAmbiguousNow) {
                     // 번호 없는 주문: 상품 1개일 때만 처리
                     if (productMap.size === 1) {
                       itemNumberToUse = Array.from(productMap.keys())[0];
                       targetProductId = productMap.get(itemNumberToUse);
+                      isAmbiguousNow = false; // 단일 상품이면 더 이상 모호하지 않음
                       logger.info(
-                        `ID ${originalBandPostIdStr}, 댓글 ${index}: 모호한 주문 -> 단일 상품(${itemNumberToUse})으로 가정`
+                        `ID ${originalBandPostIdStr}, 댓글 ${index}: 모호한 주문 -> 단일 상품(${itemNumberToUse})으로 확정`
                       );
                     } else {
                       logger.warn(
-                        `ID ${originalBandPostIdStr}, 댓글 ${index}: 모호한 주문 처리 불가 (다중 상품)`
+                        `ID ${originalBandPostIdStr}, 댓글 ${index}: 모호한 주문(다중 상품) -> 폴백 매핑 시도`
                       );
-                      continue; // 이 주문 항목 건너뛰기
+                      if (productMap.has(1)) {
+                        // 1번 상품 시도
+                        targetProductId = productMap.get(1);
+                        itemNumberToUse = 1;
+                      } else {
+                        // 첫 번째 상품 시도
+                        const [firstItemNum, firstProductId] = Array.from(
+                          productMap.entries()
+                        )[0];
+                        targetProductId = firstProductId;
+                        itemNumberToUse = firstItemNum;
+                      }
                     }
                   } else {
                     // 번호 있는 주문: productMap에서 상품 ID 찾기
@@ -1152,12 +1170,40 @@ class BandPosts extends BandAuth {
                     targetProductId = productMap.get(itemNumberToUse);
                   }
 
-                  // 유효한 상품 ID 확인
+                  // 명시적 번호가 productMap에 없는 경우 폴백
                   if (!targetProductId) {
                     logger.warn(
-                      `ID ${originalBandPostIdStr}, 댓글 ${index}: 유효하지 않은 상품 번호 (${itemNumberToUse})`
+                      `ID ${originalBandPostIdStr}, 댓글 ${index}: 유효하지 않은 상품 번호 (${itemNumberToUse}) -> 폴백 매핑 시도`
                     );
-                    continue; // 이 주문 항목 건너뛰기
+                    isAmbiguousNow = true; // 유효하지 않은 번호였으므로 모호함
+                    if (productMap.size === 1) {
+                      // 단일 상품이면 그 상품으로
+                      const [itemNum, prodId] = Array.from(
+                        productMap.entries()
+                      )[0];
+                      targetProductId = prodId;
+                      itemNumberToUse = itemNum;
+                    } else if (productMap.size > 1) {
+                      // 다중 상품이면 1번 또는 첫번째
+                      if (productMap.has(1)) {
+                        targetProductId = productMap.get(1);
+                        itemNumberToUse = 1;
+                      } else {
+                        const [firstItemNum, firstProductId] = Array.from(
+                          productMap.entries()
+                        )[0];
+                        targetProductId = firstProductId;
+                        itemNumberToUse = firstItemNum;
+                      }
+                    }
+                  }
+
+                  // --- 최종 상품 ID 확인 및 상품 정보 조회 ---
+                  if (!targetProductId) {
+                    logger.error(
+                      `ID ${originalBandPostIdStr}, 댓글 ${index}: 폴백 후에도 유효한 상품 ID를 찾지 못했습니다. 이 항목 건너뜀.`
+                    );
+                    continue; // 이 항목은 처리 불가
                   }
 
                   // 상품 정보 조회 (메모리에서)
@@ -1171,39 +1217,54 @@ class BandPosts extends BandAuth {
                     continue; // 오류 상황, 이 주문 항목 건너뛰기
                   }
 
-                  const itemTotal = productInfo.base_price * orderItem.quantity;
-                  commentTotalAmount += itemTotal; // 댓글 내 합계 금액 누적
-
-                  // --- orderData의 대표 주문 정보 업데이트 (첫 유효 항목 기준) ---
-                  if (!firstValidItemProcessed) {
-                    const unitPrice =
-                      typeof productInfo.base_price === "number"
-                        ? productInfo.base_price
-                        : 0;
-                    const itemTotal = unitPrice * orderItem.quantity;
-
-                    orderData.product_id = targetProductId;
-                    orderData.quantity = orderItem.quantity;
-                    orderData.item_number = itemNumberToUse; // <<<--- 값 할당
-                    // orderData.price_per_unit = unitPrice; // 옵션 1 선택 시 제거
-                    orderData.price = unitPrice; // <<<--- 옵션 1: 단가 저장
-                    orderData.total_amount = itemTotal; // <<<--- 옵션 1: 첫 항목 총액 저장 (또는 제거 고려)
-                    orderData.price_option_description = `${itemNumberToUse}번 (${productInfo.title})`;
-                    orderData.is_ambiguous = orderItem.isAmbiguous;
-                    firstValidItemProcessed = true;
+                  // --- 수량 결정 (유효하지 않으면 1로) ---
+                  const quantity =
+                    typeof orderItem.quantity === "number" &&
+                    orderItem.quantity > 0
+                      ? orderItem.quantity
+                      : 1;
+                  if (
+                    !(
+                      typeof orderItem.quantity === "number" &&
+                      orderItem.quantity > 0
+                    )
+                  ) {
+                    logger.warn(
+                      `ID ${originalBandPostIdStr}, 댓글 ${index}, 상품 ${itemNumberToUse}: 유효하지 않은 수량(${orderItem.quantity}). 1로 설정.`
+                    );
+                    isAmbiguousNow = true; // 수량 추론 시 모호함 표시
                   }
 
-                  // --- 고객 집계 정보 업데이트 (유효 주문 항목 발생 시) ---
-                  // 고객별 총 주문 '항목' 수와 총 금액 업데이트
+                  // --- 가격 및 총액 계산 ---
+                  const unitPrice =
+                    typeof productInfo.base_price === "number"
+                      ? productInfo.base_price
+                      : 0;
+                  const itemTotal = unitPrice * quantity;
+
+                  // --- orderData 업데이트 (첫 유효 항목 기준) ---
+                  if (!firstValidItemProcessed) {
+                    orderData.product_id = targetProductId; // 할당!
+                    orderData.quantity = quantity; // 할당!
+                    orderData.item_number = itemNumberToUse; // 할당!
+                    orderData.price = unitPrice;
+                    orderData.total_amount = itemTotal;
+                    orderData.price_option_description = `${itemNumberToUse}번 (${productInfo.title})`;
+                    orderData.is_ambiguous = isAmbiguousNow; // 최종 모호성 반영
+                    // 상태 변경: 모호하면 '확인필요' 등
+                    if (isAmbiguousNow) {
+                      orderData.status = "확인필요";
+                    }
+                    firstValidItemProcessed = true;
+                  }
+                  // --- 고객 집계 정보 업데이트 ---
                   customerData.total_orders += 1;
                   customerData.total_spent += itemTotal;
-                  // 첫 주문/마지막 주문 시간 업데이트
                   if (!customerData.first_order_at)
                     customerData.first_order_at = commentTime.toISOString();
                   customerData.last_order_at = commentTime.toISOString();
 
-                  // --- 상품 집계 정보 업데이트 (메모리에서) ---
-                  // 상품별 주문 건수 및 수량 업데이트
+                  // --- 상품 집계 정보 업데이트 ---
                   if (!orderSummaryUpdates.has(targetProductId))
                     orderSummaryUpdates.set(targetProductId, {
                       orders: 0,
@@ -1211,14 +1272,99 @@ class BandPosts extends BandAuth {
                     });
                   const summary = orderSummaryUpdates.get(targetProductId);
                   summary.orders += 1;
-                  summary.quantity += orderItem.quantity;
-                } // 추출된 주문 항목 루프(extractedItems) 끝
+                  summary.quantity += quantity;
+
+                  processedAsOrder = true; // 이 댓글은 주문으로 처리됨
+                } // end for (orderItem)
+
+                // Case 2: 주문 추출 실패했으나 숫자 포함 시 (폴백)
 
                 // (선택) total_amount를 댓글 내 총 합계로 업데이트
                 // if (firstValidItemProcessed && orderData.total_amount !== commentTotalAmount) {
                 //    orderData.total_amount = commentTotalAmount;
                 // }
-              } // if (extractedItems.length > 0) 끝
+              } else if (/\d/.test(commentContent)) {
+                logger.warn(
+                  `ID ${originalBandPostIdStr}, 댓글 ${index}: 주문 추출 실패, 하지만 숫자 포함 -> 폴백 처리`
+                );
+
+                let targetProductId = null;
+                let itemNumberToUse = 1;
+                let productInfo = null;
+                let unitPrice = 0;
+                const quantity = 1; // 추출 실패 시 기본 수량 1
+
+                // --- 폴백 상품 ID 결정 ---
+                if (productMap.size === 1) {
+                  // 단일 상품
+                  const [itemNum, prodId] = Array.from(productMap.entries())[0];
+                  targetProductId = prodId;
+                  itemNumberToUse = itemNum;
+                } else if (productMap.size > 1) {
+                  // 다중 상품 (1번 또는 첫번째)
+                  if (productMap.has(1)) {
+                    targetProductId = productMap.get(1);
+                    itemNumberToUse = 1;
+                  } else {
+                    const [firstItemNum, firstProductId] = Array.from(
+                      productMap.entries()
+                    )[0];
+                    targetProductId = firstProductId;
+                    itemNumberToUse = firstItemNum;
+                  }
+                }
+
+                if (targetProductId) {
+                  productInfo = productsToUpsert.find(
+                    (p) => p.product_id === targetProductId
+                  );
+                  if (productInfo) {
+                    unitPrice =
+                      typeof productInfo.base_price === "number"
+                        ? productInfo.base_price
+                        : 0;
+                  } else {
+                    logger.error(
+                      `폴백 처리 중 Product ${targetProductId} 정보 조회 실패`
+                    );
+                  }
+                } else {
+                  logger.error(`폴백 처리 중 상품 ID 결정 실패`);
+                }
+
+                const itemTotal = unitPrice * quantity;
+
+                // --- orderData 업데이트 (폴백 값으로) ---
+                orderData.product_id = targetProductId; // 할당 (null일 수도 있음)
+                orderData.quantity = quantity; // 기본값 1 할당
+                orderData.item_number = itemNumberToUse;
+                orderData.price = unitPrice;
+                orderData.total_amount = itemTotal;
+                orderData.price_option_description = productInfo
+                  ? `${itemNumberToUse}번 (${productInfo.title}) - 추정`
+                  : "상품 정보 불명 - 추정";
+                orderData.is_ambiguous = true; // 항상 모호함
+                orderData.status = "확인필요"; // 확인 필요 상태
+
+                // --- 고객/상품 요약 업데이트 (product_id가 있을 때만) ---
+                if (targetProductId) {
+                  customerData.total_orders += 1;
+                  customerData.total_spent += itemTotal;
+                  if (!customerData.first_order_at)
+                    customerData.first_order_at = commentTime.toISOString();
+                  customerData.last_order_at = commentTime.toISOString();
+
+                  if (!orderSummaryUpdates.has(targetProductId))
+                    orderSummaryUpdates.set(targetProductId, {
+                      orders: 0,
+                      quantity: 0,
+                    });
+                  const summary = orderSummaryUpdates.get(targetProductId);
+                  summary.orders += 1;
+                  summary.quantity += quantity;
+                }
+                processedAsOrder = true; // 이 댓글도 주문으로 간주
+              } // end else if (/\d/.test(commentContent))
             } // if (isProductPost && ...) 끝
 
             // --- 6. 최종 가공된 orderData 추가 전 숫자 포함 여부 확인 ---
@@ -1226,13 +1372,69 @@ class BandPosts extends BandAuth {
             const containsDigit = /\d/.test(commentContent);
 
             if (containsDigit) {
-              // 숫자가 포함된 경우에만 ordersToUpsert 배열에 추가
+              // 위에서 주문으로 처리되지 않았고 + product_id도 없다면 한번 더 폴백 시도 (매우 방어적)
+              if (
+                !processedAsOrder &&
+                !orderData.product_id &&
+                isProductPost &&
+                productMap.size > 0
+              ) {
+                logger.warn(
+                  `ID ${originalBandPostIdStr}, 댓글 ${index}: 주문 처리 안됐으나 숫자 포함 -> 최종 폴백 저장`
+                );
+                // 폴백 로직 간소화 (위 Case 2 폴백과 유사하게 처리)
+                let targetProductId = null;
+                let itemNumberToUse = 1;
+                if (productMap.size === 1) {
+                  const [itemNum, prodId] = Array.from(productMap.entries())[0];
+                  targetProductId = prodId;
+                  itemNumberToUse = itemNum;
+                } else if (productMap.has(1)) {
+                  targetProductId = productMap.get(1);
+                  itemNumberToUse = 1;
+                } else if (productMap.size > 0) {
+                  const [firstItemNum, firstProductId] = Array.from(
+                    productMap.entries()
+                  )[0];
+                  targetProductId = firstProductId;
+                  itemNumberToUse = firstItemNum;
+                }
+
+                orderData.product_id = targetProductId;
+                orderData.quantity = 1; // 기본 수량
+                orderData.item_number = itemNumberToUse;
+                // 가격/총액은 0 또는 null로 두거나 productInfo 조회 시도
+                const productInfo = targetProductId
+                  ? productsToUpsert.find(
+                      (p) => p.product_id === targetProductId
+                    )
+                  : null;
+                orderData.price = productInfo ? productInfo.base_price || 0 : 0;
+                orderData.total_amount = orderData.price;
+                orderData.price_option_description = productInfo
+                  ? `${itemNumberToUse}번 (${productInfo.title}) - 최종 추정`
+                  : "상품 정보 불명 - 최종 추정";
+                orderData.is_ambiguous = true;
+                orderData.status = "확인필요";
+              }
+
+              // quantity가 여전히 null이면 1로 설정
+              if (orderData.quantity === null) {
+                orderData.quantity = 1;
+                orderData.is_ambiguous = true; // 수량 안정했으면 모호
+                orderData.status = "확인필요";
+                // total_amount 재계산 필요 시
+                if (orderData.price !== null) {
+                  orderData.total_amount = orderData.price * orderData.quantity;
+                }
+              }
+
               ordersToUpsert.push(orderData);
               logger.debug(
-                `ID ${originalBandPostIdStr}, 댓글 ${index}: 숫자 포함, 저장 대상 추가.`
+                `ID ${originalBandPostIdStr}, 댓글 ${index}: 저장 대상 추가 (Product ID: ${orderData.product_id}, Qty: ${orderData.quantity}, Ambiguous: ${orderData.is_ambiguous})`
               );
             } else {
-              // 숫자가 없는 경우 건너뛰고 로그 남기기 (선택 사항)
+              // 숫자가 없는 댓글은 주문으로 간주하지 않고 저장 안 함
               logger.debug(
                 `ID ${originalBandPostIdStr}, 댓글 ${index}: 숫자 미포함, 저장 건너뜀. 내용: "${commentContent}"`
               );

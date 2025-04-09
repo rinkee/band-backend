@@ -475,8 +475,9 @@ function contentHasPriceIndicator(content) {
 }
 
 /**
- * 댓글 내용에서 주문 정보를 [개선된 방식]으로 추출합니다.
- * 명시적 상품 번호가 우선되며, 다양한 단위를 유연하게 처리하고 모호성을 표시합니다.
+ * 댓글 내용에서 주문 정보를 추출합니다.
+ * - "번"이라는 단어가 있으면 "1번 3개요" 같은 형식에서 앞의 숫자는 itemNumber, 뒤의 숫자는 quantity로 처리합니다.
+ * - "번"이 없으면 보이는 숫자를 모두 수량(quantity) 정보로 처리합니다.
  * @param {string} commentText - 댓글 내용
  * @param {object} logger - 로깅 객체 (console 대체 가능)
  * @returns {Array<{itemNumber: number|null, quantity: number, isAmbiguous: boolean}>} - 추출된 주문 목록
@@ -485,13 +486,11 @@ function extractEnhancedOrderFromComment(commentText, logger = console) {
   const orders = [];
   if (!commentText) return orders;
 
-  const originalText = commentText; // 로깅용 원본 저장
+  const originalText = commentText; // 로깅용 원본
 
-  // 0-1. 취소/마감 키워드 확인 (주문으로 처리 안 함)
-  // hasClosingKeywords 함수가 별도로 정의되어 있다고 가정합니다.
-  // if (hasClosingKeywords(commentText) || ...)
+  // 취소/마감 키워드 체크 (주문으로 처리하지 않음)
   if (
-    commentText.toLowerCase().includes("마감") || // 예시 키워드
+    commentText.toLowerCase().includes("마감") ||
     commentText.toLowerCase().includes("취소") ||
     commentText.toLowerCase().includes("cancel")
   ) {
@@ -499,92 +498,14 @@ function extractEnhancedOrderFromComment(commentText, logger = console) {
     return orders;
   }
 
-  // 0-2. 전처리: '한' + 단위 처리 및 공백 정규화
-  // "한 박스" -> "1 박스", "한개" -> "1개" 등 (공백 유지하며 변환 시도)
-  let processedText = commentText.replace(/한\s*([가-힣]{1,3})/g, "1 $1");
-  // 이후 여러 공백을 하나로 줄임 (정규식 처리 용이)
-  processedText = processedText.replace(/\s+/g, " ").trim();
+  // 전처리: 공백 정규화
+  let processedText = commentText.replace(/\s+/g, " ").trim();
 
-  // 정규식 패턴들 (단위 부분 유연화)
-  // 패턴 1: (상품번호)(번/./공백)? (수량) [유연한 단위]? [어미]? -> itemNumber, quantity 추출
-  // 단위: 한글 1~3자 또는 지정된 영문/단위, 전체 단위는 선택적(?)
-  const numberedOrderRegex =
-    /(\d+)\s*[번.\s]*?(\d+)\s*([가-힣]{1,3}|box|set|pack|ea|pcs|kg|g|키로|그램)?\s*(?:요|~)?/gi;
-
-  // 패턴 2: (상품번호)\s*만\s*(수량) -> itemNumber, quantity 추출 (기존과 동일)
-  const itemOnlyRegex = /(\d+)\s*만\s*(\d+)/gi;
-
-  // 패턴 3: (한글/숫자수량) [필수 단위] [어미]? (상품번호 없는 경우) -> quantity 추출, itemNumber는 null
-  // 단위: 한글 1~3자 또는 지정된 영문/단위, 최소 1개 단위 필수(+)
-  const quantityUnitRegex =
-    /(하나|한|둘|두|셋|세|넷|네|다섯|여섯|일곱|여덟|아홉|열|\d+)\s*(?:[가-힣]{1,3}|개|팩|세트|셋|봉|봉지|묶음|박스|통|box|set|pack|ea|pcs|kg|g|키로|그램)+\s*(?:요|~)?/gi;
-  // 참고: 여기서 단위를 선택적(?)으로 바꾸면 "하나"만 있는 댓글도 매칭되지만 모호성이 커짐. 필수(+) 유지 권장.
-
-  // 패턴 4: 압축된 텍스트 처리 (N번M개) (기존과 동일, 공백제거 후 실행)
-  const condensedRegex = /(\d+)[번.]*(\d+)/g;
-
-  // *** 패턴 5: 단일 숫자만 있는 경우 ***
-  //  - 다른 패턴에서 아무것도 못 찾았을 때 마지막으로 시도
-  //  - ^: 문자열 시작, \s*: 앞 공백(0개 이상), ([1-9]\d*): 1~9로 시작하는 숫자(캡처), \s*: 뒤 공백(0개 이상), $: 문자열 끝
-  const singleNumberRegex = /^\s*([1-9]\d*)\s*$/;
-
-  const koreanNumMap = {
-    하나: 1,
-    한: 1,
-    둘: 2,
-    두: 2,
-    셋: 3,
-    세: 3,
-    넷: 4,
-    네: 4,
-    다섯: 5,
-    여섯: 6,
-    일곱: 7,
-    여덟: 8,
-    아홉: 9,
-    열: 10,
-  };
-
-  let match;
-  let foundExplicitOrder = false; // 명시적 번호 주문 찾았는지 여부 플래그
-
-  // --- 1. 명시적 번호 주문 찾기 (패턴 1, 2) ---
-  while ((match = numberedOrderRegex.exec(processedText)) !== null) {
-    try {
-      const itemNumber = parseInt(match[1], 10);
-      const quantity = parseInt(match[2], 10);
-      const unit = match[3]; // 추출된 단위 (로깅/디버깅용)
-
-      if (
-        !isNaN(itemNumber) &&
-        itemNumber > 0 &&
-        !isNaN(quantity) &&
-        quantity > 0
-      ) {
-        // 명시적 주문 중복 방지 (같은 상품번호의 명시적 주문이 없는 경우 추가)
-        if (
-          !orders.some((o) => o.itemNumber === itemNumber && !o.isAmbiguous)
-        ) {
-          orders.push({ itemNumber, quantity, isAmbiguous: false });
-          logger.debug(
-            `[패턴 1] 주문: #${itemNumber} - ${quantity}${
-              unit ? ` (${unit})` : ""
-            } | 원문: ${match[0]}`
-          );
-        } else {
-          logger.debug(
-            `[패턴 1] 중복 주문 건너뜀: #${itemNumber} | 원문: ${match[0]}`
-          );
-        }
-        foundExplicitOrder = true;
-      }
-    } catch (e) {
-      logger.error(`[패턴 1] 처리 오류: ${match[0]}`, e);
-    }
-  }
-
-  while ((match = itemOnlyRegex.exec(processedText)) !== null) {
-    try {
+  // "번"이 포함된 경우: "1번 3개요" 형태에서 itemNumber와 quantity 추출
+  if (processedText.indexOf("번") !== -1) {
+    const explicitOrderRegex = /(\d+)\s*번\s*(\d+)/g;
+    let match;
+    while ((match = explicitOrderRegex.exec(processedText)) !== null) {
       const itemNumber = parseInt(match[1], 10);
       const quantity = parseInt(match[2], 10);
       if (
@@ -593,80 +514,31 @@ function extractEnhancedOrderFromComment(commentText, logger = console) {
         !isNaN(quantity) &&
         quantity > 0
       ) {
-        if (
-          !orders.some((o) => o.itemNumber === itemNumber && !o.isAmbiguous)
-        ) {
-          orders.push({ itemNumber, quantity, isAmbiguous: false });
-          logger.debug(
-            `[패턴 2] 주문 ('만'): #${itemNumber} - ${quantity} | 원문: ${match[0]}`
-          );
-        } else {
-          logger.debug(
-            `[패턴 2] 중복 주문 건너뜀: #${itemNumber} | 원문: ${match[0]}`
-          );
-        }
-        foundExplicitOrder = true;
-      }
-    } catch (e) {
-      logger.error(`[패턴 2] 처리 오류: ${match[0]}`, e);
-    }
-  }
-
-  // --- 2. 명시적 번호 주문 없으면, 번호 없는 수량/단위 주문 찾기 (패턴 3) ---
-  if (!foundExplicitOrder) {
-    while ((match = quantityUnitRegex.exec(processedText)) !== null) {
-      try {
-        let quantityStr = match[1];
-        let quantity =
-          koreanNumMap[quantityStr.toLowerCase()] || parseInt(quantityStr, 10);
-        const unit = match[2]; // 패턴3의 단위부분은 비캡처그룹이라 match[2]는 없을 것임. 디버깅용으로 남겨둠.
-
-        if (!isNaN(quantity) && quantity > 0) {
-          // isAmbiguous: true 로 표시, itemNumber는 null
-          // 번호 없는 주문은 여러 개 있을 수 있으므로, 첫 번째 매칭만 사용하지 않고 모두 추가할 수 있음 (기존 코드와 다름 - 필요시 break 유지)
-          orders.push({ itemNumber: null, quantity, isAmbiguous: true });
-          logger.debug(
-            `[패턴 3] 주문 (번호X, 모호): 수량 ${quantity} | 매칭: ${match[0]}`
-          );
-          // 만약 번호 없는 주문은 하나만 인정하려면 여기에 break; 추가
-        }
-      } catch (e) {
-        logger.error(`[패턴 3] 처리 오류: ${match[0]}`, e);
+        orders.push({
+          itemNumber: itemNumber,
+          quantity: quantity,
+          isAmbiguous: false,
+        });
+        logger.debug(
+          `[명시적 주문] itemNumber: ${itemNumber}, quantity: ${quantity} | 원문: ${match[0]}`
+        );
       }
     }
-  }
-
-  // --- 3. 압축된 텍스트 처리 ("1번2개") - 최후의 수단 (명시적 번호 주문 못 찾았을 때) ---
-  // 또는 orders.length === 0 조건 대신, !foundExplicitOrder && orders.length === 0 와 같이 명시적 주문 없을 때만 시도
-  if (!foundExplicitOrder && orders.length === 0) {
-    const condensedText = processedText.replace(/\s+/g, ""); // 공백 제거
-    while ((match = condensedRegex.exec(condensedText)) !== null) {
-      try {
-        const itemNumber = parseInt(match[1], 10);
-        const quantity = parseInt(match[2], 10);
-        if (
-          !isNaN(itemNumber) &&
-          itemNumber > 0 &&
-          !isNaN(quantity) &&
-          quantity > 0
-        ) {
-          // 여기서는 중복 체크가 덜 중요할 수 있지만, 일관성을 위해 유지
-          if (
-            !orders.some((o) => o.itemNumber === itemNumber && !o.isAmbiguous)
-          ) {
-            orders.push({ itemNumber, quantity, isAmbiguous: false }); // 압축 형태도 명시적으로 간주
-            logger.debug(
-              `[패턴 4] 주문 (압축): #${itemNumber} - ${quantity} | 원문: ${match[0]}`
-            );
-            foundExplicitOrder = true; // 압축이라도 번호 찾으면 명시적 처리
-          } else {
-            logger.debug(
-              `[패턴 4] 중복 주문 건너뜀: #${itemNumber} | 원문: ${match[0]}`
-            );
-          }
-        }
-      } catch (e) {
-        logger.error(`[패턴 4] 처리 오류: ${match[0]}`, e);
+  } else {
+    // "번"이 없는 경우: 댓글 내의 모든 숫자를 수량으로 추출
+    const numberRegex = /(\d+)/g;
+    let match;
+    while ((match = numberRegex.exec(processedText)) !== null) {
+      const quantity = parseInt(match[1], 10);
+      if (!isNaN(quantity) && quantity > 0) {
+        orders.push({
+          itemNumber: 1,
+          quantity: quantity,
+          isAmbiguous: true,
+        });
+        logger.debug(
+          `[단순 숫자 주문] quantity: ${quantity} | 원문: ${match[0]}`
+        );
       }
     }
   }
@@ -678,11 +550,7 @@ function extractEnhancedOrderFromComment(commentText, logger = console) {
         orders
       )}`
     );
-  } else if (/\d/.test(processedText)) {
-    // 숫자는 있는데 아무 패턴도 못 찾음
-    logger.info(`[주문 추출 실패] 패턴 매칭 실패 (숫자 포함): ${originalText}`);
   } else {
-    // 숫자도 없음
     logger.info(`[주문 정보 없음] 주문 패턴 미발견: ${originalText}`);
   }
 
