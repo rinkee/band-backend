@@ -47,7 +47,9 @@ const getUserData = async (req, res) => {
         created_at,
         last_login_at,
         last_crawl_at,
-        product_count
+        product_count,
+        crawl_interval,
+        naver_login_status
       `
       )
       .eq("user_id", id)

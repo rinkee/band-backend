@@ -159,10 +159,92 @@ const calculateOrderStats = (orders) => {
   };
 };
 
+async function getOrderStatsFromDB(userId, fromDate, toDate) {
+  // 👇 파라미터 값과 타입 확인용 로그 추가
+  console.log("Calling RPC get_order_stats_by_date_range with params:");
+  console.log("p_user_id:", userId, typeof userId);
+  console.log(
+    "p_start_date:",
+    fromDate.toISOString(),
+    typeof fromDate.toISOString()
+  );
+  console.log("p_end_date:", toDate.toISOString(), typeof toDate.toISOString());
+  const { data, error } = await supabase.rpc("get_order_stats_by_date_range", {
+    // 함수 이름 일치 확인
+    p_user_id: userId,
+    p_start_date: fromDate.toISOString(),
+    p_end_date: toDate.toISOString(),
+  });
+
+  if (error) {
+    console.error("DB 통계 쿼리 오류:", error);
+    throw error;
+  }
+
+  // 👇 1. RPC 호출 직후의 원본 데이터 확인
+  console.log(
+    "RPC get_order_stats_by_date_range raw result (data):",
+    JSON.stringify(data, null, 2)
+  ); // JSON.stringify 로 자세히 보기
+
+  // RPC 결과는 보통 배열 형태임. 배열이고 첫번째 요소가 있는지 확인
+  const statsData =
+    data && Array.isArray(data) && data.length > 0 ? data[0] : null;
+
+  // 👇 2. 파싱된 stats 객체 확인
+  console.log(
+    "Parsed stats object (statsData):",
+    JSON.stringify(statsData, null, 2)
+  );
+
+  // 👇 결과가 없거나 null일 경우 기본값 처리 (컬럼 이름 변경됨)
+  const finalStats = statsData || {
+    total_orders_count: 0,
+    completed_orders_count: 0,
+    total_estimated_revenue: 0,
+    total_confirmed_revenue: 0,
+  };
+
+  // 👇 3. 최종 반환될 값 확인
+  console.log(
+    "Final stats object to be returned:",
+    JSON.stringify(finalStats, null, 2)
+  );
+
+  return finalStats;
+}
+
+async function getRecentOrders(userId, limit = 10) {
+  const { data, error } = await supabase
+    .from("orders")
+    .select(
+      `
+      order_id,
+      customer_name,
+      total_amount,
+      ordered_at,
+      created_at,
+      status,
+      products ( title )
+    `
+    ) // 필요한 컬럼만 선택, JOIN 대신 관계형 데이터 활용 (Supabase 기능)
+    .eq("user_id", userId)
+    .order("ordered_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error("DB 최근 주문 조회 오류:", error);
+    throw error;
+  }
+  return data || [];
+}
+
 // 서비스 객체 내보내기
 const orderService = {
   getOrdersByDateRange,
   calculateOrderStats,
+  getOrderStatsFromDB,
+  getRecentOrders,
 };
 
 module.exports = { orderService };

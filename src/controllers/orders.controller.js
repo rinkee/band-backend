@@ -312,6 +312,9 @@ const getOrderStats = async (req, res) => {
       });
     }
 
+    console.time(`[Stats ${userId}] Total`); // 전체 시간 측정 시작
+    console.time(`[Stats ${userId}] DB Query`); // DB 쿼리 시간 측정 시작
+
     // 기간 파라미터 처리
     const dateRange = req.query.dateRange || "7days"; // 기본값: 7일
     const startDate = req.query.startDate;
@@ -379,24 +382,43 @@ const getOrderStats = async (req, res) => {
       `기간 필터링: ${fromDate.toISOString()} ~ ${toDate.toISOString()}`
     );
 
-    // 주문 데이터 조회
-    const orders = await orderService.getOrdersByDateRange(
-      userId,
-      fromDate,
-      toDate
-    );
+    const [statsResultFromDB, recentOrdersResult] = await Promise.all([
+      orderService.getOrderStatsFromDB(userId, fromDate, toDate),
+      orderService.getRecentOrders(userId, 10),
+    ]);
+    console.timeEnd(`[Stats ${userId}] DB Query`); // DB 쿼리 시간 측정 종료
 
-    // 서비스의 메소드를 사용하여 통계 계산
-    const stats = orderService.calculateOrderStats(orders);
+    console.time(`[Stats ${userId}] Data Processing`); // 데이터 가공 시간 측정 시작
+    // ... 통계 결과 처리 및 최근 활동 데이터 가공 ...
+    console.timeEnd(`[Stats ${userId}] Data Processing`); // 데이터 가공 시간 측정 종료
 
-    // 최근 활동 (최대 10개)
-    const recentActivity = orders.slice(0, 10).map((order) => ({
+    // 👇 서비스 결과(DB 함수 결과)를 최종 통계 객체로 매핑
+    const totalOrders = statsResultFromDB.total_orders_count || 0;
+    const completedOrders = statsResultFromDB.completed_orders_count || 0;
+    const pendingOrders = totalOrders - completedOrders; // 미수령 = 총 주문(취소 제외 가정 시) - 수령 완료
+    const estimatedRevenue =
+      Number(statsResultFromDB.total_estimated_revenue) || 0; // 예상 매출 (total_amount 합계)
+    const confirmedRevenue =
+      Number(statsResultFromDB.total_confirmed_revenue) || 0; // 실 매출 ('수령완료' total_amount 합계)
+
+    // 최종 stats 객체 구성
+    const stats = {
+      totalOrders, // 총 주문
+      completedOrders, // 총 수령완료
+      pendingOrders, // 총 미수령
+      estimatedRevenue, // 예상 매출
+      confirmedRevenue, // 실 매출 ('판매 수량' 대신 '확정 매출' 이름 사용)
+    };
+
+    // 최근 활동 데이터 가공
+    const recentActivity = recentOrdersResult.map((order) => ({
       type: "order",
       orderId: order.order_id,
       customerName: order.customer_name || "알 수 없음",
-      productName: order.products?.[0]?.title || "상품 정보 없음",
+      // Supabase 관계형 데이터 활용 예시 (실제 구조에 맞게 조정 필요)
+      productName: order.product_title || "상품 정보 없음",
       amount: order.total_amount || 0,
-      timestamp: order.ordered_at || order.created_at, // ordered_at이 우선, 없으면 created_at 사용
+      timestamp: order.ordered_at || order.created_at,
       status: order.status,
     }));
 
@@ -410,6 +432,8 @@ const getOrderStats = async (req, res) => {
         type: dateRange,
       },
     };
+    // ... 응답 전송 ...
+    console.timeEnd(`[Stats ${userId}] Total`); // 전체 시간 측정 종료
 
     return res.status(200).json({
       success: true,
