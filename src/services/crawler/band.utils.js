@@ -523,6 +523,11 @@ function extractEnhancedOrderFromComment(commentText, logger = console) {
   // 패턴 4: 압축된 텍스트 처리 (N번M개) (기존과 동일, 공백제거 후 실행)
   const condensedRegex = /(\d+)[번.]*(\d+)/g;
 
+  // *** 패턴 5: 단일 숫자만 있는 경우 ***
+  //  - 다른 패턴에서 아무것도 못 찾았을 때 마지막으로 시도
+  //  - ^: 문자열 시작, \s*: 앞 공백(0개 이상), ([1-9]\d*): 1~9로 시작하는 숫자(캡처), \s*: 뒤 공백(0개 이상), $: 문자열 끝
+  const singleNumberRegex = /^\s*([1-9]\d*)\s*$/;
+
   const koreanNumMap = {
     하나: 1,
     한: 1,
