@@ -298,7 +298,7 @@ const register = async (req, res) => {
 const login = async (req, res) => {
   try {
     const { loginId, loginPassword } = req.body;
-    console.log("로그인 시도:", { loginId, loginPassword });
+    console.log("로그인 시도:", { loginId });
 
     // 사용자 정보 조회
     const { data: userData, error: userError } = await supabase
@@ -307,35 +307,50 @@ const login = async (req, res) => {
       .eq("login_id", loginId)
       .single();
 
-    console.log("사용자 조회 결과:", { userData, userError });
-
     if (userError || !userData) {
+      console.warn(
+        `로그인 실패: 사용자 없음 또는 DB 오류 - loginId: ${loginId}`
+      );
       return res.status(401).json({
         success: false,
         message: "아이디 또는 비밀번호가 올바르지 않습니다.",
       });
     }
 
-    // 비밀번호 검증
-    console.log("비밀번호 비교:", {
-      inputPassword: loginPassword,
-      storedPassword: userData.login_password,
+    // --- 비밀번호 검증 (평문 비교 방식) ---
+    console.log("비밀번호 비교 (평문):", {
+      // 로그 메시지 명확화
       isMatch: userData.login_password === loginPassword,
     });
 
     if (userData.login_password !== loginPassword) {
+      // <<< 평문 비교 사용
+      console.warn(`로그인 실패: 비밀번호 불일치 - loginId: ${loginId}`);
       return res.status(401).json({
         success: false,
         message: "아이디 또는 비밀번호가 올바르지 않습니다.",
       });
     }
+    // --- 평문 비교 끝 ---
 
-    // JWT 토큰 생성
-    const token = generateToken({
-      userId: userData.userId,
+    // --- JWT 토큰 생성 (수정됨) ---
+    const tokenPayload = {
+      // userId: userData.userId, // <<< 이전 문제 코드
+      userId: userData.user_id, // <<< 수정: 실제 컬럼 이름 사용 (여기서는 'id'로 가정)
       loginId: userData.login_id,
       role: userData.role,
-    });
+    };
+
+    // <<< 로그 추가: tokenPayload 내용 확인 >>>
+    console.log("--- [Login Controller] 생성된 tokenPayload 확인 ---");
+    console.log(JSON.stringify(tokenPayload, null, 2));
+    // <<< 로그 추가 끝 >>>
+
+    const token = generateToken(tokenPayload);
+    console.log(
+      `로그인 성공 및 토큰 생성 - loginId: ${loginId}, userId: ${userData.user_id}`
+    );
+    // --- JWT 토큰 생성 끝 ---
 
     // 응답 데이터에 전체 사용자 정보 포함
     return res.json({
@@ -365,6 +380,7 @@ const login = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "로그인 처리 중 오류가 발생했습니다.",
+      // token, // 토큰은 최상위 레벨에만 포함
       error: error.message,
     });
   }
@@ -376,24 +392,42 @@ const login = async (req, res) => {
  * @param {Object} res - 응답 객체
  */
 const updateNaverCredentials = async (req, res) => {
+  console.log("\n--- [updateNaverCredentials 시작] ---");
   try {
-    const { userId } = req.params;
+    const { userId: targetUserId } = req.params; // URL 파라미터
     const { naverId, naverPassword } = req.body;
 
-    if (!userId || !naverId || !naverPassword) {
+    if (!targetUserId || !naverId || !naverPassword) {
       return res.status(400).json({
         success: false,
         message: "필수 정보가 누락되었습니다.",
       });
     }
 
-    // 현재 로그인한 사용자와 요청한 사용자가 동일한지 확인
-    if (req.session.userInfo?.userId !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: "권한이 없습니다.",
-      });
+    // --- JWT 기반 권한 확인 ---
+    if (!req.user) {
+      console.error("[updateNaverCredentials] 오류: req.user 객체가 없습니다.");
+      return res
+        .status(401)
+        .json({ success: false, message: "인증 정보가 없습니다." });
     }
+
+    const { userId: requesterUserId, role: requesterRole } = req.user; // 요청자 정보
+
+    console.log("[updateNaverCredentials] 권한 확인 중:", {
+      targetUserId,
+      requesterUserId,
+      requesterRole,
+    });
+    if (requesterUserId !== targetUserId && requesterRole !== "admin") {
+      // 본인 또는 관리자 확인
+      console.log("[updateNaverCredentials] 권한 없음 (Forbidden)");
+      return res
+        .status(403)
+        .json({ success: false, message: "권한이 없습니다." });
+    }
+    console.log("[updateNaverCredentials] 권한 확인 통과.");
+    // --- 권한 확인 끝 ---
 
     const { data: userData, error: userError } = await supabase
       .from("users")
@@ -402,7 +436,7 @@ const updateNaverCredentials = async (req, res) => {
         naver_password: naverPassword,
         updated_at: new Date().toISOString(),
       })
-      .eq("user_id", userId)
+      .eq("user_id", targetUserId)
       .select()
       .single();
 
@@ -414,6 +448,9 @@ const updateNaverCredentials = async (req, res) => {
       });
     }
 
+    console.log(
+      `[updateNaverCredentials] 사용자 ${targetUserId} 네이버 정보 업데이트 성공`
+    );
     return res.json({
       success: true,
       message: "네이버 계정 정보가 업데이트되었습니다.",
@@ -546,79 +583,141 @@ const logout = (req, res) => {
  * @param {Object} res - 응답 객체
  */
 const updateProfile = async (req, res) => {
+  console.log("\n--- [updateProfile 시작] ---"); // 함수 시작 로그
   try {
-    const { userId } = req.params;
-    const { storeName, storeAddress, ownerName, phoneNumber, bandUrl } =
-      req.body;
+    // 1. URL 파라미터에서 대상 사용자 ID 추출
+    const { userId: targetUserId } = req.params;
 
-    // 권한 확인
-    if (req.session.userInfo?.userId !== userId) {
+    // 2. JWT 미들웨어에서 설정한 요청자 정보 추출 (req.user)
+    //    authMiddleware가 이 라우트에 적용되어 req.user 객체를 생성한다고 가정합니다.
+    if (!req.user) {
+      // 혹시 모를 에러 상황 대비: authMiddleware가 적용되지 않았거나 실패한 경우
+      console.error(
+        "[updateProfile] 오류: req.user 객체가 없습니다. 인증 미들웨어를 확인하세요."
+      );
+      return res
+        .status(401)
+        .json({ success: false, message: "인증 정보가 없습니다." });
+    }
+    const { userId: requesterUserId, role: requesterRole } = req.user;
+
+    // 3. 권한 확인: 요청자가 자기 자신이거나 관리자인지 확인
+    console.log("[updateProfile] 권한 확인 중:", {
+      targetUserId,
+      requesterUserId,
+      requesterRole,
+    });
+    if (requesterUserId !== targetUserId && requesterRole !== "admin") {
+      console.log(
+        `[updateProfile] 권한 없음 (Forbidden): 요청자(${requesterUserId}/${requesterRole})가 대상(${targetUserId}) 프로필 수정 불가`
+      );
+      console.log("--- [updateProfile 종료 - Forbidden] ---");
       return res.status(403).json({
         success: false,
-        message: "권한이 없습니다.",
+        message: "요청을 수행할 권한이 없습니다.", // 좀 더 명확한 메시지
+      });
+    }
+    console.log("[updateProfile] 권한 확인 통과.");
+
+    // 4. 요청 본문(req.body)에서 업데이트할 데이터 추출
+    const { storeName, storeAddress, ownerName, phoneNumber, bandUrl } =
+      req.body;
+    console.log("[updateProfile] 업데이트 요청 데이터:", {
+      storeName,
+      storeAddress,
+      ownerName,
+      phoneNumber,
+      bandUrl,
+    });
+
+    // 5. 업데이트할 데이터 객체 생성 (존재하는 필드만 포함)
+    const updateData = {};
+    if (storeName !== undefined) updateData.store_name = storeName;
+    if (storeAddress !== undefined) updateData.store_address = storeAddress;
+    if (ownerName !== undefined) updateData.owner_name = ownerName;
+    if (phoneNumber !== undefined) updateData.phone_number = phoneNumber;
+    if (bandUrl !== undefined) updateData.band_url = bandUrl;
+
+    // 업데이트할 내용이 있는지 확인 (updated_at 제외)
+    if (Object.keys(updateData).length === 0) {
+      console.log("[updateProfile] 업데이트할 데이터 없음.");
+      console.log("--- [updateProfile 종료 - Bad Request] ---");
+      return res.status(400).json({
+        success: false,
+        message: "업데이트할 데이터가 요청 본문에 없습니다.",
       });
     }
 
-    const { data: userData, error: userError } = await supabase
-      .from("users")
-      .update({
-        store_name: storeName,
-        store_address: storeAddress,
-        owner_name: ownerName,
-        phone_number: phoneNumber,
-        band_url: bandUrl,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("user_id", userId)
-      .select()
-      .single();
+    // 항상 updated_at 타임스탬프 추가
+    updateData.updated_at = new Date().toISOString();
+    console.log("[updateProfile] Supabase 업데이트 데이터:", updateData);
 
-    if (userError) {
+    // 6. Supabase 데이터베이스 업데이트 실행
+    const { data: updatedResult, error: updateError } = await supabase
+      .from("users")
+      .update(updateData)
+      .eq("user_id", targetUserId) // 대상 사용자의 ID로 필터링
+      .select() // 업데이트된 행의 데이터를 반환하도록 요청
+      .single(); // 단일 행 업데이트 및 반환 예상
+
+    // 7. 업데이트 오류 처리
+    if (updateError) {
+      console.error(
+        `[updateProfile] Supabase 업데이트 오류 (User: ${targetUserId}):`,
+        updateError
+      );
+      // 여기에서 특정 Supabase 오류 코드(예: RLS 위반 등)에 따라 다른 응답을 줄 수도 있습니다.
+      console.log("--- [updateProfile 종료 - DB 오류] ---");
       return res.status(500).json({
         success: false,
-        message: "사용자 정보 업데이트 실패",
-        error: userError.message,
+        message: "사용자 정보 업데이트 중 데이터베이스 오류가 발생했습니다.",
+        error: updateError.message, // 개발 중에는 에러 메시지 포함
       });
     }
 
-    // 업데이트된 사용자 정보 조회
-    const { data: updatedUserData, error: updatedUserError } = await supabase
-      .from("users")
-      .select("*")
-      .eq("user_id", userId)
-      .single();
-
-    if (updatedUserError) {
-      return res.status(500).json({
+    // 8. 업데이트된 사용자를 찾지 못한 경우 (이론상 발생하기 어려움)
+    if (!updatedResult) {
+      console.error(
+        `[updateProfile] 업데이트 후 사용자를 찾을 수 없음 (User: ${targetUserId})`
+      );
+      console.log("--- [updateProfile 종료 - Not Found] ---");
+      return res.status(404).json({
         success: false,
-        message: "업데이트된 사용자 정보 조회 실패",
-        error: updatedUserError.message,
+        message: "업데이트된 사용자 정보를 찾을 수 없습니다.",
       });
     }
 
-    // 응답 데이터 구성
+    // 9. 성공 응답 데이터 구성 (민감 정보 제외)
     const responseData = {
-      userId,
-      storeName: updatedUserData.store_name,
-      storeAddress: updatedUserData.store_address,
-      ownerName: updatedUserData.owner_name,
-      phoneNumber: updatedUserData.phone_number,
-      bandUrl: updatedUserData.band_url,
-      bandNumber: updatedUserData.band_number,
-      updatedAt: updatedUserData.updated_at.toDate(),
+      userId: updatedResult.user_id, // DB에서 반환된 ID 사용
+      storeName: updatedResult.store_name,
+      storeAddress: updatedResult.store_address,
+      ownerName: updatedResult.owner_name,
+      phoneNumber: updatedResult.phone_number,
+      bandUrl: updatedResult.band_url,
+      bandNumber: updatedResult.band_number, // bandNumber는 업데이트되지 않았으므로 기존 값 유지됨
+      updatedAt: updatedResult.updated_at, // DB에서 반환된 시간 사용
     };
+    console.log("[updateProfile] 프로필 업데이트 성공:", responseData);
+    console.log("--- [updateProfile 종료 - 성공] ---");
 
+    // 10. 성공 응답 반환
     return res.json({
       success: true,
-      message: "프로필이 업데이트되었습니다.",
+      message: "프로필이 성공적으로 업데이트되었습니다.",
       data: responseData,
     });
   } catch (error) {
-    console.error("프로필 업데이트 오류:", error);
+    // 11. 예상치 못한 전체 오류 처리
+    console.error(
+      `[updateProfile] 처리 중 예외 발생 (Target User: ${req.params?.userId}):`,
+      error
+    );
+    console.log("--- [updateProfile 종료 - 예외] ---");
     return res.status(500).json({
       success: false,
-      message: "프로필 업데이트 중 오류가 발생했습니다.",
-      error: error.message,
+      message: "프로필 업데이트 처리 중 서버 내부 오류가 발생했습니다.",
+      error: error.message, // 개발 중에는 에러 메시지 포함
     });
   }
 };
@@ -640,13 +739,30 @@ const updateLoginPassword = async (req, res) => {
       });
     }
 
-    // 현재 로그인한 사용자와 요청한 사용자가 동일한지 확인
-    if (req.session.userInfo?.userId !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: "권한이 없습니다.",
-      });
+    // --- JWT 기반 권한 확인 ---
+    if (!req.user) {
+      // authMiddleware가 req.user를 설정했는지 확인
+      console.error("[updateLoginPassword] 오류: req.user 객체가 없습니다.");
+      return res
+        .status(401)
+        .json({ success: false, message: "인증 정보가 없습니다." });
     }
+    const { userId: requesterUserId, role: requesterRole } = req.user; // 요청자 정보
+
+    console.log("[updateLoginPassword] 권한 확인 중:", {
+      targetUserId,
+      requesterUserId,
+      requesterRole,
+    });
+    if (requesterUserId !== targetUserId && requesterRole !== "admin") {
+      // 본인 또는 관리자 확인
+      console.log("[updateLoginPassword] 권한 없음 (Forbidden)");
+      return res
+        .status(403)
+        .json({ success: false, message: "권한이 없습니다." });
+    }
+    console.log("[updateLoginPassword] 권한 확인 통과.");
+    // --- 권한 확인 끝 ---
 
     const { data: userData, error: userError } = await supabase
       .from("users")
@@ -661,13 +777,16 @@ const updateLoginPassword = async (req, res) => {
       });
     }
 
-    // 현재 비밀번호 확인
+    // --- 현재 비밀번호 확인 (평문 비교) ---
     if (userData.login_password !== currentPassword) {
+      // <<< 평문 비교
+      console.log("[updateLoginPassword] 현재 비밀번호 불일치");
       return res.status(401).json({
         success: false,
         message: "현재 비밀번호가 일치하지 않습니다.",
       });
     }
+    // --- 평문 비교 끝 ---
 
     // 비밀번호 변경
     const { data: updatedUserData, error: updateError } = await supabase

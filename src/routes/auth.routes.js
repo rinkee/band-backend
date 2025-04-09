@@ -2,9 +2,10 @@
 const express = require("express");
 const authController = require("../controllers/auth.controller");
 const {
-  requireAuth,
-  requireSelfOrAdmin,
-  requireActiveUser,
+  authMiddleware, // <<< 추가
+  requireAuth, // <<< 수정된 버전 사용
+  requireSelfOrAdmin, // <<< 수정된 버전 사용
+  requireActiveUser, // <<< 수정된 버전 사용
 } = require("../middlewares/auth.middleware");
 
 const router = express.Router();
@@ -48,16 +49,17 @@ router.put(
 // 사용자 프로필 업데이트 라우트
 router.put(
   "/users/:userId/profile",
-  requireAuth,
-  requireSelfOrAdmin,
-  requireActiveUser,
+  authMiddleware,
+  requireSelfOrAdmin, // req.user 사용하도록 수정됨
+  requireActiveUser, // req.user 사용하도록 수정됨
   authController.updateProfile
 );
 
 // 로그인 비밀번호 변경 라우트
 router.put(
   "/users/:userId/password",
-  requireAuth,
+  authMiddleware, // <<< JWT 검증 미들웨어 먼저 적용!
+  // requireAuth,
   requireSelfOrAdmin,
   requireActiveUser,
   authController.updateLoginPassword
