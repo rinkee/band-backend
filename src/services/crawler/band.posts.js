@@ -237,11 +237,11 @@ class BandPosts extends BandAuth {
         $(".postWriterInfoWrap .text, .userName").first().text().trim() ||
         "작성자 불명";
       let postTitle = $(".postSubject").first().text().trim() || authorName;
-      const postContent =
-        $(".postText .txtBody, .postContent ._postContent")
-          .first()
-          .text()
-          .trim() || "";
+      // 수정 예시 (방법 3 사용)
+      const postContent = $(".postBody .dPostTextView .txtBody")
+        .map((index, element) => $(element).text().trim())
+        .get()
+        .join("\n");
       if (!postTitle && postContent)
         postTitle = postContent.split("\n")[0].substring(0, 50);
       if (!postTitle) postTitle = "제목 없음";
@@ -964,6 +964,7 @@ class BandPosts extends BandAuth {
               title: item.title || "제목 없음",
               content: postContent || "",
               base_price: determinedSalePrice, // 결정된 판매 가격
+              band_post_url: postUrl,
               original_price:
                 item.originalPrice !== null &&
                 item.originalPrice !== determinedSalePrice
@@ -1557,6 +1558,140 @@ class BandPosts extends BandAuth {
       throw error;
     }
   } // --- saveDetailPostsToSupabase 종료 ---
+
+  /**
+   * 특정 게시물 ID 하나만 크롤링하는 메서드
+   * @param {string} userId - 사용자 ID
+   * @param {string} naverId - 네이버 ID
+   * @param {string} naverPassword - 네이버 비밀번호
+   * @param {string} postId - 크롤링할 특정 게시물의 ID
+   * @returns {Promise<Object|null>} - 추출된 게시물 상세 정보 객체 또는 실패 시 null
+   */
+  async crawlSinglePostDetail(userId, naverId, naverPassword, postId) {
+    // --- 입력값 검증 ---
+    if (!postId) {
+      const msg = "crawlSinglePostDetail: postId는 필수입니다.";
+      logger.error(msg);
+      // 상태 업데이트가 설정되어 있다면 호출
+      if (this._updateStatus) this._updateStatus("failed", msg, 0);
+      return null;
+    }
+    const numericPostId = parseInt(postId, 10); // 숫자 ID 확인
+    if (isNaN(numericPostId)) {
+      const msg = `crawlSinglePostDetail: 유효하지 않은 postId: ${postId}`;
+      logger.error(msg);
+      if (this._updateStatus) this._updateStatus("failed", msg, 0);
+      return null;
+    }
+
+    logger.info(`단일 게시물 크롤링 시작: ID ${postId}`);
+    if (this._updateStatus)
+      this._updateStatus("processing", `게시물 ${postId} 크롤링 시작...`, 0);
+
+    try {
+      // 1. 인증 및 페이지 접근 (기존 로직 재사용)
+      await this.accessBandPage(userId, naverId, naverPassword);
+      if (this._updateStatus)
+        this._updateStatus(
+          "processing",
+          `게시물 ${postId} 페이지 접근 시도...`,
+          10
+        );
+
+      // 2. 특정 게시물 URL 생성
+      const postUrl = `https://band.us/band/${this.bandNumber}/post/${numericPostId}`; // 숫자 ID 사용
+
+      // 3. 페이지 이동 및 검증
+      logger.info(`URL 이동 시도: ${postUrl}`);
+      try {
+        await this.page.goto(postUrl, {
+          waitUntil: "domcontentloaded", // domcontentloaded가 더 빠름
+          timeout: 30000, // 30초 타임아웃
+        });
+        // 페이지 로드 후 짧은 대기 (렌더링 시간 확보)
+        await new Promise((r) => setTimeout(r, 500));
+      } catch (navError) {
+        const msg = `게시물 ${postId} 페이지 이동 실패: ${navError.message}`;
+        logger.error(msg, navError);
+        if (this._updateStatus) this._updateStatus("failed", msg, 100);
+        return null; // 페이지 이동 실패 시 null 반환
+      }
+
+      // URL 검증 (리다이렉션 등 확인)
+      const currentUrl = this.page.url();
+      if (!currentUrl.includes(`/post/${numericPostId}`)) {
+        const msg = `게시물 ${postId} 접근 실패: 잘못된 URL(${currentUrl})로 이동됨.`;
+        logger.warn(msg);
+        if (this._updateStatus) this._updateStatus("failed", msg, 100);
+        return null;
+      }
+
+      // 삭제/비공개 등 접근 불가 페이지 확인 (extractPostDetailFromPage 내부 로직 참고)
+      const isBlockedOrNotFound = await this.page.evaluate(() => {
+        const blockKeywords = [
+          "삭제되었거나",
+          "찾을 수 없습니다",
+          "삭제된 게시글",
+          "존재하지 않는 게시글",
+          "권한이 없습니다",
+          "접근할 수 없습니다",
+          "찾을 수 없는 페이지",
+          "비공개 설정된 글",
+        ];
+        const bodyText = document.body.innerText || "";
+        const errorContainer =
+          document.querySelector(".errorContainer") ||
+          document.querySelector(".bandDeletedPost");
+        const errorText = errorContainer ? errorContainer.innerText : "";
+        return blockKeywords.some(
+          (keyword) => bodyText.includes(keyword) || errorText.includes(keyword)
+        );
+      });
+
+      if (isBlockedOrNotFound) {
+        const msg = `게시물 ${postId} 접근 불가 (삭제/비공개 등).`;
+        logger.warn(msg);
+        if (this._updateStatus) this._updateStatus("failed", msg, 100);
+        return null; // 접근 불가 시 null 반환
+      }
+
+      // 4. 데이터 추출 (기존 메서드 재사용)
+      if (this._updateStatus)
+        this._updateStatus(
+          "processing",
+          `게시물 ${postId} 데이터 추출 중...`,
+          50
+        );
+      const postDetail = await this.extractPostDetailFromPage(); // 기존 추출 함수 호출
+
+      // 5. 결과 반환
+      if (postDetail) {
+        logger.info(`단일 게시물 데이터 추출 성공: ID ${postId}`);
+        // postDetail 객체에 bandNumber와 userId 추가 (일관성 유지)
+        postDetail.bandNumber = this.bandNumber;
+        postDetail.userId = userId; // 호출 시 받은 userId 추가
+        if (this._updateStatus)
+          this._updateStatus("completed", `게시물 ${postId} 크롤링 완료`, 100);
+        return postDetail; // 성공 시 추출된 데이터 반환
+      } else {
+        // extractPostDetailFromPage 자체가 null을 반환하는 경우 (내부 로직 실패)
+        const msg = `게시물 ${postId} 데이터 추출 실패 (extractPostDetailFromPage 반환 값 없음).`;
+        logger.warn(msg);
+        if (this._updateStatus) this._updateStatus("failed", msg, 100);
+        return null; // 추출 실패 시 null 반환
+      }
+    } catch (error) {
+      const msg = `단일 게시물 크롤링 중 오류 (ID: ${postId}): ${error.message}`;
+      logger.error(msg, error.stack);
+      if (this._updateStatus) this._updateStatus("failed", msg, 100);
+      return null; // 오류 발생 시 null 반환
+    } finally {
+      // 단일 게시물 크롤링 후 브라우저 종료 여부는 호출하는 쪽에서 결정하도록 남겨둠
+      // 또는 여기서 필요하다면 this.closeBrowser() 호출
+      // logger.info(`단일 게시물 크롤링 완료 후 브라우저 닫기 시도 (ID: ${postId})`);
+      // await this.closeBrowser();
+    }
+  } // --- crawlSinglePostDetail 종료 ---
 }
 
 module.exports = BandPosts;

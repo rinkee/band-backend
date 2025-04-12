@@ -469,15 +469,23 @@ function generateOrderUniqueId(bandNumber, postId, index) {
  */
 function contentHasPriceIndicator(content) {
   if (!content) return false;
-  // 숫자 + 원/만원/천원 또는 통화 기호 또는 '가격' 단어 확인 (더 많은 키워드 추가 가능)
-  const priceRegex = /[0-9]+(?:[,0-9])*\s*(?:원|만원|천원)|[\$€¥₩]|price|가격/i;
-  return priceRegex.test(content);
+
+  // 1. 키워드 확인: '수령', '픽업', '도착' 중 하나라도 포함하는지 검사
+  const keywordRegex = /수령|픽업|도착|예약|주문|특가|정상가|할인가|상품|댓글/;
+  const hasKeyword = keywordRegex.test(content);
+
+  // 2. 숫자 확인: 문자열 내에 숫자(0-9)가 하나라도 포함하는지 검사
+  const numberRegex = /\d/; // \d는 숫자를 의미
+  const hasNumber = numberRegex.test(content);
+
+  // 3. 두 조건 모두 만족하면 true 반환
+  return hasKeyword && hasNumber;
 }
 
 /**
  * 댓글 내용에서 주문 정보를 추출합니다.
- * - "번"이라는 단어가 있으면 "1번 3개요" 같은 형식에서 앞의 숫자는 itemNumber, 뒤의 숫자는 quantity로 처리합니다.
- * - "번"이 없으면 보이는 숫자를 모두 수량(quantity) 정보로 처리합니다.
+ * - "번"이라는 단어가 있으면 "1번 3개요", "1번 상품 3개요" 같은 형식에서 앞의 숫자는 itemNumber, 뒤의 숫자는 quantity로 처리합니다.
+ * - "번"이 없으면 보이는 숫자를 모두 수량(quantity) 정보로 처리합니다. (기본 itemNumber는 1)
  * @param {string} commentText - 댓글 내용
  * @param {object} logger - 로깅 객체 (console 대체 가능)
  * @returns {Array<{itemNumber: number|null, quantity: number, isAmbiguous: boolean}>} - 추출된 주문 목록
@@ -501,44 +509,59 @@ function extractEnhancedOrderFromComment(commentText, logger = console) {
   // 전처리: 공백 정규화
   let processedText = commentText.replace(/\s+/g, " ").trim();
 
-  // "번"이 포함된 경우: "1번 3개요" 형태에서 itemNumber와 quantity 추출
-  if (processedText.indexOf("번") !== -1) {
-    const explicitOrderRegex = /(\d+)\s*번\s*(\d+)/g;
-    let match;
-    while ((match = explicitOrderRegex.exec(processedText)) !== null) {
-      const itemNumber = parseInt(match[1], 10);
-      const quantity = parseInt(match[2], 10);
-      if (
-        !isNaN(itemNumber) &&
-        itemNumber > 0 &&
-        !isNaN(quantity) &&
-        quantity > 0
-      ) {
-        orders.push({
-          itemNumber: itemNumber,
-          quantity: quantity,
-          isAmbiguous: false,
-        });
-        logger.debug(
-          `[명시적 주문] itemNumber: ${itemNumber}, quantity: ${quantity} | 원문: ${match[0]}`
-        );
-      }
+  // --- VVV 정규식 수정 VVV ---
+  // "번"이 포함된 경우: "1번 3개요", "1번 샴푸 3개" 형태에서 itemNumber와 quantity 추출
+  // (\d+) : 상품 번호 (숫자 1개 이상)
+  // \s*번 : 공백(0개 이상) + "번"
+  // (?:[^\d\n]*?) : 숫자나 줄바꿈 문자가 아닌 문자(설명 등) 0개 이상, 가장 짧게 매칭 (non-capturing group)
+  // (\d+) : 수량 (숫자 1개 이상)
+  const explicitOrderRegex = /(\d+)\s*번(?:[^\d\n]*?)(\d+)/g;
+  let hasExplicitOrderMatch = false; // 명시적 주문 매칭 여부 플래그
+
+  let match;
+  while ((match = explicitOrderRegex.exec(processedText)) !== null) {
+    const itemNumber = parseInt(match[1], 10);
+    const quantity = parseInt(match[2], 10); // 그룹 2가 수량
+    if (
+      !isNaN(itemNumber) &&
+      itemNumber > 0 &&
+      !isNaN(quantity) &&
+      quantity > 0
+    ) {
+      orders.push({
+        itemNumber: itemNumber,
+        quantity: quantity,
+        isAmbiguous: false,
+      });
+      logger.debug(
+        `[명시적 주문] itemNumber: ${itemNumber}, quantity: ${quantity} | 원문 부분: ${match[0]}`
+      );
+      hasExplicitOrderMatch = true; // 매칭 성공 플래그 설정
     }
-  } else {
-    // "번"이 없는 경우: 댓글 내의 모든 숫자를 수량으로 추출
+  }
+  // --- ^^^ 정규식 수정 완료 ^^^ ---
+
+  // "번"이 포함되지 않았거나, "번"은 있었지만 위 정규식에 매칭되지 않은 경우
+  // 그리고 아직 추출된 주문이 없는 경우에만 단순 숫자 추출 시도
+  if (!processedText.includes("번") || !hasExplicitOrderMatch) {
+    // "번"이 없는 경우 또는 "번"은 있었지만 매칭 실패 시: 댓글 내의 숫자를 수량으로 추출 (isAmbiguous: true)
     const numberRegex = /(\d+)/g;
-    let match;
-    while ((match = numberRegex.exec(processedText)) !== null) {
-      const quantity = parseInt(match[1], 10);
+    let numberMatch;
+    while ((numberMatch = numberRegex.exec(processedText)) !== null) {
+      // 이미 명시적 주문에서 처리된 숫자인지 확인 (간단하게는 어려움, 일단 모든 숫자 추출)
+      const quantity = parseInt(numberMatch[1], 10);
       if (!isNaN(quantity) && quantity > 0) {
-        orders.push({
-          itemNumber: 1,
-          quantity: quantity,
-          isAmbiguous: true,
-        });
-        logger.debug(
-          `[단순 숫자 주문] quantity: ${quantity} | 원문: ${match[0]}`
-        );
+        // 이미 추출된 명시적 주문이 있다면 이 단순 숫자 주문은 추가하지 않음
+        if (!hasExplicitOrderMatch) {
+          orders.push({
+            itemNumber: 1, // 기본 상품 번호 1
+            quantity: quantity,
+            isAmbiguous: true, // 상품 번호가 없으므로 모호함
+          });
+          logger.debug(
+            `[단순 숫자 주문] quantity: ${quantity} | 원문: ${numberMatch[0]}`
+          );
+        }
       }
     }
   }
@@ -557,39 +580,43 @@ function extractEnhancedOrderFromComment(commentText, logger = console) {
   return orders;
 }
 
-// --- 테스트 케이스 ---
-// const testComments = [
-//   "1번 2개요",
-//   "2번 1모 주세요", // 새로운 단위
-//   "3번 5봉지요", // 새로운 단위 + 요
-//   "1번 10 상자", // 새로운 단위 + 공백
-//   "2번 1세트, 1번 3개", // 다중 주문
-//   "1개요", // 번호 없는 주문 (isAmbiguous: true)
-//   "2봉지", // 번호 없는 주문
-//   "셋 박스요", // 한글 수량 + 새로운 단위
-//   "1", // 숫자만 (패턴 3에서 단위가 필수라 매칭 안됨 - 의도대로)
-//   "2요", // 숫자+요 (패턴 3에서 단위가 필수라 매칭 안됨 - 의도대로)
-//   "1번 2", // 명시적 번호 + 수량만 (단위 없음 - 패턴 1 매칭)
-//   "1번 2, 5모, 2번 1세트, 4상자, 10개", // 복합 + 번호없는 주문 포함
-//   "이건 그냥 댓글입니다",
-//   "5번만 주세요", // 실패 예상 (수량 없음)
-//   "5번만 2개", // 패턴 2 매칭
-//   "10번 한세트요", // 전처리 '한' -> '1' 테스트
-//   "2번 한봉지 요", // 전처리 '한' + 공백 테스트
-//   "3번 두개", // 한글 수량 (패턴 3 매칭 - 번호 없어야 함) -> 현재 로직 상 3번이 있어서 패턴 1,2 우선 매칭 실패 후 패턴 3 실행 안됨.
-//   "두개만 주세요", // 패턴 3 매칭
-//   "1번 100개!", // 특수문자 -> 패턴 1에서 뒤 '!' 무시하고 매칭 시도
-//   "10 모", // 패턴 3 매칭 (번호 없음)
-//   "취소할게요", // 취소 키워드
-//   "마감입니다", // 마감 키워드
-//   "1번1개 2번2개", // 압축 텍스트 처리 (패턴 4)
-//   "1번 두개, 2번 3개요", // '두개'가 패턴 1,2에 안 맞고, 1번이 있어서 패턴 3 실행 안 됨. (한계점)
-// ];
+// --- 테스트 케이스 추가 ---
+const testComments = [
+  "1번 2개요",
+  "2번 1모 주세요",
+  "3번 5봉지요",
+  "1번 10 상자",
+  "2번 1세트, 1번 3개", // 다중 주문 (기존 로직으로도 처리 가능해야 함)
+  "1개요",
+  "2봉지",
+  "셋 박스요",
+  "1",
+  "2요",
+  "1번 2",
+  "1번 2, 5모, 2번 1세트, 4상자, 10개", // 수정된 로직으로 "1번 2", "2번 1" 매칭 기대
+  "이건 그냥 댓글입니다",
+  "5번만 주세요",
+  "5번만 2개", // 수정된 로직으로 "5번", "2" 매칭 기대
+  "10번 한세트요", // 수정된 로직으로 "10번", "1" (한->1 전처리 가정 시) 또는 그냥 "10번"만 인식하고 수량 매칭 실패할 수 있음 -> "한" 처리 로직 필요 시 별도 구현
+  "2번 한봉지 요",
+  "3번 두개", // "두"는 숫자가 아니므로 현재 로직으로는 여전히 실패
+  "두개만 주세요", // 숫자 없으므로 실패
+  "1번 100개!",
+  "10 모",
+  "취소할게요",
+  "마감입니다",
+  "1번1개 2번2개", // 수정된 로직으로 "1번", "1", "2번", "2" 매칭 기대
+  "1번 두개, 2번 3개요", // "두개"는 여전히 문제, "2번 3개요"는 매칭 기대
+  "2번 3개요",
+  "3번 샴푸 2개요", // <<<--- 이 케이스가 이제 처리되어야 함
+  "4번 상품은 10개 부탁드립니다", // <<<--- 처리 기대
+  "1번 200ml짜리 3개", // <<<--- 처리 기대
+];
 
-// testComments.forEach((comment) => {
-//   console.log(`\n--- 테스트 댓글: "${comment}" ---`);
-//   extractEnhancedOrderFromComment(comment, console); // console 객체를 logger로 사용
-// });
+testComments.forEach((comment) => {
+  console.log(`\n--- 테스트 댓글: "${comment}" ---`);
+  extractEnhancedOrderFromComment(comment, console); // console 객체를 logger로 사용
+});
 
 module.exports = {
   parseKoreanDate,

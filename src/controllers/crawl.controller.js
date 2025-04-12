@@ -897,6 +897,196 @@ class CrawlController {
       });
     }
   }
+
+  /**
+   * 특정 게시물 ID를 받아 해당 게시물만 크롤링하고 상품 정보 추출/저장
+   */
+  async crawlSinglePostDetail(req, res, next) {
+    const taskId = `task_single_${Date.now()}`;
+    let bandNumber, postId, userId;
+
+    try {
+      // 1. 요청 파라미터 추출 및 검증
+      bandNumber = req.params?.bandNumber;
+      postId = req.params?.postId;
+      userId = req.body?.userId || req.user?.userId;
+
+      if (!bandNumber || !postId || !userId) {
+        logger.warn(
+          `잘못된 단일 게시물 크롤링 요청: bandNumber=${bandNumber}, postId=${postId}, userId=${userId}`
+        );
+        return res.status(400).json({
+          success: false,
+          message: "밴드 ID, 게시물 ID, 사용자 ID는 필수입니다.",
+        });
+      }
+
+      // 2. Task 초기 상태 설정
+      const initialParams = { userId, bandNumber, postId };
+      this.taskStatusMap.set(taskId, {
+        status: "pending",
+        message: "단일 게시물 크롤링 작업 요청 접수됨",
+        progress: 0,
+        startTime: new Date(),
+        params: initialParams,
+      });
+
+      // 3. 클라이언트에게 즉시 응답
+      res.status(200).json({
+        success: true,
+        message:
+          "단일 게시물 크롤링 및 처리 작업이 시작되었습니다. 백그라운드에서 실행됩니다.",
+        taskId,
+        data: { taskId, ...initialParams },
+      });
+
+      // 4. 백그라운드에서 실제 작업 실행
+      setImmediate(async () => {
+        let crawler = null;
+        try {
+          // 4-1. 사용자 계정 정보 조회
+          const userAccount = await getUserNaverAccount(userId);
+          if (!userAccount) {
+            throw new Error(`네이버 계정 정보를 가져올 수 없습니다.`);
+          }
+
+          // 4-2. 작업 상태 업데이트 (시작)
+          this.taskStatusMap.set(taskId, {
+            status: "processing",
+            message: "크롤링 엔진 초기화 및 로그인 시도...",
+            progress: 5,
+            updatedAt: new Date().toISOString(),
+            params: initialParams,
+          });
+
+          // 4-3. 크롤러 인스턴스 생성
+          crawler = new BandPosts(bandNumber); // 단일 게시물이므로 maxPosts 옵션 불필요
+
+          // 4-4. 상태 업데이트 콜백 설정
+          crawler.onStatusUpdate = (status, message, progress) => {
+            // progress를 5% ~ 70% 사이로 조정 (크롤링 단계)
+            const adjustedProgress = 5 + Math.floor(progress * 0.65);
+            this.taskStatusMap.set(taskId, {
+              status, // 크롤러 상태 반영
+              message,
+              progress: adjustedProgress,
+              updatedAt: new Date().toISOString(),
+              params: initialParams,
+            });
+          };
+
+          // 4-5. 특정 게시물 크롤링 실행
+          // !!! 중요: BandPosts 클래스에 crawlSinglePost 메서드가 구현되어 있어야 함 !!!
+          // crawlSinglePost는 postId를 인자로 받아 해당 게시물 데이터만 반환해야 함
+          // 반환 형식은 { success: boolean, data: postData | null, error: string | null } 형태를 가정
+          const crawlResult = await crawler.crawlSinglePostDetail(
+            userId, // 필요하다면 userId 전달
+            userAccount.naverId,
+            userAccount.naverPassword,
+            postId
+          );
+
+          if (!crawlResult || !crawlResult.success || !crawlResult.data) {
+            throw new Error(
+              crawlResult?.error || "게시물 크롤링에 실패했습니다."
+            );
+          }
+
+          // 4-6. 상품 정보 처리 및 저장
+          this.taskStatusMap.set(taskId, {
+            status: "processing",
+            message: "게시물에서 상품 정보 추출 및 저장 중...",
+            progress: 70,
+            updatedAt: new Date().toISOString(),
+            params: initialParams,
+          });
+
+          // processAndSaveProduct가 크롤링된 단일 게시물 데이터를 처리할 수 있어야 함
+          // crawlSinglePost 결과의 data 형식이 processAndSaveProduct 입력과 맞는지 확인 필요
+          // 예를 들어, processAndSaveProduct가 { bandNumber, postId, title, content, url, ... } 형태를 받는다고 가정
+          const postDataForProcessing = {
+            bandNumber: bandNumber,
+            postId: postId, // crawlResult.data에 postId가 없다면 직접 넣어줌
+            ...crawlResult.data, // 크롤링된 나머지 데이터 (title, content, url 등)
+          };
+          const productResult = await processAndSaveProduct(
+            postDataForProcessing,
+            userId
+          );
+
+          // 4-7. 최종 상태 업데이트 (완료)
+          this.taskStatusMap.set(taskId, {
+            status: "completed",
+            message: `단일 게시물 처리 완료 (Post ID: ${postId})`,
+            progress: 100,
+            completedAt: new Date().toISOString(),
+            params: initialParams,
+            result: productResult, // 처리 결과 저장 (선택 사항)
+          });
+          logger.info(
+            `단일 게시물 처리 완료 (Task ID: ${taskId}, Post ID: ${postId})`
+          );
+        } catch (error) {
+          // 4-8. 오류 처리
+          logger.error(
+            `백그라운드 단일 게시물 처리 오류 (Task ID: ${taskId}): ${error.message}`,
+            error.stack
+          );
+          this.taskStatusMap.set(taskId, {
+            status: "failed",
+            message: `처리 실패: ${error.message}`,
+            progress: this.taskStatusMap.get(taskId)?.progress || 0, // 실패 시점의 progress 유지
+            error: error.message,
+            stack: error.stack,
+            endTime: new Date(),
+            params: initialParams,
+          });
+        } finally {
+          // 4-9. 리소스 정리
+          if (crawler && crawler.close) {
+            try {
+              logger.info(`리소스 정리 시작 (Task ID: ${taskId})`);
+              await crawler.close();
+              logger.info(`리소스 정리 완료 (Task ID: ${taskId})`);
+              const currentStatus = this.taskStatusMap.get(taskId);
+              if (currentStatus && currentStatus.status !== "failed") {
+                this.taskStatusMap.set(taskId, {
+                  ...currentStatus,
+                  message: currentStatus.message + " (리소스 정리됨)",
+                });
+              }
+            } catch (closeError) {
+              logger.error(
+                `리소스 정리 오류 (Task ID: ${taskId}): ${closeError.message}`
+              );
+            }
+          }
+        }
+      }); // setImmediate 끝
+    } catch (error) {
+      // 동기적 요청 처리 중 오류
+      logger.error(
+        `단일 게시물 크롤링 HTTP 요청 처리 중 심각한 오류 (Task ID: ${taskId}): ${error.message}`,
+        error.stack
+      );
+      if (!res.headersSent) {
+        // taskId가 할당되기 전일 수 있으므로 방어 코드 추가
+        const errorTaskId = taskId || `error_task_${Date.now()}`;
+        this.taskStatusMap.set(errorTaskId, {
+          status: "failed",
+          message: `요청 처리 중 심각한 오류: ${error.message}`,
+          error: error.message,
+          endTime: new Date(),
+        });
+        return res.status(500).json({
+          success: false,
+          message: "단일 게시물 크롤링 요청 처리 중 서버 오류 발생",
+          error: error.message,
+          taskId: errorTaskId,
+        });
+      }
+    }
+  }
 }
 
 module.exports = {

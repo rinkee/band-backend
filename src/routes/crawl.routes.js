@@ -13,6 +13,9 @@ const crawlController = new CrawlController();
 const boundStartPostDetailCrawling =
   crawlController.startPostDetailCrawling.bind(crawlController);
 
+const boundStartSinglePostDetailCrawling =
+  crawlController.crawlSinglePostDetail.bind(crawlController);
+
 // 태스크 상태 확인은 모듈에서 가져온 함수 사용
 // const boundGetTaskStatus = crawlController.getTaskStatus.bind(crawlController);
 
@@ -48,5 +51,12 @@ router.post("/:bandNumber/extract-products", boundExtractProductInfo);
 
 // 테스트용 상품 정보 추출 (직접 콘텐츠 입력)
 router.post("/test-extract", boundTestProductExtraction);
+
+// 단일 게시물 크롤링 라우트 추가 (예시)
+// POST /api/crawl/bands/:bandNumber/posts/:postId
+router.post(
+  "/bands/:bandNumber/posts/:postId",
+  boundStartSinglePostDetailCrawling
+);
 
 module.exports = router;
