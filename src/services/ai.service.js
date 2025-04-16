@@ -38,14 +38,6 @@ async function extractProductInfo(
       return getDefaultProduct("내용 없음");
     }
 
-    const hasPrice = /[0-9]+[,0-9]*\s*(원|만원|천원|\$|€|¥|￦|달러)/.test(
-      content
-    );
-    if (!hasPrice) {
-      logger.info("가격 정보가 없어 상품이 아닌 것으로 판단됩니다.");
-      return getDefaultProduct("상품 정보 없음");
-    }
-
     logger.info("Gemini API 호출 시작");
 
     // --- Combine System and User instructions into a single prompt for Gemini ---

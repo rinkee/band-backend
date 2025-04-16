@@ -148,17 +148,17 @@ serve(async (req: Request) => {
                 product_id, user_id, post_id, item_number, title, content, base_price, 
                 price_options, quantity, quantity_text, category, tags, features, status,
                 pickup_info, pickup_date, pickup_type, order_summary, created_at, updated_at,
-                stock_quantity,band_post_url
+                stock_quantity,band_post_url ,band_number, post_number
              )
              -- 플레이스홀더도 21개로 증가
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18::jsonb, $19, $20, $21 ,$22)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18::jsonb, $19, $20, $21 ,$22, $23, $24)
              ON CONFLICT (product_id) DO UPDATE SET
                post_id = EXCLUDED.post_id, item_number = EXCLUDED.item_number, title = EXCLUDED.title,
                content = EXCLUDED.content, base_price = EXCLUDED.base_price, price_options = EXCLUDED.price_options,
                quantity = EXCLUDED.quantity, quantity_text = EXCLUDED.quantity_text, category = EXCLUDED.category, tags = EXCLUDED.tags,
                features = EXCLUDED.features, status = EXCLUDED.status, pickup_info = EXCLUDED.pickup_info, pickup_date = EXCLUDED.pickup_date,
                pickup_type = EXCLUDED.pickup_type, order_summary = EXCLUDED.order_summary, updated_at = EXCLUDED.updated_at,
-               stock_quantity = EXCLUDED.stock_quantity, band_post_url = EXCLUDED.band_post_url
+               stock_quantity = EXCLUDED.stock_quantity, band_post_url = EXCLUDED.band_post_url, band_number = EXCLUDED.band_number, post_number = EXCLUDED.post_number
             `,
             [
               // 값 배열도 21개로 증가 (마지막에 stock_quantity 추가)
@@ -184,6 +184,8 @@ serve(async (req: Request) => {
               product.updated_at, // $20
               product.stock_quantity, // $21 <<< stock_quantity 값 추가 (null일 수도 있음)
               product.band_post_url,
+              product.band_number,
+              product.post_number,
             ]
           );
         }

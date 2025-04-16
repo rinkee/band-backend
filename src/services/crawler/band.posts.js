@@ -960,6 +960,7 @@ class BandPosts extends BandAuth {
               user_id: userId,
               post_id: uniquePostId,
               post_number: originalBandPostIdStr, // postId가 문자열일 수 있으므로 원본 사용
+              band_number: this.bandNumber,
               item_number: itemNumber,
               title: item.title || "제목 없음",
               content: postContent || "",

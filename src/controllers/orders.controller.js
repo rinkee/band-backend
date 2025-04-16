@@ -176,7 +176,13 @@ const updateOrderStatus = async (req, res) => {
     }
 
     // 허용된 상태 값인지 확인
-    const allowedStatuses = ["주문완료", "주문취소", "수령완료"];
+    const allowedStatuses = [
+      "주문완료",
+      "주문취소",
+      "수령완료",
+      "결제완료",
+      "확인필요",
+    ];
     if (!allowedStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -195,13 +201,30 @@ const updateOrderStatus = async (req, res) => {
       updateData.shipping_info = shippingInfo;
     }
 
-    // 주문 상태에 따라 완료 시간 설정
+    // 주문 상태에 따라 완료/취소/결제 시간 설정
     if (status === "수령완료") {
       updateData.completed_at = new Date().toISOString();
+      // 필요하다면 다른 필드 초기화 (예: canceled_at)
+      updateData.canceled_at = null;
     } else if (status === "주문취소") {
       updateData.canceled_at = new Date().toISOString();
+      // 필요하다면 다른 필드 초기화 (예: completed_at, paid_at)
+      updateData.completed_at = null;
+      updateData.paid_at = null; // 예시: 취소 시 결제 시간 초기화
+    } else if (status === "결제완료") {
+      // --- Add: "결제완료" 상태 처리 추가 ---
+      updateData.paid_at = new Date().toISOString(); // 예시: 결제 완료 시간 기록
+      // updateData.payment_status = 'paid'; // 예시: 별도 결제 상태 필드 업데이트
+      // 필요하다면 다른 필드 초기화 (예: canceled_at)
+      updateData.completed_at = null;
+      updateData.canceled_at = null;
+    } else if (status === "주문완료") {
+      // 주문완료 상태로 변경 시 관련 시간 필드 초기화
+      updateData.completed_at = null;
+      updateData.canceled_at = null;
+      updateData.paid_at = null; // 결제 시간도 초기화 (필요에 따라 조정)
     }
-
+    // "주문완료", "확인필요" 시에는 기본 status, updated_at만 업데이트
     const { data, error } = await supabase
       .from("orders")
       .update(updateData)
