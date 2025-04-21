@@ -101,7 +101,7 @@ class BandAuth {
       this.updateTaskStatus("processing", "initialize", 0);
 
       this.browser = await puppeteer.launch({
-        headless: "new",
+        headless: false,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",

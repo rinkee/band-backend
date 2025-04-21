@@ -75,7 +75,7 @@ async function extractProductInfo(
     *   tags: 상품 관련 키워드 배열 (예: ["#특가", "#국내산", "#당일배송"])
     *   features: 상품의 주요 특징 배열 (예: ["유기농 인증", "무료 배송"])
     *   pickupInfo: 픽업/배송 관련 안내 문구 (예: "내일 오후 2시 일괄 배송")
-    *   pickupDate: "내일", "5월 10일", "다음주 화요일", "지금부터" 등의 정보를 게시물 작성 시간 기준으로 해석하여 YYYY-MM-DD 또는 YYYY-MM-DDTHH:mm:ss.sssZ 형식으로 설정. "지금부터"는 게시물 작성 시간(또는 현재 시간)으로 해석 가능.
+    *   pickupDate: "내일", "5월 10일", "다음주 화요일", "지금부터" ,"2시 이후" ,"3시 부터" 등의 정보를 게시물 작성 시간 기준으로 해석하여 YYYY-MM-DD 또는 YYYY-MM-DDTHH:mm:ss.sssZ 형식으로 설정. "지금부터"는 게시물 작성 시간(또는 현재 시간)으로 해석 가능.
     *   pickupType: 픽업/배송 방식 (예: "도착", "수령", "픽업", "배송", "전달")
     *   🔥stockQuantity: 재고 수량을 나타내는 숫자입니다. "5개 남음", "3세트 한정" 등 명확한 숫자가 있으면 해당 숫자를 추출하세요. "1통 여유", "1개 가능" 등 특정 단위와 함께 남은 수량이 언급되면 해당 숫자(여기서는 1)를 추출합니다. "한정 수량", "재고 문의", "여유분" 등 구체적인 숫자가 없거나 불명확하면 null을 반환하세요.
 
@@ -360,7 +360,7 @@ function processProduct(productInfo, postTime) {
     try {
       // YYYY-MM-DD 형식인 경우 시간 추가
       if (productInfo.pickupDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
-        productInfo.pickupDate = `${productInfo.pickupDate}T12:00:00.000Z`;
+        productInfo.pickupDate = `${productInfo.pickupDate}T20:00:00.000Z`;
       } else {
         // 다른 형식이면 pickupInfo를 사용하여 추출
         const pickupDateInfo = extractPickupDate(
