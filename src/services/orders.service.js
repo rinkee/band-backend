@@ -167,7 +167,7 @@ async function getOrderStatsFromDB(
   toDate,
   status,
   subStatus,
-  search
+  search // 'search' 파라미터가 추가되었음 (또는 이전부터 있었음)
 ) {
   // --- RPC 호출 파라미터 준비 ---
   const rpcParams = {
@@ -185,12 +185,13 @@ async function getOrderStatsFromDB(
         ? subStatus
         : null,
     // search 필터: 값이 있으면 ILIKE용 '%' 추가, 없으면 null 전달
-    p_search_term: search ? `%${search}%` : null,
+    // <<< 여기가 중요! >>>
+    p_search_term: search ? `%${search}%` : null, // search 값이 있으면 '%검색어%', 없으면 null 전달
   };
 
   logger.debug(
     "Calling RPC get_order_stats_by_date_range with params:",
-    rpcParams
+    rpcParams // 로그에 실제 전달되는 파라미터 출력
   );
 
   try {

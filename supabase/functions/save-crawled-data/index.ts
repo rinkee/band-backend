@@ -236,10 +236,11 @@ serve(async (req: Request) => {
                   updated_at,                -- $16
                   item_number,               -- $17 (추가됨)
                   band_number,                -- $18 (band_number 추가 가정, 없다면 제거하고 $17까지)
-                  customer_name              -- $19 (추가됨)
+                  customer_name,              -- $19 (추가됨)
+                  sub_status                 -- $20 <<<--- 추가됨
                   -- extracted_items_details, is_ambiguous 등 추가 컬럼 필요 시 여기에 추가하고 값 배열에도 반영
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) -- 18개
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) -- 20개
                 ON CONFLICT (order_id) DO UPDATE SET
                   user_id = EXCLUDED.user_id,
                   product_id = EXCLUDED.product_id,
@@ -257,7 +258,8 @@ serve(async (req: Request) => {
                   updated_at = EXCLUDED.updated_at,           -- 업데이트 시간 갱신 필수
                   item_number = EXCLUDED.item_number,         -- 수정됨: .item 제거
                   band_number = EXCLUDED.band_number,          -- 추가됨 (마지막 콤마 없음)
-                  customer_name = EXCLUDED.customer_name       -- 추가됨
+                  customer_name = EXCLUDED.customer_name,     -- 추가됨
+                  sub_status = EXCLUDED.sub_status           -- 추가됨
                   -- is_ambiguous = EXCLUDED.is_ambiguous 등 업데이트할 컬럼 추가
                `, // <-- 쿼리 문자열 끝
               [
@@ -281,6 +283,7 @@ serve(async (req: Request) => {
                 order.item_number, // $17 (추가됨)
                 order.band_number, // $18 (추가됨, 없다면 제거)
                 order.customer_name, // $19 (추가됨)
+                order.sub_status, // $20 (추가됨)
                 // order.extracted_items_details, order.is_ambiguous 등 추가 컬럼 값
               ]
             );

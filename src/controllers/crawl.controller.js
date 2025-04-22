@@ -56,11 +56,13 @@ async function _performCrawling(params) {
     };
 
     // 5. 크롤링 실행
-    const result = await crawler.crawlPostDetail(
+    const result = await crawler.crawlAndSave(
+      // <<< 변경된 이름으로 호출
       userId,
       userAccount.naverId,
       userAccount.naverPassword,
-      maxPosts || 30
+      maxPosts || 50, // maxPosts 전달 확인
+      processProducts ?? true // processWithAI 전달 확인
     );
 
     // 6. 결과 처리 및 저장
@@ -73,11 +75,11 @@ async function _performCrawling(params) {
         params,
       });
       // processProducts 기본값 true로 설정
-      await crawler.saveDetailPostsToSupabase(
-        result.data,
-        userId,
-        processProducts ?? true
-      );
+      // await crawler.saveDetailPostsToSupabase(
+      //   result.data,
+      //   userId,
+      //   processProducts ?? true
+      // );
       taskStatusMap.set(taskId, {
         status: "completed",
         message: `${result.data.length}개 저장 완료`,
