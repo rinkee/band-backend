@@ -3,6 +3,59 @@ const crypto = require("crypto");
 const logger = require("../../config/logger");
 
 /**
+ * productId로부터 고유한 13자리 EAN-13 바코드 번호를 생성합니다.
+ * @param {string} productId
+ * @returns {string} 13자리 바코드 숫자 (앞 12자리 + EAN-13 체크디지트)
+ */
+function generateBarcodeFromProductId(productId) {
+  // <<<--- 로그 추가: 함수 시작 및 입력값 확인 --->>>
+  logger.debug(
+    `[Barcode Func] generateBarcodeFromProductId called with productId: ${productId}`
+  );
+
+  if (!productId || typeof productId !== "string") {
+    logger.error(
+      `[Barcode Func] Invalid productId received: ${productId}. Returning null.`
+    );
+    return null; // 유효하지 않은 입력 처리
+  }
+
+  try {
+    // 전체 로직을 try-catch로 감싸 안정성 확보
+    // 1) SHA-256 해시 생성
+    const hash = crypto.createHash("sha256").update(productId).digest();
+
+    // 2) 해시의 앞 6바이트(48비트)를 읽어 12자리 숫자로 압축
+    const num = hash.readUIntBE(0, 6);
+    const code12 = (num % 1e12).toString().padStart(12, "0");
+
+    // 3) EAN-13 체크 디지트 계산 (mod 10 가중합 방식)
+    let sum = 0;
+    for (let i = 0; i < 12; i++) {
+      const digit = parseInt(code12[i], 10);
+      sum += i % 2 === 0 ? digit : digit * 3;
+    }
+    const checkDigit = (10 - (sum % 10)) % 10;
+
+    const finalBarcode = code12 + checkDigit.toString();
+
+    // <<<--- 로그 추가: 최종 반환값 확인 --->>>
+    logger.debug(
+      `[Barcode Func] Generated barcode for ${productId}: ${finalBarcode}`
+    );
+
+    return finalBarcode;
+  } catch (error) {
+    // <<<--- 로그 추가: 함수 내부 오류 발생 시 --->>>
+    logger.error(
+      `[Barcode Func] Error during barcode generation for ${productId}: ${error.message}`,
+      error.stack
+    );
+    return null; // 오류 발생 시 null 반환
+  }
+}
+
+/**
  * 한국어 날짜 형식 파싱 함수
  * @param {string} dateString - 파싱할 날짜 문자열
  * @returns {Date|null} - 파싱된 Date 객체 또는 null
@@ -463,25 +516,43 @@ function generateOrderUniqueId(bandNumber, postId, index) {
 }
 
 /**
- * 게시물 내용에 가격 관련 표시가 있는지 간단히 확인합니다.
+ * 게시물 내용에 가격 관련 키워드와 '100' 이상의 숫자가 포함되어 있는지 확인합니다.
  * @param {string} content - 게시물 본문 텍스트
  * @returns {boolean} - 가격 표시 존재 여부
  */
 function contentHasPriceIndicator(content) {
   if (!content) return false;
 
-  // 1. 키워드 확인: '수령', '픽업', '도착' 중 하나라도 포함하는지 검사
-  const keywordRegex = /수령|픽업|도착|예약|주문|특가|정상가|할인가|상품|댓글/;
+  // 1. 키워드 확인: '수령', '픽업', '도착', '가격', '원' 등 가격 관련 키워드 포함 여부
+  //    '상품', '댓글' 등은 너무 광범위할 수 있어 제외하거나 조정 필요
+  const keywordRegex = /수령|픽업|도착|예약|주문|특가|정상가|할인가|가격|원|₩/; // 가격 관련 키워드 강화
   const hasKeyword = keywordRegex.test(content);
 
-  // 2. 숫자 확인: 문자열 내에 숫자(0-9)가 하나라도 포함하는지 검사
-  const numberRegex = /\d/; // \d는 숫자를 의미
-  const hasNumber = numberRegex.test(content);
+  // 키워드가 없으면 바로 false 반환 (효율성)
+  if (!hasKeyword) {
+    return false;
+  }
 
-  // 3. 두 조건 모두 만족하면 true 반환
-  return hasKeyword && hasNumber;
+  // 2. 세 자리 이상의 숫자 확인 (쉼표 포함 가능)
+  //    정규식: 3자리 이상 숫자 또는 쉼표(,)로 구분된 숫자를 찾음
+  const numberRegex = /(?:[1-9]\d{2,}|[1-9]\d{0,2}(?:,\d{3})+(?!\d))/g; // 100 이상 또는 쉼표 포함 3자리 이상 숫자
+  const numbersFound = content.match(numberRegex); // 모든 일치하는 숫자 찾기
+
+  // 숫자가 전혀 없으면 false 반환
+  if (!numbersFound) {
+    return false;
+  }
+
+  // 3. 찾은 숫자 중 100 이상인 숫자가 있는지 확인
+  const hasPriceLikeNumber = numbersFound.some((numStr) => {
+    // 쉼표 제거 후 숫자로 변환
+    const num = parseInt(numStr.replace(/,/g, ""), 10);
+    return !isNaN(num) && num >= 100; // 숫자로 변환 가능하고 100 이상인지 확인
+  });
+
+  // 4. 키워드와 100 이상의 숫자가 모두 존재하면 true 반환
+  return hasKeyword && hasPriceLikeNumber;
 }
-
 /**
  * 댓글 내용에서 주문 정보를 추출합니다.
  * - "번"이라는 단어가 있으면 "1번 3개요", "1번 상품 3개요" 같은 형식에서 앞의 숫자는 itemNumber, 뒤의 숫자는 quantity로 처리합니다.
@@ -613,10 +684,10 @@ const testComments = [
   "1번 200ml짜리 3개", // <<<--- 처리 기대
 ];
 
-testComments.forEach((comment) => {
-  console.log(`\n--- 테스트 댓글: "${comment}" ---`);
-  extractEnhancedOrderFromComment(comment, console); // console 객체를 logger로 사용
-});
+// testComments.forEach((comment) => {
+//   console.log(`\n--- 테스트 댓글: "${comment}" ---`);
+//   extractEnhancedOrderFromComment(comment, console); // console 객체를 logger로 사용
+// });
 
 module.exports = {
   parseKoreanDate,
@@ -634,4 +705,5 @@ module.exports = {
   generateOrderUniqueId, // 수정됨
   contentHasPriceIndicator,
   extractEnhancedOrderFromComment,
+  generateBarcodeFromProductId,
 };

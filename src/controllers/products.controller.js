@@ -8,7 +8,6 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
-
 /**
  * 모든 상품 목록 조회
  * @param {Object} req - 요청 객체
@@ -18,40 +17,47 @@ const getAllProducts = async (req, res) => {
   try {
     const { userId } = req.query;
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = parseInt(req.query.limit) || 10; // 기본값 10으로 설정 (프론트엔드와 맞추거나 조정)
     const startIndex = (page - 1) * limit;
-    const sortBy = req.query.sortBy || "created_at";
+    const sortBy = req.query.sortBy || "created_at"; // 기본 정렬 created_at으로 변경 가능성 있음 (updated_at?)
     const sortOrder = req.query.sortOrder === "asc" ? true : false;
 
     if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "사용자 ID가 필요합니다.",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "사용자 ID가 필요합니다." });
     }
 
-    // 상품 정보 조회 쿼리
     let query = supabase
       .from("products")
-      .select("*", { count: "exact" })
+      .select("*", { count: "exact" }) // count 옵션 확인
       .eq("user_id", userId)
-      .order(sortBy, { ascending: sortOrder })
-      .range(startIndex, startIndex + limit - 1);
+      .order("created_at", { ascending: false }); //
 
-    // 필터링 조건 추가
-    if (req.query.category && req.query.category !== "undefined") {
-      query = query.eq("category", req.query.category);
-    }
-
-    if (req.query.status && req.query.status !== "undefined") {
+    // 상태 필터링 (req.query.status 값이 "all"이 아닐 때만 적용)
+    if (
+      req.query.status &&
+      req.query.status !== "all" &&
+      req.query.status !== "undefined"
+    ) {
       query = query.eq("status", req.query.status);
     }
 
+    // 검색 필터링
+    // !!! 여기가 문제일 가능성이 높음 !!!
     if (req.query.search && req.query.search !== "undefined") {
+      const searchTerm = req.query.search;
+      // or 조건으로 title 또는 barcode 에서 검색 (ilike는 대소문자 구분 안 함)
       query = query.or(
-        `title.ilike.%${req.query.search}%, content.ilike.%${req.query.search}%`
+        `title.ilike.%${searchTerm}%,barcode.ilike.%${searchTerm}%`
       );
+      // console.log(`Applying search filter: ${searchTerm}`); // 디버깅 로그 추가
     }
+
+    // 정렬 및 페이지네이션 적용
+    query = query
+      .order(sortBy, { ascending: sortOrder })
+      .range(startIndex, startIndex + limit - 1);
 
     const { data, error, count } = await query;
 
@@ -59,14 +65,15 @@ const getAllProducts = async (req, res) => {
       throw error;
     }
 
-    // 전체 페이지 수 계산
-    const totalPages = Math.ceil(count / limit);
+    const totalItems = count || 0; // count가 null일 경우 0으로 처리
+    const totalPages = Math.ceil(totalItems / limit);
 
     return res.status(200).json({
       success: true,
       data,
       pagination: {
-        total: count,
+        // --- 필드명 수정 ---
+        totalItems: totalItems, // 'total' -> 'totalItems'
         totalPages,
         currentPage: page,
         limit,
@@ -81,7 +88,6 @@ const getAllProducts = async (req, res) => {
     });
   }
 };
-
 /**
  * 특정 상품 정보 조회
  * @param {Object} req - 요청 객체
@@ -198,7 +204,7 @@ const createProduct = async (req, res) => {
 const updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, price, category, imageUrl, stock, options } =
+    const { name, memo, base_price, category, imageUrl, stock, options } =
       req.body;
 
     if (!id) {
@@ -212,8 +218,8 @@ const updateProduct = async (req, res) => {
       .from("products")
       .update({
         name,
-        description,
-        price,
+        memo,
+        base_price,
         category,
         image_url: imageUrl,
         stock,
@@ -369,10 +375,10 @@ const patchProduct = async (req, res) => {
     // 프론트엔드 필드명과 백엔드 필드명 매핑
     const fieldMapping = {
       title: "title",
-      price: "base_price", // 프론트엔드의 price는 백엔드의 base_price에 매핑
+      base_price: "base_price", // 프론트엔드의 price는 백엔드의 base_price에 매핑
       status: "status",
       barcode: "barcode",
-      description: "content", // 프론트엔드의 description은 백엔드의 content에 매핑
+      memo: "memo", // 프론트엔드의 description은 백엔드의 content에 매핑
       pickup_info: "pickup_info",
       pickup_date: "pickup_date",
       quantity: "quantity",

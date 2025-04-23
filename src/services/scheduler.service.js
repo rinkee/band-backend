@@ -301,7 +301,7 @@ const scheduleBandCrawling = (userId, bandNumber, cronExpression) => {
           // crawl.controller.js에서 export된 함수 사용
           userId: userId,
           bandNumber: bandNumber,
-          maxPosts: 10, // 스케줄러 기본값
+          maxPosts: 50, // 스케줄러 기본값
           processProducts: true, // 스케줄러 기본값
           taskId: taskId,
         });
@@ -365,7 +365,7 @@ const registerUserCrawlingTask = async (user) => {
           // crawl.controller.js에서 export된 함수 사용
           userId: user_id,
           bandNumber: band_number,
-          maxPosts: 10, // 시스템 기본값 (조절 가능)
+          maxPosts: 50, // 시스템 기본값 (조절 가능)
           processProducts: true, // 시스템 기본값
           taskId: taskId,
         });

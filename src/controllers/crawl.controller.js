@@ -21,7 +21,15 @@ const { extractPriceFromContent, generateSimpleId } = utils;
 // 이 함수는 req, res를 직접 받지 않고 필요한 데이터만 받습니다.
 async function _performCrawling(params) {
   let crawler = null;
-  const { userId, bandNumber, maxPosts, processProducts, taskId } = params;
+  const {
+    userId,
+    bandNumber,
+    maxPosts,
+    processProducts,
+    taskId,
+    daysLimit,
+    maxScrollAttempts,
+  } = params;
 
   try {
     // 1. 사용자 계정 정보 조회
@@ -55,13 +63,40 @@ async function _performCrawling(params) {
       });
     };
 
-    // 5. 크롤링 실행
-    const result = await crawler.crawlPostDetail(
+    // 5. 크롤링 실행 - maxScrollAttempts 파라미터 전달
+    const result = await crawler.crawlAndSave(
       userId,
       userAccount.naverId,
       userAccount.naverPassword,
-      maxPosts || 30
+      maxScrollAttempts || 50, // <<<--- params에서 받은 maxScrollAttempts 사용 (기본값 50)
+      processProducts ?? true,
+      daysLimit
     );
+
+    // <<<--- 수정된 로직 --- START --->>>
+    // 1. 명시적인 실패 확인: success가 false이거나 result 객체 자체가 없는 경우만 에러 처리
+    if (!result || !result.success) {
+      const errorMessage = result?.error || "알 수 없는 크롤링 오류 발생";
+      logger.error(
+        `백그라운드 크롤링 오류 (Task ID: ${taskId}): ${errorMessage}`
+      );
+      throw new Error(errorMessage);
+    }
+
+    // 2. 성공했지만 처리할 데이터가 없는 경우: 정상 완료 로그 남기고 종료 (에러 아님)
+    if (result.success && result.data.length === 0) {
+      logger.info(
+        `크롤링 작업 완료 (Task ID: ${taskId}): 처리할 새로운 데이터 없음.`
+      );
+      // throw new Error(...) 부분을 제거하거나 주석 처리
+    } else {
+      // 3. 성공했고 처리한 데이터가 있는 경우: 기존 로그 유지
+      logger.info(
+        `크롤링 작업 완료 (Task ID: ${taskId}): ${result.data.length}개 처리됨.`
+      );
+      // '저장'이라는 표현 대신 '처리됨' 등으로 변경하는 것이 더 정확할 수 있음
+      // (실제 저장은 saveDetailPostsToSupabase 내부에서 이루어지므로)
+    }
 
     // 6. 결과 처리 및 저장
     if (result?.success && result.data?.length > 0) {
@@ -73,11 +108,11 @@ async function _performCrawling(params) {
         params,
       });
       // processProducts 기본값 true로 설정
-      await crawler.saveDetailPostsToSupabase(
-        result.data,
-        userId,
-        processProducts ?? true
-      );
+      // await crawler.saveDetailPostsToSupabase(
+      //   result.data,
+      //   userId,
+      //   processProducts ?? true
+      // );
       taskStatusMap.set(taskId, {
         status: "completed",
         message: `${result.data.length}개 저장 완료`,
@@ -282,7 +317,7 @@ class CrawlController {
   async startPostDetailCrawling(req, res, next) {
     // Express 핸들러 표준 인자
     const taskId = `task_http_${Date.now()}`; // HTTP 요청임을 나타내는 ID
-    let bandNumber, userId, maxPosts, processProducts;
+    let bandNumber, userId, maxPosts, processProducts, daysLimit;
 
     try {
       // 1. 요청에서 파라미터 추출 및 검증
@@ -291,6 +326,7 @@ class CrawlController {
       userId = req.body?.userId || req.user?.userId;
       maxPosts = req.body?.maxPosts;
       processProducts = req.body?.processProducts;
+      daysLimit = req.body?.daysLimit;
 
       if (!bandNumber || !userId) {
         // 요청 데이터 로그 추가 (디버깅 시 유용)
@@ -304,7 +340,14 @@ class CrawlController {
       }
 
       // 2. Task 초기 상태 설정
-      const initialParams = { userId, bandNumber, maxPosts, processProducts };
+      const initialParams = {
+        userId,
+        bandNumber,
+        maxPosts,
+        processProducts,
+        taskId,
+        daysLimit,
+      };
       this.taskStatusMap.set(taskId, {
         status: "pending",
         message: "크롤링 작업 요청 접수됨 (HTTP)",

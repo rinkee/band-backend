@@ -107,10 +107,11 @@ serve(async (req: Request) => {
         for (const post of posts) {
           await connection.queryObject(
             `INSERT INTO posts (post_id, user_id, band_number, post_number, band_post_url, author_name, title, content, posted_at, comment_count, view_count, image_urls, is_product, status, crawled_at, updated_at, item_list)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17::jsonb) -- item_list를 jsonb로 캐스팅
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17::jsonb)
                 ON CONFLICT (post_id) DO UPDATE SET
                   band_number = EXCLUDED.band_number, post_number = EXCLUDED.post_number, band_post_url = EXCLUDED.band_post_url, author_name = EXCLUDED.author_name,
-                  title = EXCLUDED.title, content = EXCLUDED.content, posted_at = EXCLUDED.posted_at, comment_count = EXCLUDED.comment_count,
+                  title = EXCLUDED.title, content = EXCLUDED.content, posted_at = EXCLUDED.posted_at,
+                  comment_count = EXCLUDED.comment_count,
                   view_count = EXCLUDED.view_count, image_urls = EXCLUDED.image_urls, is_product = EXCLUDED.is_product, status = EXCLUDED.status,
                   crawled_at = EXCLUDED.crawled_at, updated_at = EXCLUDED.updated_at, item_list = EXCLUDED.item_list
                `,
@@ -148,17 +149,18 @@ serve(async (req: Request) => {
                 product_id, user_id, post_id, item_number, title, content, base_price, 
                 price_options, quantity, quantity_text, category, tags, features, status,
                 pickup_info, pickup_date, pickup_type, order_summary, created_at, updated_at,
-                stock_quantity,band_post_url
+                stock_quantity,band_post_url ,band_number, post_number ,barcode
              )
              -- 플레이스홀더도 21개로 증가
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18::jsonb, $19, $20, $21 ,$22)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18::jsonb, $19, $20, $21 ,$22, $23, $24, $25)
              ON CONFLICT (product_id) DO UPDATE SET
                post_id = EXCLUDED.post_id, item_number = EXCLUDED.item_number, title = EXCLUDED.title,
                content = EXCLUDED.content, base_price = EXCLUDED.base_price, price_options = EXCLUDED.price_options,
                quantity = EXCLUDED.quantity, quantity_text = EXCLUDED.quantity_text, category = EXCLUDED.category, tags = EXCLUDED.tags,
                features = EXCLUDED.features, status = EXCLUDED.status, pickup_info = EXCLUDED.pickup_info, pickup_date = EXCLUDED.pickup_date,
                pickup_type = EXCLUDED.pickup_type, order_summary = EXCLUDED.order_summary, updated_at = EXCLUDED.updated_at,
-               stock_quantity = EXCLUDED.stock_quantity, band_post_url = EXCLUDED.band_post_url
+               stock_quantity = EXCLUDED.stock_quantity, band_post_url = EXCLUDED.band_post_url, band_number = EXCLUDED.band_number, post_number = EXCLUDED.post_number,
+               barcode = EXCLUDED.barcode
             `,
             [
               // 값 배열도 21개로 증가 (마지막에 stock_quantity 추가)
@@ -184,6 +186,9 @@ serve(async (req: Request) => {
               product.updated_at, // $20
               product.stock_quantity, // $21 <<< stock_quantity 값 추가 (null일 수도 있음)
               product.band_post_url,
+              product.band_number,
+              product.post_number,
+              product.barcode,
             ]
           );
         }
@@ -231,10 +236,11 @@ serve(async (req: Request) => {
                   updated_at,                -- $16
                   item_number,               -- $17 (추가됨)
                   band_number,                -- $18 (band_number 추가 가정, 없다면 제거하고 $17까지)
-                  customer_name              -- $19 (추가됨)
+                  customer_name,              -- $19 (추가됨)
+                  sub_status                 -- $20 <<<--- 추가됨
                   -- extracted_items_details, is_ambiguous 등 추가 컬럼 필요 시 여기에 추가하고 값 배열에도 반영
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) -- 18개
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) -- 20개
                 ON CONFLICT (order_id) DO UPDATE SET
                   user_id = EXCLUDED.user_id,
                   product_id = EXCLUDED.product_id,
@@ -252,7 +258,8 @@ serve(async (req: Request) => {
                   updated_at = EXCLUDED.updated_at,           -- 업데이트 시간 갱신 필수
                   item_number = EXCLUDED.item_number,         -- 수정됨: .item 제거
                   band_number = EXCLUDED.band_number,          -- 추가됨 (마지막 콤마 없음)
-                  customer_name = EXCLUDED.customer_name       -- 추가됨
+                  customer_name = EXCLUDED.customer_name,     -- 추가됨
+                  sub_status = EXCLUDED.sub_status           -- 추가됨
                   -- is_ambiguous = EXCLUDED.is_ambiguous 등 업데이트할 컬럼 추가
                `, // <-- 쿼리 문자열 끝
               [
@@ -276,6 +283,7 @@ serve(async (req: Request) => {
                 order.item_number, // $17 (추가됨)
                 order.band_number, // $18 (추가됨, 없다면 제거)
                 order.customer_name, // $19 (추가됨)
+                order.sub_status, // $20 (추가됨)
                 // order.extracted_items_details, order.is_ambiguous 등 추가 컬럼 값
               ]
             );

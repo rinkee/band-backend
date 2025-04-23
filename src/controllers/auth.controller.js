@@ -49,7 +49,9 @@ const getUserData = async (req, res) => {
         last_crawl_at,
         product_count,
         crawl_interval,
-        naver_login_status
+        naver_login_status,
+        excluded_customers,
+        job_id
       `
       )
       .eq("user_id", id)
@@ -370,7 +372,7 @@ const login = async (req, res) => {
         bandNumber: userData.band_number,
         naverId: userData.naver_id,
         isActive: userData.is_active,
-        settings: userData.settings,
+        excludedCustomers: userData.excluded_customers,
         subscription: userData.subscription,
         createdAt: userData.created_at,
         updatedAt: userData.updated_at,
