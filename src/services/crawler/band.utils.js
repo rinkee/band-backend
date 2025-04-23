@@ -3,28 +3,56 @@ const crypto = require("crypto");
 const logger = require("../../config/logger");
 
 /**
- * productId로부터 고유한 13자리 EAN‑13 바코드 번호를 생성합니다.
+ * productId로부터 고유한 13자리 EAN-13 바코드 번호를 생성합니다.
  * @param {string} productId
- * @returns {string} 13자리 바코드 숫자 (앞 12자리 + EAN‑13 체크디지트)
+ * @returns {string} 13자리 바코드 숫자 (앞 12자리 + EAN-13 체크디지트)
  */
 function generateBarcodeFromProductId(productId) {
-  // 1) SHA‑256 해시 생성
-  const hash = crypto.createHash("sha256").update(productId).digest();
+  // <<<--- 로그 추가: 함수 시작 및 입력값 확인 --->>>
+  logger.debug(
+    `[Barcode Func] generateBarcodeFromProductId called with productId: ${productId}`
+  );
 
-  // 2) 해시의 앞 6바이트(48비트)를 읽어 12자리 숫자로 압축
-  //    (2^48 ≈ 2.8e14 이므로 JS Number로 안전하게 다룰 수 있음)
-  const num = hash.readUIntBE(0, 6);
-  const code12 = (num % 1e12).toString().padStart(12, "0");
-
-  // 3) EAN‑13 체크 디지트 계산 (mod 10 가중합 방식)
-  let sum = 0;
-  for (let i = 0; i < 12; i++) {
-    const digit = parseInt(code12[i], 10);
-    sum += i % 2 === 0 ? digit : digit * 3;
+  if (!productId || typeof productId !== "string") {
+    logger.error(
+      `[Barcode Func] Invalid productId received: ${productId}. Returning null.`
+    );
+    return null; // 유효하지 않은 입력 처리
   }
-  const checkDigit = (10 - (sum % 10)) % 10;
 
-  return code12 + checkDigit.toString();
+  try {
+    // 전체 로직을 try-catch로 감싸 안정성 확보
+    // 1) SHA-256 해시 생성
+    const hash = crypto.createHash("sha256").update(productId).digest();
+
+    // 2) 해시의 앞 6바이트(48비트)를 읽어 12자리 숫자로 압축
+    const num = hash.readUIntBE(0, 6);
+    const code12 = (num % 1e12).toString().padStart(12, "0");
+
+    // 3) EAN-13 체크 디지트 계산 (mod 10 가중합 방식)
+    let sum = 0;
+    for (let i = 0; i < 12; i++) {
+      const digit = parseInt(code12[i], 10);
+      sum += i % 2 === 0 ? digit : digit * 3;
+    }
+    const checkDigit = (10 - (sum % 10)) % 10;
+
+    const finalBarcode = code12 + checkDigit.toString();
+
+    // <<<--- 로그 추가: 최종 반환값 확인 --->>>
+    logger.debug(
+      `[Barcode Func] Generated barcode for ${productId}: ${finalBarcode}`
+    );
+
+    return finalBarcode;
+  } catch (error) {
+    // <<<--- 로그 추가: 함수 내부 오류 발생 시 --->>>
+    logger.error(
+      `[Barcode Func] Error during barcode generation for ${productId}: ${error.message}`,
+      error.stack
+    );
+    return null; // 오류 발생 시 null 반환
+  }
 }
 
 /**
@@ -656,10 +684,10 @@ const testComments = [
   "1번 200ml짜리 3개", // <<<--- 처리 기대
 ];
 
-testComments.forEach((comment) => {
-  console.log(`\n--- 테스트 댓글: "${comment}" ---`);
-  extractEnhancedOrderFromComment(comment, console); // console 객체를 logger로 사용
-});
+// testComments.forEach((comment) => {
+//   console.log(`\n--- 테스트 댓글: "${comment}" ---`);
+//   extractEnhancedOrderFromComment(comment, console); // console 객체를 logger로 사용
+// });
 
 module.exports = {
   parseKoreanDate,

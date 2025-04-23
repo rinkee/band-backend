@@ -34,7 +34,8 @@ const getAllOrders = async (req, res) => {
     let query = supabase
       .from("orders_with_products")
       .select("*", { count: "exact" })
-      .eq("user_id", userId);
+      .eq("user_id", userId)
+      .order("ordered_at", { ascending: false }); //
 
     // --- 필터링 조건 추가 ---
     // 1. 주 상태(status) 필터링

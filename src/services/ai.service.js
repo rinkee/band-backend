@@ -32,16 +32,24 @@ async function extractProductInfo(
   bandNumber,
   postId
 ) {
-  try {
-    if (!content || content.trim() === "") {
-      logger.warn("빈 콘텐츠로 Gemini API 호출이 시도되었습니다.");
-      return getDefaultProduct("내용 없음");
-    }
+  // <<<--- 재시도 관련 설정 --- START --->>>
+  const MAX_RETRIES = 2; // 최대 재시도 횟수 (총 3번 시도: 기본 1 + 재시도 2)
+  const RETRY_DELAY_MS = 1000; // 재시도 간 지연 시간 (1초)
+  // <<<--- 재시도 관련 설정 --- END --->>>
 
-    logger.info("Gemini API 호출 시작");
+  let retries = 0; // 현재 재시도 횟수
 
-    // --- Combine System and User instructions into a single prompt for Gemini ---
-    const systemInstructions = `
+  while (retries < MAX_RETRIES) {
+    try {
+      if (!content || content.trim() === "") {
+        logger.warn("빈 콘텐츠로 Gemini API 호출이 시도되었습니다.");
+        return getDefaultProduct("내용 없음");
+      }
+
+      logger.info("Gemini API 호출 시작");
+
+      // --- Combine System and User instructions into a single prompt for Gemini ---
+      const systemInstructions = `
 당신은 게시물 텍스트에서 상품 정보를 정확하게 추출하는 도우미입니다. 반드시 JSON 형식으로만 응답해야 하며, 그 외 텍스트는 절대 포함하지 마세요.
 
 ※ 상품 정보 추출 핵심 규칙:
@@ -148,7 +156,7 @@ async function extractProductInfo(
 }
     `.trim();
 
-    const userContent = `
+      const userContent = `
 다음 텍스트에서 상품 정보를 위 규칙과 형식에 맞춰 JSON으로 추출해주세요:
 
 텍스트:
@@ -161,121 +169,143 @@ ${content}
 게시물 ID (productId 생성에 사용): ${postId}
 `.trim();
 
-    const prompt = `${systemInstructions}\n\n${userContent}`; // 시스템 지침과 사용자 요청 결합
+      const prompt = `${systemInstructions}\n\n${userContent}`; // 시스템 지침과 사용자 요청 결합
 
-    // --- Call Gemini API ---
-    const response = await geminiModel.generateContent(prompt);
-    const responseText = await response.response.text(); // 생성된 텍스트 (JSON) 추출
+      // --- Call Gemini API ---
+      const response = await geminiModel.generateContent(prompt);
+      const responseText = await response.response.text(); // 생성된 텍스트 (JSON) 추출
 
-    logger.info("Gemini API 원본 응답:"); // 로그 메시지 업데이트
-    logger.info("=== API 응답 시작 ===");
-    logger.info(responseText);
-    logger.info("=== API 응답 끝 ===");
+      logger.info("Gemini API 원본 응답:"); // 로그 메시지 업데이트
+      logger.info("=== API 응답 시작 ===");
+      logger.info(responseText);
+      logger.info("=== API 응답 끝 ===");
 
-    try {
-      // 응답 시작/끝 문자 확인 (선택적이지만, Gemini가 JSON을 잘 생성하는지 초기 확인에 도움)
-      if (
-        !responseText.trim().startsWith("{") ||
-        !responseText.trim().endsWith("}")
-      ) {
-        // Gemini의 responseMimeType 설정으로 인해 이 오류는 발생하지 않을 것으로 예상되지만, 방어적으로 남겨둡니다.
-        logger.warn(
-          "Gemini API 응답이 JSON 객체 형식이 아닐 수 있습니다. 파싱 시도."
-        );
-        // throw new Error("API 응답이 올바른 JSON 형식이 아닙니다"); // 필요시 에러 발생
-      }
-
-      const result = JSON.parse(responseText);
-
-      // 기존 코드: productName -> title 변환 (유지)
-      if (result.productName && !result.title)
-        result.title = result.productName;
-
-      // 여러 상품 처리 로직 (기존과 동일하게 유지)
-      if (
-        result.multipleProducts === true && // 명시적으로 true인지 확인
-        Array.isArray(result.products) &&
-        result.products.length > 0
-      ) {
-        // 여러 상품 처리
-        const mergedProduct = detectAndMergeQuantityBasedProducts(
-          result.products
-        );
-
-        // 통합된 상품이 있으면 사용
-        if (mergedProduct) {
-          logger.info("수량 기반 상품들을 하나의 상품으로 통합했습니다.");
-          // processProduct는 단일 상품을 처리하므로, multipleProducts: false 인 객체를 반환함
-          return processProduct(mergedProduct, postTime);
+      try {
+        // 응답 시작/끝 문자 확인 (선택적이지만, Gemini가 JSON을 잘 생성하는지 초기 확인에 도움)
+        if (
+          !responseText.trim().startsWith("{") ||
+          !responseText.trim().endsWith("}")
+        ) {
+          // Gemini의 responseMimeType 설정으로 인해 이 오류는 발생하지 않을 것으로 예상되지만, 방어적으로 남겨둡니다.
+          logger.warn(
+            "Gemini API 응답이 JSON 객체 형식이 아닐 수 있습니다. 파싱 시도."
+          );
+          // throw new Error("API 응답이 올바른 JSON 형식이 아닙니다"); // 필요시 에러 발생
         }
 
-        logger.info(
-          `여러 상품 감지: ${result.products.length}개의 상품이 추출되었습니다.`
-        );
+        const result = JSON.parse(responseText);
 
-        // 여기가 핵심 수정 부분: products 배열에 하나의 상품만 있으면 단일 상품으로 처리
-        if (result.products.length === 1) {
+        // 기존 코드: productName -> title 변환 (유지)
+        if (result.productName && !result.title)
+          result.title = result.productName;
+
+        // 여러 상품 처리 로직 (기존과 동일하게 유지)
+        if (
+          result.multipleProducts === true && // 명시적으로 true인지 확인
+          Array.isArray(result.products) &&
+          result.products.length > 0
+        ) {
+          // 여러 상품 처리
+          const mergedProduct = detectAndMergeQuantityBasedProducts(
+            result.products
+          );
+
+          // 통합된 상품이 있으면 사용
+          if (mergedProduct) {
+            logger.info("수량 기반 상품들을 하나의 상품으로 통합했습니다.");
+            // processProduct는 단일 상품을 처리하므로, multipleProducts: false 인 객체를 반환함
+            return processProduct(mergedProduct, postTime);
+          }
+
           logger.info(
-            "multipleProducts가 true로 설정되었지만 실제 상품은 1개입니다. 단일 상품으로 처리합니다."
+            `여러 상품 감지: ${result.products.length}개의 상품이 추출되었습니다.`
           );
 
-          const singleProduct = result.products[0];
-          // 상품 객체에서 multipleProducts 필드 제거 (혼란 방지)
-          const { multipleProducts: _unused, ...cleanProduct } = singleProduct;
+          // 여기가 핵심 수정 부분: products 배열에 하나의 상품만 있으면 단일 상품으로 처리
+          if (result.products.length === 1) {
+            logger.info(
+              "multipleProducts가 true로 설정되었지만 실제 상품은 1개입니다. 단일 상품으로 처리합니다."
+            );
 
-          // processProduct 호출 시 자동으로 multipleProducts: false 처리됨
-          return processProduct(
-            {
-              ...cleanProduct,
-              // 공통 픽업 정보 병합 (선택적)
-              pickupInfo:
-                cleanProduct.pickupInfo || result.commonPickupInfo || null,
-              pickupDate:
-                cleanProduct.pickupDate || result.commonPickupDate || null,
-              pickupType:
-                cleanProduct.pickupType || result.commonPickupType || null,
-            },
-            postTime
-          );
+            const singleProduct = result.products[0];
+            // 상품 객체에서 multipleProducts 필드 제거 (혼란 방지)
+            const { multipleProducts: _unused, ...cleanProduct } =
+              singleProduct;
+
+            // processProduct 호출 시 자동으로 multipleProducts: false 처리됨
+            return processProduct(
+              {
+                ...cleanProduct,
+                // 공통 픽업 정보 병합 (선택적)
+                pickupInfo:
+                  cleanProduct.pickupInfo || result.commonPickupInfo || null,
+                pickupDate:
+                  cleanProduct.pickupDate || result.commonPickupDate || null,
+                pickupType:
+                  cleanProduct.pickupType || result.commonPickupType || null,
+              },
+              postTime
+            );
+          }
+
+          // 실제 여러 상품 처리
+          const processedProducts = result.products.map((product) => {
+            return processProduct(
+              {
+                ...product,
+                // 공통 픽업 정보 병합 (선택적)
+                pickupInfo:
+                  product.pickupInfo || result.commonPickupInfo || null,
+                pickupDate:
+                  product.pickupDate || result.commonPickupDate || null,
+                pickupType:
+                  product.pickupType || result.commonPickupType || null,
+              },
+              postTime
+            );
+          });
+
+          // 최종 반환: multipleProducts: true 와 처리된 상품 배열
+          return {
+            multipleProducts: true,
+            products: processedProducts,
+          };
         }
 
-        // 실제 여러 상품 처리
-        const processedProducts = result.products.map((product) => {
-          return processProduct(
-            {
-              ...product,
-              // 공통 픽업 정보 병합 (선택적)
-              pickupInfo: product.pickupInfo || result.commonPickupInfo || null,
-              pickupDate: product.pickupDate || result.commonPickupDate || null,
-              pickupType: product.pickupType || result.commonPickupType || null,
-            },
-            postTime
-          );
-        });
-
-        // 최종 반환: multipleProducts: true 와 처리된 상품 배열
-        return {
-          multipleProducts: true,
-          products: processedProducts,
-        };
+        // 단일 상품 처리 (기존과 동일하게 유지)
+        return processProduct(result, postTime);
+      } catch (parseError) {
+        logger.error("JSON 파싱 오류:", parseError);
+        logger.error("파싱 실패한 내용:", responseText); // 파싱 실패 시 원본 내용 로깅
+        return getDefaultProduct("JSON 파싱 실패"); // 에러 메시지 명확화
+      }
+    } catch (error) {
+      // Gemini API 호출 자체의 에러 처리
+      logger.error("Gemini API 호출 중 오류 발생:", error);
+      // Gemini 관련 에러 정보 로깅 (있다면)
+      if (error.response) {
+        logger.error("Gemini API 오류 응답:", error.response);
       }
 
-      // 단일 상품 처리 (기존과 동일하게 유지)
-      return processProduct(result, postTime);
-    } catch (parseError) {
-      logger.error("JSON 파싱 오류:", parseError);
-      logger.error("파싱 실패한 내용:", responseText); // 파싱 실패 시 원본 내용 로깅
-      return getDefaultProduct("JSON 파싱 실패"); // 에러 메시지 명확화
+      retries++; // 재시도 횟수 증가
+
+      // 최대 재시도 횟수를 초과하면 루프 종료하고 기본값 반환
+      if (retries > MAX_RETRIES) {
+        logger.error(`최대 재시도 횟수(${MAX_RETRIES}) 초과. 기본값 반환.`);
+        return getDefaultProduct("API 오류 (최대 재시도 초과)");
+      }
+
+      // 재시도 전 잠시 대기
+      logger.info(`${RETRY_DELAY_MS / 1000}초 후 재시도합니다...`);
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      return getDefaultProduct("API 오류");
     }
-  } catch (error) {
-    // Gemini API 호출 자체의 에러 처리
-    logger.error("Gemini API 호출 중 오류 발생:", error);
-    // Gemini 관련 에러 정보 로깅 (있다면)
-    if (error.response) {
-      logger.error("Gemini API 오류 응답:", error.response);
-    }
-    return getDefaultProduct("API 오류");
   }
+
+  // 이 부분은 루프가 정상적으로 종료되지 않았을 때(이론상 발생하기 어려움) 도달할 수 있음
+  // 안전을 위해 기본값 반환
+  logger.warn("재시도 로직 후 예기치 않게 함수 종료됨. 기본값 반환.");
+  return getDefaultProduct("알 수 없는 오류");
 }
 
 function getDefaultProduct(title = "제목 없음") {

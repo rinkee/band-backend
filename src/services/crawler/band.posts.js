@@ -352,7 +352,6 @@ class BandPosts extends BandAuth {
 
       try {
         await this.page.waitForSelector(".dPostCommentMainView", {
-          visible: true,
           timeout: 5000,
         });
       } catch (e) {
@@ -392,6 +391,22 @@ class BandPosts extends BandAuth {
       }
       if (commentLoadAttempts >= MAX_COMMENT_LOAD_ATTEMPTS)
         logger.warn(`최대 댓글 로드 시도 도달 (${currentUrl}).`);
+
+      // --- START: 댓글 로딩 보장을 위해 페이지 맨 아래로 스크롤하는 코드 추가 ---
+      try {
+        logger.debug(`페이지 맨 아래로 스크롤 시도 - ${currentUrl}`);
+        await this.page.evaluate(() => {
+          window.scrollTo(0, document.body.scrollHeight);
+        });
+        // 스크롤 후 잠시 대기하여 콘텐츠 로딩 시간 확보
+        await new Promise((resolve) => setTimeout(resolve, 1500)); // 1.5초 대기 (필요시 조정)
+        logger.debug(`페이지 맨 아래로 스크롤 완료 및 대기 - ${currentUrl}`);
+      } catch (scrollError) {
+        logger.warn(
+          `페이지 맨 아래로 스크롤 중 오류 발생 (${currentUrl}): ${scrollError.message}`
+        );
+      }
+      // --- END: 스크롤 코드 추가 ---
 
       const content = await this.page.content();
       const $ = cheerio.load(content);
@@ -544,11 +559,12 @@ class BandPosts extends BandAuth {
     naverId,
     naverPassword,
     maxScrollAttempts = 50,
-    processWithAI = true
+    processWithAI = true,
+    daysLimit
   ) {
     try {
       this.crawlStartTime = Date.now();
-      const daysLimit = 5; // 스크롤 중단 기준일 (최근 5일)
+
       logger.info(
         `목록 기반 증분 크롤링 및 저장 시작 (daysLimit=${daysLimit}, maxScrollAttempts=${maxScrollAttempts})`
       );
@@ -579,7 +595,7 @@ class BandPosts extends BandAuth {
         .eq("user_id", userId)
         .eq("band_number", this.bandNumber)
         .order("posted_at", { ascending: false })
-        .limit(500); // 최근 500개 정도 로드
+        .limit(3000); // 최근 3000개 정도 로드
       if (postsErr) throw postsErr;
       const existingPostsMap = new Map(
         existingPostsData?.map((p) => [
@@ -730,22 +746,31 @@ class BandPosts extends BandAuth {
               });
 
               if (detail) {
-                // 마감 키워드 체크
-                const closedByKeyword =
-                  detail.comments.some((c) => hasClosingKeywords(c.content)) ||
-                  hasClosingKeywords(detail.postContent);
-                if (closedByKeyword) {
+                // --- 마감 키워드 체크 (댓글과 본문 모두 확인) --- START
+                const closedByComment = detail.comments.some((c) =>
+                  hasClosingKeywords(c.content)
+                );
+                const closedByContent = hasClosingKeywords(
+                  detail.postContent || ""
+                ); // 본문 확인 추가 (null/undefined 방지)
+
+                if (closedByComment || closedByContent) {
+                  // 본문 또는 댓글 중 하나라도 마감이면
+                  const reason = `${closedByContent ? "본문" : ""}${
+                    closedByComment ? (closedByContent ? ", 댓글" : "댓글") : ""
+                  }`;
                   logger.info(
-                    `ID ${detail.postId}: 상세 내용에서 마감 키워드 발견. status='마감' 설정.`
+                    `ID ${detail.postId}: 상세 내용(${reason})에서 마감 키워드 발견. status='마감' 설정.`
                   );
-                  detail.status = "마감"; // 크롤링 결과에 status 추가
+                  detail.status = "마감"; // 크롤링 결과 객체에 '마감' 상태 설정
                 } else {
                   logger.info(
                     `ID ${detail.postId}: 상세 정보 수집됨 (마감 아님).`
                   );
-                  // detail.status = "활성"; // 기본 상태 설정 (선택적)
+                  // detail.status = "활성"; // 필요 시 기본 상태 설정
                 }
-                detailedResults.push(detail);
+                // --- 마감 키워드 체크 --- END
+                detailedResults.push(detail); // 마감 상태가 반영된 detail 객체 저장
               } else {
                 logger.warn(`ID ${postId}: 상세 정보 추출 실패 (null 반환)`);
               }
@@ -1225,6 +1250,7 @@ class BandPosts extends BandAuth {
           bandNumberStr,
           postNumStr
         );
+
         const crawledContent = crawledPost.postContent || "";
         // 댓글은 'author' 키를 가지고 있음 (v_working 추출 기준)
         const crawledComments = crawledPost.comments || [];
@@ -1254,6 +1280,19 @@ class BandPosts extends BandAuth {
         let productNeedsUpdate = false; // AI 또는 상태 변경 시 true
         let runAI = false;
         let isProductPost = existingPost ? existingPost.is_product : false;
+
+        // <<<--- 로그 추가 --- START --->>>
+        if (postNumStr === "26778") {
+          logger.debug(
+            `[Debug 26778] Processing post. crawledCommentCount: ${
+              crawledPost.commentCount
+            }, Initial isProductPost guess based on existingPost: ${
+              existingPost ? existingPost.is_product : "N/A (New)"
+            }`
+          );
+        }
+        // <<<--- 로그 추가 --- END --->>>
+
         const productMap = new Map(); // itemNumber -> productId
         let newProductsFromAI = []; // AI가 생성한 상품 데이터 임시 저장
 
@@ -1287,6 +1326,13 @@ class BandPosts extends BandAuth {
           // 가격 지표 없고, (신규거나 내용변경 없거나 기존 상품 아님)
           isProductPost = false;
           if (!isNewPost && existingPost?.is_product) postNeedsUpdate = true; // 상품->상품 아님 변경
+        }
+
+        // <<<--- 로그 추가 --- START --->>>
+        if (postNumStr === "26778") {
+          logger.debug(
+            `[Debug 26778] After AI/Indicator Check - isProductPost: ${isProductPost}, mightBeProduct: ${mightBeProduct}, runAI: ${runAI}`
+          );
         }
 
         // --- 3) AI 분석 실행 (필요한 경우) ---
@@ -1360,6 +1406,8 @@ class BandPosts extends BandAuth {
                   `[Merge Check - AI] ID: ${postNumStr}, Item: ${idx}, New AI Data basePrice: ${newItemData.basePrice}`
                 );
 
+                const productBarcode = generateBarcodeFromProductId(prodId);
+
                 const productData = {
                   product_id: prodId,
                   user_id: userId,
@@ -1421,9 +1469,7 @@ class BandPosts extends BandAuth {
                   created_at:
                     existingProdFull?.created_at || postedAt.toISOString(),
                   updated_at: new Date().toISOString(),
-                  barcode:
-                    existingProdFull?.barcode ||
-                    generateBarcodeFromProductId(prodId),
+                  barcode: existingProdFull?.barcode || productBarcode,
                 };
 
                 newProductsFromAI.push(productData); // 임시 배열에 추가
@@ -1480,6 +1526,22 @@ class BandPosts extends BandAuth {
                 logger.debug(
                   `[Merge Check - No AI] Existing base_price: ${existingProdFull.base_price}`
                 );
+                let productBarcode = null; // 기본값 null
+
+                try {
+                  logger.debug(
+                    `[Barcode Gen - No AI] Generating barcode for prodId: ${prodId}`
+                  );
+                  productBarcode = generateBarcodeFromProductId(prodId);
+                  logger.debug(
+                    `[Barcode Gen - No AI] Generated barcode: ${productBarcode} for prodId: ${prodId}`
+                  );
+                } catch (barcodeError) {
+                  logger.error(
+                    `[Barcode Gen - No AI] Error generating barcode for prodId ${prodId}: ${barcodeError.message}`
+                  );
+                  // 바코드 생성 실패 시 null 유지 또는 기본값 설정 가능
+                }
 
                 const newItemData = {};
                 const productData = {
@@ -1513,9 +1575,7 @@ class BandPosts extends BandAuth {
                   created_at:
                     existingProdFull.created_at || postedAt.toISOString(),
                   updated_at: new Date().toISOString(), // 업데이트 시간 갱신
-                  barcode:
-                    existingProdFull.barcode ||
-                    generateBarcodeFromProductId(prodId),
+                  barcode: existingProdFull.barcode || productBarcode,
                 };
 
                 // Upsert 배열에 추가 (중복 처리)
@@ -1564,12 +1624,13 @@ class BandPosts extends BandAuth {
           view_count: crawledPost.readCount || 0,
           image_urls: crawledPost.imageUrls || [],
           is_product: isProductPost,
+
           status:
-            crawledPost.status === "마감"
+            crawledPost.status === "마감" // 1순위: 크롤링 시 마감 판정된 경우
               ? "마감"
-              : existingPost
-              ? existingPost.status
-              : "활성", // 크롤링 시 마감 여부 반영
+              : existingPost?.status === "마감" // 2순위: DB에 이미 마감으로 저장된 경우
+              ? "마감"
+              : "활성", // 그 외 기본 '활성'
           crawled_at: new Date(crawledPost.crawledAt).toISOString(),
           updated_at: new Date().toISOString(),
           item_list: [], // 초기화 후 아래에서 채움
@@ -1593,6 +1654,19 @@ class BandPosts extends BandAuth {
 
         // --- 5) 댓글(Order) 처리 (새로운 댓글만, 안정적 저장 방식) ---
         let isClosedByNewComment = false;
+
+        if (postNumStr === "26778") {
+          logger.debug(
+            `[Debug 26778] Before comment processing block - isProductPost: ${isProductPost}, newCommentsExist: ${newCommentsExist}, commentCountDiff: ${commentCountDiff}`
+          );
+        }
+
+        if (newCommentsExist) {
+          postNeedsUpdate = true;
+          logger.debug(
+            `ID ${postNumStr}: 댓글 수 변경 감지됨 (${commentCountStored} -> ${crawledCommentCount}), Post 업데이트 대상.`
+          );
+        }
 
         // 새 댓글이 있을 경우에만 처리 (v_improved 방식)
         if (isProductPost && newCommentsExist && commentCountDiff > 0) {
@@ -1845,7 +1919,10 @@ class BandPosts extends BandAuth {
                     newProductsFromAI.find(
                       (p) => p.product_id === targetProductId
                     ) ||
-                    (existingProductsFullMap.get(postNumStr) || []).find(
+                    Array.from(
+                      existingProductsFullMap.get(postNumStr)?.values() || []
+                    ).find(
+                      // <--- 수정된 부분
                       (p) => p.product_id === targetProductId
                     );
                   if (productInfo)
@@ -1932,7 +2009,10 @@ class BandPosts extends BandAuth {
                       newProductsFromAI.find(
                         (p) => p.product_id === targetProductId
                       ) ||
-                      (existingProductsFullMap.get(postNumStr) || []).find(
+                      Array.from(
+                        existingProductsFullMap.get(postNumStr)?.values() || []
+                      ).find(
+                        // <--- 수정된 부분
                         (p) => p.product_id === targetProductId
                       );
                     if (productInfo)
@@ -1966,45 +2046,65 @@ class BandPosts extends BandAuth {
           } // end for newComments
         } // end if newCommentsExist
 
-        // --- 6) 상태 업데이트 (마감 처리 - v_improved) ---
-        if (isClosedByNewComment && postData.status !== "마감") {
-          postData.status = "마감";
-          postNeedsUpdate = true;
-          productNeedsUpdate = true; // 관련 상품도 마감 처리 필요
-          logger.info(`ID ${postNumStr}: 신규 댓글로 마감 처리됨.`);
+        const shouldBeClosed =
+          crawledPost.status === "마감" || isClosedByNewComment;
 
-          // 마감 시 관련된 productsToUpsert 항목의 status도 변경
-          const productsToMarkClosed = productsToUpsert.filter(
+        // --- 6) 상태 업데이트 (마감 처리 - v_improved) ---
+        // 마감 상태여야 하는데, 현재 postData 객체의 상태가 아직 '마감'이 아니라면 마감 처리를 진행
+        if (shouldBeClosed && postData.status !== "마감") {
+          postData.status = "마감"; // postData 상태를 '마감'으로 최종 확정
+          postNeedsUpdate = true; // 게시물 정보 업데이트 필요 플래그 설정
+          productNeedsUpdate = true; // 관련 상품 정보 업데이트 필요 플래그 설정
+
+          // 어떤 이유로 마감되었는지 로깅
+          const closeReason =
+            crawledPost.status === "마감" ? "본문/댓글(크롤링시)" : "새 댓글";
+          logger.info(
+            `ID ${postNumStr}: ${closeReason} 키워드로 인해 마감 처리됨.`
+          );
+
+          // --- 이 게시물과 관련된 모든 상품들의 상태를 '마감'으로 변경하는 로직 ---
+
+          // 1. 현재 DB에 저장(Upsert)하기 위해 준비 중인 상품 목록(productsToUpsert)에서
+          //    이 게시물에 해당하고 아직 '마감' 상태가 아닌 상품들을 찾아 상태 변경
+          const productsToMarkClosedInUpsert = productsToUpsert.filter(
             (p) => p.post_number === postNumStr && p.status !== "마감"
           );
-          productsToMarkClosed.forEach((p) => {
-            p.status = "마감";
-            p.updated_at = new Date().toISOString();
+          productsToMarkClosedInUpsert.forEach((p) => {
+            p.status = "마감"; // 상태를 '마감'으로 변경
+            p.updated_at = new Date().toISOString(); // 업데이트 시간 갱신
             logger.debug(
-              `ID ${postNumStr}: Upsert 대상 상품 ${p.item_number} 마감 상태로 변경 (댓글 키워드)`
+              `ID ${postNumStr}: Upsert 대상 상품 ${p.item_number} 마감 상태로 변경 (${closeReason})`
             );
           });
 
-          const existingProdsForPost = existingProductsFullMap.get(postNumStr);
-          if (existingProdsForPost) {
-            existingProdsForPost.forEach((prodInfo) => {
+          // 2. DB에는 이미 존재하지만, 이번 Upsert 대상 목록에는 아직 포함되지 않은 기존 상품들도
+          //    '마감' 상태로 업데이트하기 위해 productsToUpsert 목록에 추가
+          const existingProdsMapForPost =
+            existingProductsFullMap.get(postNumStr); // 해당 게시물의 기존 상품 정보 가져오기
+          if (existingProdsMapForPost) {
+            existingProdsMapForPost.forEach((existingProdInfo) => {
+              // 현재 Upsert 목록에 이미 해당 상품이 있는지 확인
               const alreadyInUpsert = productsToUpsert.some(
-                (p) => p.product_id === prodInfo.product_id
+                (p) => p.product_id === existingProdInfo.product_id
               );
-              if (!alreadyInUpsert && prodInfo.status !== "마감") {
+              // Upsert 목록에 없고 & DB 상의 상태가 '마감'이 아닐 경우에만 처리
+              if (!alreadyInUpsert && existingProdInfo.status !== "마감") {
+                // '마감' 상태 업데이트를 위한 최소 정보만 포함하여 Upsert 목록에 추가
                 productsToUpsert.push({
-                  product_id: prodInfo.product_id,
-                  user_id: userId,
-                  status: "마감",
-                  updated_at: new Date().toISOString(),
+                  product_id: existingProdInfo.product_id,
+                  user_id: userId, // 사용자 ID는 필수
+                  status: "마감", // 상태를 '마감'으로 설정
+                  updated_at: new Date().toISOString(), // 업데이트 시간 갱신
                 });
                 logger.debug(
-                  `ID ${postNumStr}: 기존 상품 ${prodInfo.item_number} 마감 처리 위해 upsert 추가 (댓글 키워드)`
+                  `ID ${postNumStr}: 기존 상품 ${existingProdInfo.item_number} 마감 처리 위해 upsert 추가 (${closeReason})`
                 );
               }
             });
           }
-        }
+          // --- 관련 상품들 마감 처리 로직 끝 ---
+        } // end if (shouldBeClosed && postData.status !== "마감")
 
         // --- 7) Upsert 대상 추가 (v_improved) ---
         if (postNeedsUpdate) {

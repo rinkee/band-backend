@@ -31,7 +31,8 @@ const getAllProducts = async (req, res) => {
     let query = supabase
       .from("products")
       .select("*", { count: "exact" }) // count 옵션 확인
-      .eq("user_id", userId);
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false }); //
 
     // 상태 필터링 (req.query.status 값이 "all"이 아닐 때만 적용)
     if (
