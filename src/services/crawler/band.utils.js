@@ -1,27 +1,223 @@
 // src/services/crawler/band.utils.js
 const crypto = require("crypto");
 const logger = require("../../config/logger");
+const { createClient } = require("@supabase/supabase-js");
+
+// Supabase 클라이언트 초기화
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
+
+/**
+ * 주문 수량과 가격 옵션을 기반으로 가장 저렴한 총 금액을 계산합니다.
+ * @param {number} orderQuantity - 주문하려는 총 수량
+ * @param {Array<Object>} priceOptions - 상품의 가격 옵션 배열 [{ quantity: number, price: number, description?: string }, ...]
+ * @param {number} fallbackUnitPrice - 가격 옵션이 없거나 잘못된 경우 사용할 개당 가격 (예: product.base_price)
+ * @returns {number} - 계산된 최적의 총 금액 (정수로 반올림)
+ */
+function calculateOptimalPrice(
+  orderQuantity,
+  priceOptions,
+  fallbackUnitPrice = 0
+) {
+  // 입력값 유효성 검사
+  if (typeof orderQuantity !== "number" || orderQuantity <= 0) {
+    return 0;
+  }
+  if (!Array.isArray(priceOptions) || priceOptions.length === 0) {
+    // 가격 옵션이 없으면 fallback 단가 * 수량 반환
+    return Math.round(fallbackUnitPrice * orderQuantity);
+  }
+
+  // 유효한 가격 옵션만 필터링 (quantity와 price가 유효한 숫자)
+  const validOptions = priceOptions.filter(
+    (opt) =>
+      typeof opt.quantity === "number" &&
+      opt.quantity > 0 &&
+      typeof opt.price === "number" &&
+      opt.price >= 0
+  );
+
+  if (validOptions.length === 0) {
+    // 유효한 옵션이 없으면 fallback 사용
+    return Math.round(fallbackUnitPrice * orderQuantity);
+  }
+
+  // 수량 기준으로 내림차순 정렬 (큰 묶음부터 처리하기 위함)
+  validOptions.sort((a, b) => b.quantity - a.quantity);
+
+  let remainingQuantity = orderQuantity;
+  let totalCost = 0;
+
+  // 가장 큰 묶음부터 적용
+  for (const option of validOptions) {
+    if (remainingQuantity >= option.quantity) {
+      // 현재 옵션의 묶음을 몇 개 사용할 수 있는지 계산
+      const numberOfBundles = Math.floor(remainingQuantity / option.quantity);
+      totalCost += numberOfBundles * option.price;
+      remainingQuantity -= numberOfBundles * option.quantity;
+      // console.log(`Using option: ${numberOfBundles} bundles of ${option.quantity} @ ${option.price}. Remaining: ${remainingQuantity}`);
+    }
+  }
+
+  // 모든 묶음 옵션을 적용하고도 남은 수량이 있다면
+  if (remainingQuantity > 0) {
+    // 가장 작은 단위(일반적으로 quantity: 1)의 가격을 찾아 적용
+    // 이미 quantity 기준 오름차순 정렬했으므로 마지막 요소가 가장 작은 단위일 가능성이 높음
+    // 또는 quantity: 1인 옵션을 직접 찾음
+    let singleUnitPrice = fallbackUnitPrice; // 기본값은 fallback
+
+    const singleUnitOption = validOptions.find((opt) => opt.quantity === 1);
+    if (singleUnitOption) {
+      singleUnitPrice = singleUnitOption.price;
+    } else {
+      // quantity: 1 옵션이 없으면, 유효 옵션 중 가장 작은 quantity 옵션의 단가를 계산하여 사용
+      const smallestOption = validOptions[validOptions.length - 1]; // 내림차순 정렬했으므로 마지막 요소
+      if (smallestOption) {
+        singleUnitPrice = smallestOption.price / smallestOption.quantity;
+      }
+    }
+
+    // console.log(`Using single unit price ${singleUnitPrice} for remaining ${remainingQuantity} items.`);
+    totalCost += remainingQuantity * singleUnitPrice;
+  }
+
+  return Math.round(totalCost); // 최종 금액 반올림
+}
+
+/**
+ * DB의 작업 상태를 업데이트하는 함수
+ * @param {string} taskId
+ * @param {string} status
+ * @param {string} message
+ * @param {number} progress
+ * @param {string | null} [errorMessage=null] - 오류 메시지 (실패 시)
+ */
+async function updateTaskStatusInDB(
+  taskId,
+  status,
+  message,
+  progress,
+  errorMessage = null
+) {
+  if (!taskId) return; // taskId 없으면 아무것도 안 함
+
+  const updateData = {
+    status,
+    message,
+    progress,
+    updated_at: new Date().toISOString(), // 명시적으로 업데이트 시간 설정
+  };
+
+  if (status === "failed") {
+    updateData.error_message = errorMessage || "알 수 없는 오류";
+    updateData.end_time = updateData.updated_at;
+  } else if (status === "completed") {
+    updateData.end_time = updateData.updated_at;
+  }
+
+  try {
+    const { error } = await supabase
+      .from("crawl_tasks") // 실제 테이블 이름 사용
+      .update(updateData)
+      .eq("task_id", taskId);
+
+    if (error) {
+      logger.error(
+        `DB 작업 상태 업데이트 오류 (Task ID: ${taskId}): ${error.message}`
+      );
+    } else {
+      logger.debug(
+        `DB 작업 상태 업데이트 완료 (Task ID: ${taskId}): ${status} - ${message} (${progress}%)`
+      );
+    }
+  } catch (dbError) {
+    logger.error(
+      `DB 작업 상태 업데이트 중 예외 발생 (Task ID: ${taskId}): ${dbError.message}`
+    );
+  }
+}
 
 /**
  * productId로부터 고유한 13자리 EAN-13 바코드 번호를 생성합니다.
- * @param {string} productId
- * @returns {string} 13자리 바코드 숫자 (앞 12자리 + EAN-13 체크디지트)
+ * 사용자의 auto_barcode_generation 설정이 false이면 null을 반환합니다.
+ * @param {string} productId - 상품 ID
+ * @param {string} userId - 사용자 ID (설정 확인용)
+ * @returns {Promise<string|null>} - 13자리 바코드 숫자 또는 null
  */
-function generateBarcodeFromProductId(productId) {
+async function generateBarcodeFromProductId(productId, userId) {
+  // <<<--- async 및 userId 인수 추가
   // <<<--- 로그 추가: 함수 시작 및 입력값 확인 --->>>
   logger.debug(
-    `[Barcode Func] generateBarcodeFromProductId called with productId: ${productId}`
+    `[Barcode Func] generateBarcodeFromProductId called with productId: ${productId}, userId: ${userId}`
   );
 
+  // 1. 입력값 유효성 검사
   if (!productId || typeof productId !== "string") {
     logger.error(
       `[Barcode Func] Invalid productId received: ${productId}. Returning null.`
     );
-    return null; // 유효하지 않은 입력 처리
+    return null;
+  }
+  if (!userId) {
+    logger.error(
+      `[Barcode Func] Missing userId. Cannot check setting. Returning null.`
+    );
+    return null;
   }
 
+  // <<<--- 사용자 설정 확인 로직 추가 --- START --->>>
+  let autoGenerate = false; // 기본값 false
   try {
-    // 전체 로직을 try-catch로 감싸 안정성 확보
+    const { data: userData, error: userError } = await supabase
+      .from("users") // 실제 사용자 테이블 이름 사용 ('users' 또는 'profiles' 등)
+      .select("auto_barcode_generation")
+      .eq("user_id", userId) // 사용자 테이블의 ID 필드 이름 사용
+      .single(); // 단일 사용자 조회
+
+    if (userError) {
+      // 사용자를 찾지 못한 경우도 에러로 처리될 수 있음 (예: RLS)
+      logger.error(
+        `[Barcode Func] Error fetching user settings for userId ${userId}: ${userError.message}. Assuming disabled.`
+      );
+      return null; // 설정 조회 실패 시 null 반환
+    }
+
+    if (userData) {
+      // userData가 있고, auto_barcode_generation 필드가 true이면 활성화
+      autoGenerate = userData.auto_barcode_generation === true;
+      logger.debug(
+        `[Barcode Func] User ${userId} setting 'auto_barcode_generation': ${autoGenerate}`
+      );
+    } else {
+      // 사용자를 찾았지만 데이터가 없는 경우 (이론상 single()에서는 잘 발생 안 함)
+      logger.warn(
+        `[Barcode Func] User data not found for userId ${userId}, although query succeeded. Assuming disabled.`
+      );
+      return null;
+    }
+  } catch (fetchError) {
+    logger.error(
+      `[Barcode Func] Exception fetching user settings for userId ${userId}: ${fetchError.message}. Assuming disabled.`
+    );
+    return null; // 예외 발생 시 null 반환
+  }
+
+  // 설정이 false이면 여기서 함수 종료
+  if (!autoGenerate) {
+    logger.info(
+      `[Barcode Func] Barcode generation skipped for userId ${userId} as 'auto_barcode_generation' is disabled.`
+    );
+    return null;
+  }
+  // <<<--- 사용자 설정 확인 로직 추가 --- END --->>>
+
+  // --- 기존 바코드 생성 로직 (설정이 true일 때만 실행됨) ---
+  logger.debug(
+    `[Barcode Func] Proceeding with barcode generation for productId: ${productId} (User setting enabled)`
+  );
+  try {
     // 1) SHA-256 해시 생성
     const hash = crypto.createHash("sha256").update(productId).digest();
 
@@ -51,7 +247,7 @@ function generateBarcodeFromProductId(productId) {
       `[Barcode Func] Error during barcode generation for ${productId}: ${error.message}`,
       error.stack
     );
-    return null; // 오류 발생 시 null 반환
+    return null; // 생성 중 오류 발생 시 null 반환
   }
 }
 
@@ -706,4 +902,6 @@ module.exports = {
   contentHasPriceIndicator,
   extractEnhancedOrderFromComment,
   generateBarcodeFromProductId,
+  updateTaskStatusInDB,
+  calculateOptimalPrice,
 };

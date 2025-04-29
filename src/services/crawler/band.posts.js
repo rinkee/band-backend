@@ -13,6 +13,8 @@ const {
   extractEnhancedOrderFromComment, // 댓글에서 주문 상세 추출
   contentHasPriceIndicator, // 가격 표시 감지
   generateBarcodeFromProductId, // <<<--- 바코드 생성 함수 추가
+  calculateOptimalPrice, // <<<--- 최적 가격 계산 함수 추가
+  updateTaskStatusInDB, // <<<--- DB 상태 업데이트 함수 추가
 } = require("./band.utils");
 const logger = require("../../config/logger");
 const cheerio = require("cheerio");
@@ -389,8 +391,37 @@ class BandPosts extends BandAuth {
           break; // 오류 발생 시 중단
         }
       }
-      if (commentLoadAttempts >= MAX_COMMENT_LOAD_ATTEMPTS)
+      if (commentLoadAttempts >= MAX_COMMENT_LOAD_ATTEMPTS) {
         logger.warn(`최대 댓글 로드 시도 도달 (${currentUrl}).`);
+      }
+
+      // --- 이전 댓글 버튼이 사라질 때까지 대기 --- START ---
+      try {
+        logger.info(
+          `모든 댓글 로드를 위해 '${prevButtonSelector}' 버튼이 사라지기를 기다립니다...`
+        );
+        await this.page.waitForSelector(prevButtonSelector, {
+          hidden: true, // <<<--- 버튼이 숨겨지거나 DOM에서 제거될 때까지 대기
+          timeout: 15000, // <<<--- 최대 대기 시간 설정 (예: 15초, 필요시 조정)
+        });
+        logger.info(
+          `'${prevButtonSelector}' 버튼 사라짐 확인. 모든 댓글 로딩 완료 추정.`
+        );
+      } catch (error) {
+        // 타임아웃 발생 시: 버튼이 계속 남아있거나, 예상보다 오래 걸림
+        if (error.name === "TimeoutError") {
+          logger.warn(
+            `'${prevButtonSelector}' 버튼이 제한 시간 내에 사라지지 않았습니다. 댓글이 완전히 로드되지 않았을 수 있습니다.`
+          );
+          // 계속 진행하거나, 오류로 처리할 수 있음
+        } else {
+          // 다른 예외 상황
+          logger.error(
+            `'${prevButtonSelector}' 대기 중 오류 발생: ${error.message}`
+          );
+        }
+      }
+      // --- 이전 댓글 버튼이 사라질 때까지 대기 --- END ---
 
       // --- START: 댓글 로딩 보장을 위해 페이지 맨 아래로 스크롤하는 코드 추가 ---
       try {
@@ -552,6 +583,7 @@ class BandPosts extends BandAuth {
    * @param {string} naverPassword
    * @param {number} [maxScrollAttempts=50] - 스크롤 시도 횟수
    * @param {boolean} [processWithAI=true] - AI 사용 여부
+   * * @param {string} taskId // <<<--- taskId 파라미터 확인
    * @returns {Promise<Object>}
    */
   async crawlAndSave(
@@ -560,26 +592,57 @@ class BandPosts extends BandAuth {
     naverPassword,
     maxScrollAttempts = 50,
     processWithAI = true,
-    daysLimit
+    daysLimit,
+    taskId
   ) {
+    this.taskId = taskId; // <<<--- 인스턴스 변수에 taskId 저장
+    let lastProgress = 0; // 마지막 진행률 추적
+    // 상태 업데이트 래퍼 함수 (진행률 추적 포함)
+    // --- DB 상태 업데이트를 위한 래퍼 함수 (편의용) ---
+    const updateDbStatus = async (status, message, progress, error = null) => {
+      // taskId가 유효한 경우에만 DB 업데이트 시도
+      if (taskId) {
+        await updateTaskStatusInDB(taskId, status, message, progress, error);
+      } else {
+        logger.warn("taskId가 없어 DB 상태를 업데이트할 수 없습니다.");
+      }
+      // 로컬 상태 업데이트(_updateStatus)는 필요 시 별도 호출 또는 통합
+      // this._updateStatus(status, message, progress);
+    };
+    // --- 래퍼 함수 끝 ---
+
     try {
       this.crawlStartTime = Date.now();
 
       logger.info(
         `목록 기반 증분 크롤링 및 저장 시작 (daysLimit=${daysLimit}, maxScrollAttempts=${maxScrollAttempts})`
       );
-      this._updateStatus("processing", "크롤링 초기화 및 로그인...", 5);
+      updateDbStatus("processing", "크롤링 초기화 및 로그인...", 5);
 
       // 1. 로그인 및 밴드 페이지 이동
       await this.accessBandPage(userId, naverId, naverPassword);
-      this._updateStatus("processing", "밴드 페이지 이동...", 20);
+      updateDbStatus("processing", "밴드 페이지 이동...", 20);
       await this.page.goto(`https://band.us/band/${this.bandNumber}`, {
         waitUntil: "networkidle0",
         timeout: 60000,
       }); // networkidle0으로 변경 시도
+      console.log(`[${this.taskId}] 밴드 페이지 이동...`);
+
+      await this.page.goto("https://band.us/band/82443310/", {
+        waitUntil: "networkidle2",
+        timeout: 30000,
+      });
+      // 기다릴 요소 선택자 (개발자 도구를 사용하여 확인하세요)
+      const selector = "div.uWidget.-displayBlock.gCursorPointer"; // 또는 div[data-viewname="DPostPhotoListView"]
+
+      await this.page.waitForSelector(selector, { timeout: 5000 }); // 5초 동안 기다립니다.
+
+      await this.page.addStyleTag({
+        content: `${selector} { display: none !important; }`,
+      });
 
       // 2. 기존 데이터 로드 (last_crawled_post_id, existingPostsMap)
-      this._updateStatus("processing", "기존 데이터 로드...", 25);
+      updateDbStatus("processing", "기존 데이터 로드...", 25);
       const { data: urow, error: uerr } = await this.supabase
         .from("users")
         .select("last_crawled_post_id")
@@ -588,6 +651,7 @@ class BandPosts extends BandAuth {
       if (uerr && uerr.code !== "PGRST116") throw uerr;
       const lastCrawledPostId = urow?.last_crawled_post_id || "0";
       logger.debug(`기존 last_crawled_post_id=${lastCrawledPostId}`);
+      console.log(`[${this.taskId}] 기존 데이터 로드...`);
 
       const { data: existingPostsData, error: postsErr } = await this.supabase
         .from("posts")
@@ -604,9 +668,10 @@ class BandPosts extends BandAuth {
         ]) || []
       );
       logger.debug(`${existingPostsMap.size}개 기존 게시물 기본 정보 로드됨`);
+      console.log(`[${this.taskId}] 기존 게시물 기본 정보 로드...`);
 
       // 3. 페이지 스크롤 및 기본 정보 수집
-      this._updateStatus(
+      updateDbStatus(
         "processing",
         "게시물 목록 스캔 및 기본 정보 수집 중...",
         30
@@ -618,8 +683,9 @@ class BandPosts extends BandAuth {
         maxScrollAttempts > 0 ? maxScrollAttempts * 4 : 200 // safetyScrollLimit 설정 (기존 max 값 활용)
       );
       if (basicPostInfoList.length === 0) {
-        this._updateStatus("completed", "처리할 새 게시물 없음", 100);
+        updateDbStatus("completed", "처리할 새 게시물 없음", 100);
         logger.info("스크롤 결과 처리할 새 게시물이 없습니다.");
+        console.log(`[${this.taskId}] 처리할 새 게시물 없음`);
         // 최신 ID 업데이트 로직은 여기에 추가할 수 있음 (스크롤 결과가 없더라도 최신 ID는 있을 수 있음)
         const latestPostIdOnPage = await this.getLatestPostId();
         if (
@@ -632,7 +698,8 @@ class BandPosts extends BandAuth {
       }
 
       // 4. 상세 크롤링 대상 선정
-      this._updateStatus("processing", "상세 크롤링 대상 선정 중...", 60);
+      updateDbStatus("processing", "상세 크롤링 대상 선정 중...", 60);
+      console.log(`[${this.taskId}] 상세 크롤링 대상 선정 중...`);
       const toCrawlDetailsUrls = [];
       let latestPostIdInList = "0"; // 이번 스크롤에서 발견된 가장 최신 ID
       const detailThresholdDate = new Date();
@@ -677,6 +744,11 @@ class BandPosts extends BandAuth {
               shouldCrawlNew ? "신규(기간내)" : "댓글변경(미마감,기간내)"
             })`
           );
+          console.log(
+            `[${this.taskId}] ID ${item.postId}: 상세 크롤링 대상 추가 (이유: ${
+              shouldCrawlNew ? "신규(기간내)" : "댓글변경(미마감,기간내)"
+            })`
+          );
         } else {
           // 제외 사유 로깅 개선
           let reason = "알 수 없음";
@@ -698,25 +770,56 @@ class BandPosts extends BandAuth {
             else reason = "기존(변경없음)";
           }
           logger.debug(`ID ${item.postId}: 상세 크롤링 제외 (이유: ${reason})`);
+          console.log(
+            `[${this.taskId}] ID ${item.postId}: 상세 크롤링 제외 (이유: ${reason})`
+          );
         }
       }
       logger.info(
         `총 ${toCrawlDetailsUrls.length}개의 게시물 상세 크롤링 대상 선정.`
       );
+      console.log(
+        `[${this.taskId}] 총 ${toCrawlDetailsUrls.length}개의 게시물 상세 크롤링 대상 선정.`
+      );
       // 5. 병렬 상세 크롤링 실행
-      this._updateStatus(
+      updateDbStatus(
         "processing",
         `${toCrawlDetailsUrls.length}개 상세 정보 크롤링 중...`,
         70
+      );
+      console.log(
+        `[${this.taskId}] ${toCrawlDetailsUrls.length}개 상세 정보 크롤링 중...`
       );
       const detailedResults = []; // 상세 정보 저장 배열
       if (toCrawlDetailsUrls.length > 0) {
         const pageA = await this.browser.newPage();
         const pageB = await this.browser.newPage();
+
+        // 이미지 로딩 방지 및 스타일 추가 함수
+        const configurePage = async (page) => {
+          await page.setRequestInterception(true); // Request interception enabled BEFORE adding listeners
+          page.on("request", (req) => {
+            if (req.resourceType() === "image") {
+              req.abort();
+            } else {
+              req.continue();
+            }
+          });
+          // await page.addStyleTag({
+          //   content: `div.uWidget.-displayBlock.gCursorPointer { display: none !important; }`,
+          // });
+        };
+
+        await configurePage(pageA);
+        await configurePage(pageB); //Await the configuration for both pages
+
         // ... (dialog 핸들러 부착) ...
         const attachDialogHandler = (page, name) => {
           page.on("dialog", async (dialog) => {
             logger.warn(`[${name}] dialog: ${dialog.message()}. closing.`);
+            console.log(
+              `[${this.taskId}] [${name}] dialog: ${dialog.message()}. closing.`
+            );
             await dialog.accept();
           });
         };
@@ -733,12 +836,21 @@ class BandPosts extends BandAuth {
             logger.debug(
               `상세 크롤링 시도 ID=${postId} on ${idx === 0 ? "A" : "B"}`
             );
+            console.log(
+              `[${this.taskId}] 상세 크롤링 시도 ID=${postId} on ${
+                idx === 0 ? "A" : "B"
+              }`
+            );
             try {
               await page.goto(url, {
                 waitUntil: "domcontentloaded",
                 timeout: 45000,
               });
               await new Promise((r) => setTimeout(r, 1000));
+
+              await page.addStyleTag({
+                content: `.uWidget.expanded { display: none !important; }`,
+              });
 
               // 상세 정보 추출 함수 호출
               const detail = await this.extractPostDetailFromPage.call({
@@ -762,13 +874,29 @@ class BandPosts extends BandAuth {
                   logger.info(
                     `ID ${detail.postId}: 상세 내용(${reason})에서 마감 키워드 발견. status='마감' 설정.`
                   );
+                  console.log(
+                    `[${this.taskId}] ID ${detail.postId}: 상세 내용(${reason})에서 마감 키워드 발견. status='마감' 설정.`
+                  );
                   detail.status = "마감"; // 크롤링 결과 객체에 '마감' 상태 설정
                 } else {
                   logger.info(
                     `ID ${detail.postId}: 상세 정보 수집됨 (마감 아님).`
                   );
+                  console.log(
+                    `[${this.taskId}] ID ${detail.postId}: 상세 정보 수집됨 (마감 아님).`
+                  );
                   // detail.status = "활성"; // 필요 시 기본 상태 설정
                 }
+
+                // --- 추가 로그 ---
+                if (postId === "문제_게시물_ID_입력") {
+                  logger.debug(
+                    `[상세 크롤링 후 상태 ${postId}] 최종 detail.status: ${
+                      detail.status || "활성(기본값)"
+                    }`
+                  );
+                }
+                // --- 추가 로그 끝 ---
                 // --- 마감 키워드 체크 --- END
                 detailedResults.push(detail); // 마감 상태가 반영된 detail 객체 저장
               } else {
@@ -787,12 +915,19 @@ class BandPosts extends BandAuth {
 
           const progress =
             70 + Math.floor(((i + batchSize) / toCrawlDetailsUrls.length) * 25);
-          this._updateStatus(
+          updateDbStatus(
             "processing",
             `${detailedResults.length}개 상세 정보 수집 완료 (${
               i + batchSize
             }/${toCrawlDetailsUrls.length})`,
             Math.min(95, progress)
+          );
+          console.log(
+            `[${this.taskId}] ${
+              detailedResults.length
+            }개 상세 정보 수집 완료 (${i + batchSize}/${
+              toCrawlDetailsUrls.length
+            })`
           );
         } // end for batch
         await pageA.close();
@@ -801,12 +936,18 @@ class BandPosts extends BandAuth {
       logger.info(
         `상세 크롤링 완료, 총 ${detailedResults.length}개 게시물 데이터 확보`
       );
+      console.log(
+        `[${this.taskId}] 상세 크롤링 완료, 총 ${detailedResults.length}개 게시물 데이터 확보`
+      );
 
       // 6. DB 저장 (saveDetailPostsToSupabase 호출)
-      this._updateStatus(
+      updateDbStatus(
         "processing",
         `${detailedResults.length}개 데이터 DB 저장 시도...`,
         95
+      );
+      console.log(
+        `[${this.taskId}] ${detailedResults.length}개 데이터 DB 저장 시도...`
       );
       if (detailedResults.length > 0) {
         await this.saveDetailPostsToSupabase(
@@ -816,7 +957,8 @@ class BandPosts extends BandAuth {
         );
       } else {
         logger.info("DB에 저장할 상세 크롤링 결과 없음.");
-        this._updateStatus("completed", "저장할 새 데이터 없음", 100);
+        updateDbStatus("completed", "저장할 새 데이터 없음", 100);
+        console.log(`[${this.taskId}] DB에 저장할 상세 크롤링 결과 없음.`);
       }
 
       // 7. last_crawled_post_id 업데이트 (latestPostIdInList 사용)
@@ -840,15 +982,19 @@ class BandPosts extends BandAuth {
         );
       }
 
-      this._updateStatus(
+      updateDbStatus(
         "completed",
         `크롤링 및 저장 완료 (${detailedResults.length}개 처리)`,
         100
       );
+      console.log(
+        `[${this.taskId}] 크롤링 및 저장 완료 (${detailedResults.length}개 처리)`
+      );
       return { success: true, data: detailedResults }; // 최종 결과 반환
     } catch (e) {
       logger.error(`crawlAndSave 전체 프로세스 에러: ${e.message}`, e.stack);
-      this._updateStatus("failed", `크롤링 실패: ${e.message}`, 100);
+      updateDbStatus("failed", `크롤링 실패: ${e.message}`, 100);
+      console.log(`[${this.taskId}] 크롤링 실패: ${e.message}`);
       return { success: false, error: e.message };
     }
   }
@@ -969,6 +1115,25 @@ class BandPosts extends BandAuth {
               const closedByKeyword = detail.comments.some((c) =>
                 hasClosingKeywords(c.content)
               );
+
+              // --- 추가 로그 ---
+              if (postId === "문제_게시물_ID_입력") {
+                // 특정 ID만 로깅
+                logger.debug(
+                  `[상세 크롤링 마감 체크 ${postId}] 본문 마감 감지: ${closedByContent}, 댓글 마감 감지: ${closedByComment}`
+                );
+                if (closedByComment) {
+                  const closingComments = detail.comments.filter((c) =>
+                    hasClosingKeywords(c.content)
+                  );
+                  logger.debug(
+                    `  마감 키워드 포함 댓글 내용: ${JSON.stringify(
+                      closingComments
+                    )}`
+                  );
+                }
+              }
+              // --- 추가 로그 끝 ---
               // const today = new Date();
               // today.setHours(0, 0, 0, 0);
               // const isClosedDate = pickupDate && pickupDate < today;
@@ -1094,60 +1259,51 @@ class BandPosts extends BandAuth {
   }
 
   /**
-   * 게시물 상세 정보 Supabase 저장 (병렬 크롤링 결과 처리, AI 우선, 새 댓글만 처리, 안정적 주문 저장, 바코드)
-   * @param {Array<Object>} detailedPosts - 저장할 게시물 목록 (v_working 포맷)
+   * 게시물 상세 정보 Supabase 저장 (최종 버전: 주문 요약 포함)
+   * @param {Array<Object>} detailedPosts - 저장할 게시물 목록
    * @param {string} userId - 사용자 ID
    * @param {boolean} processWithAI - AI 처리 활성화 여부
    */
   async saveDetailPostsToSupabase(detailedPosts, userId, processWithAI = true) {
-    // --- 사전 검사 ---
+    // --- 1. 사전 검사 ---
     if (!userId) throw new Error("userId 필수");
     if (!this.supabase) throw new Error("Supabase 클라이언트 없음");
     if (!this.bandNumber) throw new Error("밴드 ID 없음");
     if (!detailedPosts || detailedPosts.length === 0) {
       logger.info("저장할 게시물 없음");
-      this._updateStatus("completed", "저장할 데이터 없음", 100);
+      if (this._updateStatus)
+        this._updateStatus("completed", "저장할 데이터 없음", 100);
       return;
     }
 
-    this._updateStatus(
-      "processing",
-      "DB 저장 준비 중 (AI 분석, 새 댓글 처리)",
-      85 // 진행률 조정
-    );
+    if (this._updateStatus)
+      this._updateStatus("processing", "DB 저장 준비 중...", 85);
     const supabase = this.supabase;
     const bandNumberStr = this.bandNumber;
 
-    // --- AI 서비스 로드 (선택 사항) ---
+    // --- 2. AI 서비스 로드 ---
     let extractProductInfoAI = null;
     if (processWithAI) {
       try {
         extractProductInfoAI =
           require("../../services/ai.service").extractProductInfo;
-        if (extractProductInfoAI) {
-          logger.info("AI 서비스 (extractProductInfo) 로드됨.");
-        } else {
-          logger.warn(
-            "AI 서비스 (extractProductInfo) 로드 시도했으나 함수를 찾을 수 없습니다."
-          );
-        }
+        if (extractProductInfoAI) logger.info("AI 서비스 로드됨.");
+        else logger.warn("AI 서비스 함수를 찾을 수 없습니다.");
       } catch (error) {
         logger.error(`AI 서비스 로드 중 오류: ${error.message}`);
-        extractProductInfoAI = null;
       }
     }
-    if (processWithAI && !extractProductInfoAI) {
-      logger.warn("AI 처리가 요청되었으나, AI 서비스 로드에 실패했습니다.");
-    }
+    if (processWithAI && !extractProductInfoAI)
+      logger.warn("AI 처리가 요청되었으나 AI 서비스 로드 실패.");
 
     try {
-      // --- Upsert 대상 배열들 ---
+      // --- 3. Upsert 대상 배열 및 Map 초기화 ---
       const postsToUpsert = [];
       const productsToUpsert = [];
       const ordersToUpsert = [];
-      const customersToUpsertMap = new Map();
+      const customersToUpsertMap = new Map(); // custId -> custData
 
-      // --- 제외 고객 로드 (v_improved 방식) ---
+      // --- 4. 제외 고객 로드 ---
       let excludedCustomers = [];
       try {
         const { data: userData, error: userError } = await supabase
@@ -1156,92 +1312,74 @@ class BandPosts extends BandAuth {
           .eq("user_id", userId)
           .single();
         if (userError && userError.code !== "PGRST116") throw userError;
-        if (userData?.excluded_customers) {
+        if (userData?.excluded_customers)
           excludedCustomers = userData.excluded_customers
             .filter((n) => typeof n === "string")
             .map((n) => n.trim());
-        }
-        logger.info(`제외 고객 ${excludedCustomers.length}명 로드됨`);
+        logger.info(`제외 고객 ${excludedCustomers.length}명 로드됨.`);
       } catch (e) {
         logger.error(`제외 고객 조회 중 오류: ${e.message}`);
       }
 
-      // --- 1) 기존 게시물 및 상품 정보 한 번에 불러오기 (v_improved 방식 - text 키 사용) ---
+      // --- 5. 기존 게시물 및 상품 정보 로드 ---
       const postNumbersStrings = detailedPosts
-        .map((p) => p.postId) // 문자열 postId 사용
-        .filter(Boolean); // null 또는 빈 문자열 제외
-
-      const existingPostsMap = new Map();
-      let existingProductsFullMap = new Map();
-
+        .map((p) => p.postId)
+        .filter(Boolean);
+      const existingPostsMap = new Map(); // postNumStr -> postData
+      let existingProductsFullMap = new Map(); // postNumStr -> Map(itemNumber -> productData)
       if (postNumbersStrings.length > 0) {
-        this._updateStatus(
-          "processing",
-          "기존 게시물/상품 정보 조회 중...",
-          87
-        );
+        if (this._updateStatus)
+          this._updateStatus("processing", "기존 데이터 조회 중...", 87);
         try {
-          // 기존 게시물 (posts) - 필요한 필드 확인 (v_working 추출 기준)
           const { data: posts, error: postsErr } = await supabase
             .from("posts")
             .select(
-              "post_id, content, comment_count, is_product, status, post_number, updated_at" // 필요한 최소 필드 + updated_at
+              "post_id, content, comment_count, is_product, status, post_number, updated_at"
             )
             .eq("user_id", userId)
-            .eq("band_number", bandNumberStr) // 문자열 밴드 번호
-            .in("post_number", postNumbersStrings); // 문자열 게시물 번호 목록
-
+            .eq("band_number", bandNumberStr)
+            .in("post_number", postNumbersStrings);
           if (postsErr) throw postsErr;
           (posts || []).forEach((p) => existingPostsMap.set(p.post_number, p));
-          logger.debug(`${existingPostsMap.size}개의 기존 게시물 정보 로드됨`);
+          logger.debug(`${existingPostsMap.size}개 기존 게시물 정보 로드됨`);
 
-          // 기존 상품 (products)
           const { data: products, error: prodErr } = await supabase
             .from("products")
             .select("*")
             .eq("user_id", userId)
             .eq("band_number", bandNumberStr)
             .in("post_number", postNumbersStrings);
-
           if (prodErr) throw prodErr;
-          // 조회 결과를 existingProductsFullMap에 저장 (중첩 Map 구조)
           (products || []).forEach((p) => {
-            if (!existingProductsFullMap.has(p.post_number)) {
+            if (!existingProductsFullMap.has(p.post_number))
               existingProductsFullMap.set(p.post_number, new Map());
-            }
-            existingProductsFullMap.get(p.post_number).set(p.item_number, p); // item_number를 키로 사용
+            existingProductsFullMap.get(p.post_number).set(p.item_number, p);
           });
           logger.debug(
-            `${existingProductsFullMap.size}개 게시물에 대한 기존 상품 상세 정보 로드됨`
+            `${existingProductsFullMap.size}개 게시물 기존 상품 상세 정보 로드됨`
           );
         } catch (e) {
           logger.error(`기존 데이터 로드 중 오류: ${e.message}`, e.stack);
-          this._updateStatus("failed", `DB 조회 오류: ${e.message}`, 90);
+          if (this._updateStatus)
+            this._updateStatus("failed", `DB 조회 오류: ${e.message}`, 90);
           throw e;
         }
       }
 
-      this._updateStatus(
-        "processing",
-        `${detailedPosts.length}개 게시물 변경분 분석/변환 중...`,
-        91
-      );
-      logger.info(
-        `${detailedPosts.length}개 게시물 처리 시작 (새 댓글 처리, 안정적 주문 저장)`
-      );
+      if (this._updateStatus)
+        this._updateStatus("processing", "데이터 변경분 분석/변환 중...", 91);
+      logger.info(`${detailedPosts.length}개 게시물 처리 시작`);
 
-      // --- 메인 루프 ---
+      // --- 6. 메인 루프: 각 크롤링된 게시물 처리 ---
       for (const crawledPost of detailedPosts) {
-        const postNumStr = crawledPost.postId; // 문자열 ID
+        const postNumStr = crawledPost.postId;
         if (!postNumStr) {
-          logger.warn(`잘못된 postId 발견 (빈 값), 건너뜁니다.`);
+          logger.warn(`잘못된 postId (빈 값), 건너뜁니다.`);
           continue;
         }
-        const postNumInt = parseInt(postNumStr, 10); // 숫자 ID (DB 저장용, 필요시)
+        const postNumInt = parseInt(postNumStr, 10);
         if (isNaN(postNumInt)) {
-          logger.warn(
-            `잘못된 postId 발견 (${crawledPost.postId}), 건너뜁니다.`
-          );
+          logger.warn(`잘못된 postId (${postNumStr}), 건너뜁니다.`);
           continue;
         }
 
@@ -1250,12 +1388,10 @@ class BandPosts extends BandAuth {
           bandNumberStr,
           postNumStr
         );
-
         const crawledContent = crawledPost.postContent || "";
-        // 댓글은 'author' 키를 가지고 있음 (v_working 추출 기준)
         const crawledComments = crawledPost.comments || [];
         const crawledCommentCount =
-          crawledPost.commentCount || crawledComments.length; // commentCount 우선 사용
+          crawledPost.commentCount || crawledComments.length;
         const postedAt =
           safeParseDate(crawledPost.postTime) ||
           new Date(crawledPost.crawledAt) ||
@@ -1264,7 +1400,7 @@ class BandPosts extends BandAuth {
           crawledPost.postUrl ||
           `https://band.us/band/${bandNumberStr}/post/${postNumStr}`;
 
-        // --- 변경 감지 로직 (v_improved) ---
+        // 변경 감지 및 AI 분석 조건 설정
         const existingPost = existingPostsMap.get(postNumStr);
         const isNewPost = !existingPost;
         const contentChanged =
@@ -1274,91 +1410,46 @@ class BandPosts extends BandAuth {
         const commentCountDiff = Math.max(
           0,
           crawledCommentCount - commentCountStored
-        ); // 음수 방지
-
+        );
         let postNeedsUpdate = isNewPost;
-        let productNeedsUpdate = false; // AI 또는 상태 변경 시 true
+        let productNeedsUpdate = false;
         let runAI = false;
         let isProductPost = existingPost ? existingPost.is_product : false;
-
-        // <<<--- 로그 추가 --- START --->>>
-        if (postNumStr === "26778") {
-          logger.debug(
-            `[Debug 26778] Processing post. crawledCommentCount: ${
-              crawledPost.commentCount
-            }, Initial isProductPost guess based on existingPost: ${
-              existingPost ? existingPost.is_product : "N/A (New)"
-            }`
-          );
-        }
-        // <<<--- 로그 추가 --- END --->>>
-
         const productMap = new Map(); // itemNumber -> productId
-        let newProductsFromAI = []; // AI가 생성한 상품 데이터 임시 저장
+        let newProductsFromAI = [];
 
-        // --- 2) AI 분석 조건 결정 (v_improved) ---
         const mightBeProduct = contentHasPriceIndicator(crawledContent);
         if (
           extractProductInfoAI &&
           (isNewPost || contentChanged) &&
           mightBeProduct
-        ) {
+        )
           runAI = true;
-          logger.info(
-            `ID ${postNumStr}: 신규/내용 변경 및 가격 지표 -> AI 분석 대상.`
-          );
-        } else if (!isNewPost && !contentChanged && existingPost?.is_product) {
+        else if (!isNewPost && !contentChanged && existingPost?.is_product)
           isProductPost = true;
-          const existingProds = existingProductsFullMap.get(postNumStr) || [];
-          existingProds.forEach(({ product_id, item_number }) => {
-            productMap.set(item_number, product_id);
-          });
-          logger.info(
-            `ID ${postNumStr}: 기존 상품 & 변경 없음 -> AI 스킵 (${productMap.size}개 상품 로드).`
-          );
-        } else if ((isNewPost || contentChanged) && mightBeProduct) {
-          isProductPost = true; // AI 없어도 가격 지표 있으면 일단 상품으로 간주
-          if (!isNewPost && !existingPost?.is_product) postNeedsUpdate = true;
-          logger.info(
-            `ID ${postNumStr}: 가격 지표 기반 상품 간주 (AI 스킵 또는 비대상).`
-          );
-        } else {
-          // 가격 지표 없고, (신규거나 내용변경 없거나 기존 상품 아님)
-          isProductPost = false;
-          if (!isNewPost && existingPost?.is_product) postNeedsUpdate = true; // 상품->상품 아님 변경
-        }
+        else if ((isNewPost || contentChanged) && mightBeProduct)
+          isProductPost = true;
+        else isProductPost = false;
+        if (!isNewPost && isProductPost !== existingPost?.is_product)
+          postNeedsUpdate = true;
 
-        // <<<--- 로그 추가 --- START --->>>
-        if (postNumStr === "26778") {
-          logger.debug(
-            `[Debug 26778] After AI/Indicator Check - isProductPost: ${isProductPost}, mightBeProduct: ${mightBeProduct}, runAI: ${runAI}`
-          );
-        }
-
-        // --- 3) AI 분석 실행 (필요한 경우) ---
+        // AI 분석 실행 (필요시)
         if (runAI) {
           try {
-            logger.debug(`ID ${postNumStr}: AI 분석 호출 시작...`);
-            // AI 서비스 호출 (재시도 로직은 ai.service.js 내부에 구현됨)
             const aiResult = await extractProductInfoAI(
               crawledContent,
-              crawledPost.postTime, // 게시물 작성 시간
-              bandNumberStr, // 밴드 번호 (문자열)
-              postNumStr, // 게시물 번호 (문자열)
-              crawledPost.imageUrls // 이미지 URL 목록 전달
+              crawledPost.postTime,
+              bandNumberStr,
+              postNumStr,
+              crawledPost.imageUrls
             );
-            logger.debug(`ID ${postNumStr}: AI 분석 호출 완료.`);
-
             if (aiResult && (aiResult.products?.length > 0 || aiResult.title)) {
               isProductPost = true;
-              productNeedsUpdate = true; // AI 결과 반영 위해 업데이트 필요
+              productNeedsUpdate = true;
               postNeedsUpdate = true;
-
-              // AI 결과 파싱 (v_improved 로직 사용)
               const productsFromAIResult = aiResult.multipleProducts
                 ? aiResult.products
-                : [{ ...aiResult, itemNumber: 1 }]; // 단일 결과도 배열로
-
+                : [{ ...aiResult, itemNumber: 1 }];
               for (const item of productsFromAIResult) {
                 const idx =
                   typeof item.itemNumber === "number" && item.itemNumber > 0
@@ -1371,44 +1462,16 @@ class BandPosts extends BandAuth {
                   idx
                 );
                 productMap.set(idx, prodId);
-
-                // 가격 결정 로직 (v_working 또는 수정된 v_improved 로직 적용)
-                let salePrice = 0;
-                if (typeof item.basePrice === "number" && item.basePrice > 0) {
-                  salePrice = item.basePrice;
-                } else if (
-                  Array.isArray(item.priceOptions) &&
-                  item.priceOptions.length > 0 &&
-                  typeof item.priceOptions[0].price === "number"
-                ) {
-                  salePrice = item.priceOptions[0].price;
-                } else {
-                  logger.warn(
-                    `ID ${postNumStr}, 상품 ${idx}: AI 가격 정보 (basePrice, priceOptions) 부재 또는 유효하지 않음. 0원으로 설정.`
-                  );
-                }
-
-                // --- ★★★ 상품 데이터 병합 시작 ★★★ ---
                 const existingProdFull = existingProductsFullMap
                   .get(postNumStr)
-                  ?.get(idx); // 기존 상세 정보 가져오기
-                logger.debug(
-                  `[Merge Check - AI] ID: ${postNumStr}, Item: ${idx}, Existing Product Full:`,
-                  existingProdFull ? "Found" : "Not Found (undefined)"
-                );
-                if (existingProdFull)
-                  logger.debug(
-                    `[Merge Check - AI] Existing base_price: ${existingProdFull.base_price}`
-                  );
-
-                const newItemData = item; // AI 결과가 새 정보
-                logger.debug(
-                  `[Merge Check - AI] ID: ${postNumStr}, Item: ${idx}, New AI Data basePrice: ${newItemData.basePrice}`
-                );
-
-                const productBarcode = generateBarcodeFromProductId(prodId);
-
+                  ?.get(idx);
+                const newItemData = item;
+                const productBarcode = await generateBarcodeFromProductId(
+                  prodId,
+                  userId
+                ); // await + userId
                 const productData = {
+                  /* ... AI 결과와 기존 정보 병합, barcode 포함 ... */
                   product_id: prodId,
                   user_id: userId,
                   post_id: uniquePostId,
@@ -1424,7 +1487,7 @@ class BandPosts extends BandAuth {
                     crawledContent ||
                     "",
                   base_price:
-                    newItemData.basePrice ?? existingProdFull?.base_price ?? 0, // AI 필드명 사용
+                    newItemData.basePrice ?? existingProdFull?.base_price ?? 0,
                   original_price:
                     newItemData.originalPrice ??
                     existingProdFull?.original_price,
@@ -1471,81 +1534,58 @@ class BandPosts extends BandAuth {
                   updated_at: new Date().toISOString(),
                   barcode: existingProdFull?.barcode || productBarcode,
                 };
-
-                newProductsFromAI.push(productData); // 임시 배열에 추가
-                // Upsert 배열에 추가/업데이트
-                const existingIndexInUpsert = productsToUpsert.findIndex(
+                newProductsFromAI.push(productData);
+                const existingIndex = productsToUpsert.findIndex(
                   (p) => p.product_id === prodId
                 );
-                if (existingIndexInUpsert > -1) {
-                  productsToUpsert[existingIndexInUpsert] = {
-                    ...productsToUpsert[existingIndexInUpsert],
+                if (existingIndex > -1)
+                  productsToUpsert[existingIndex] = {
+                    ...productsToUpsert[existingIndex],
                     ...productData,
                   };
-                } else {
-                  logger.debug(
-                    `[Upsert Check - AI] Adding product to productsToUpsert: ${prodId}, base_price: ${productData.base_price}`
-                  );
-                  productsToUpsert.push(productData);
-                }
+                else productsToUpsert.push(productData);
               }
-              logger.info(
-                `ID ${postNumStr}: AI 분석 완료, ${productMap.size}개 상품 생성/업데이트 준비.`
-              );
             } else {
-              // AI 결과가 있지만 상품 정보가 없는 경우
-              isProductPost = false; // 상품 아님으로 간주
+              isProductPost = false;
               if (!isNewPost && existingPost?.is_product) {
-                postNeedsUpdate = true; // 기존 상품이었으면 업데이트 필요
-                productNeedsUpdate = true; // 기존 상품 상태 변경 필요
+                postNeedsUpdate = true;
+                productNeedsUpdate = true;
               }
-              logger.info(`ID ${postNumStr}: AI 분석 결과 상품 정보 없음.`);
             }
           } catch (e) {
             logger.error(
               `ID ${postNumStr} AI 분석 중 오류: ${e.message}`,
               e.stack
             );
-            // AI 오류 시 기존 상품 상태 유지 또는 기본값 (상품 아님)
-            isProductPost = existingPost ? existingPost.is_product : false;
+            isProductPost = existingPost?.is_product ?? false;
           }
-        } // end if(runAI)
+        }
 
-        // --- ★★★ AI 미실행 + 기존 상품 존재 시 처리 로직 (로그 포함된 버전) ★★★ ---
+        // AI 미실행 + 기존 상품 처리 (for...of 루프 및 await 사용)
         if (!runAI && isProductPost) {
           const existingProdsForPost = existingProductsFullMap.get(postNumStr);
           if (existingProdsForPost) {
-            existingProdsForPost.forEach((existingProdFull, itemNumber) => {
+            for (const [
+              itemNumber,
+              existingProdFull,
+            ] of existingProdsForPost.entries()) {
               if (existingProdFull) {
                 const prodId = existingProdFull.product_id;
-                productMap.set(itemNumber, prodId); // 기존 상품 정보도 productMap에 추가
-
-                logger.debug(
-                  `[Merge Check - No AI] ID: ${postNumStr}, Item: ${itemNumber}, Processing based on existing data.`
-                );
-                logger.debug(
-                  `[Merge Check - No AI] Existing base_price: ${existingProdFull.base_price}`
-                );
-                let productBarcode = null; // 기본값 null
-
+                productMap.set(itemNumber, prodId);
+                let productBarcode = null;
                 try {
-                  logger.debug(
-                    `[Barcode Gen - No AI] Generating barcode for prodId: ${prodId}`
-                  );
-                  productBarcode = generateBarcodeFromProductId(prodId);
-                  logger.debug(
-                    `[Barcode Gen - No AI] Generated barcode: ${productBarcode} for prodId: ${prodId}`
+                  productBarcode = await generateBarcodeFromProductId(
+                    prodId,
+                    userId
                   );
                 } catch (barcodeError) {
+                  // await + userId
                   logger.error(
-                    `[Barcode Gen - No AI] Error generating barcode for prodId ${prodId}: ${barcodeError.message}`
+                    `[Barcode Gen - No AI] ID ${prodId}: ${barcodeError.message}`
                   );
-                  // 바코드 생성 실패 시 null 유지 또는 기본값 설정 가능
                 }
-
-                const newItemData = {};
                 const productData = {
-                  // 기존 데이터 기반으로 생성
+                  /* ... 기존 데이터 기반, barcode 포함 ... */
                   product_id: prodId,
                   user_id: userId,
                   post_id: uniquePostId,
@@ -1555,7 +1595,7 @@ class BandPosts extends BandAuth {
                   band_post_url: postUrl,
                   title: existingProdFull.title || "제목 없음",
                   content: existingProdFull.content || crawledContent || "",
-                  base_price: existingProdFull.base_price ?? 0, // 기존값 사용
+                  base_price: existingProdFull.base_price ?? 0,
                   original_price: existingProdFull.original_price,
                   price_options: existingProdFull.price_options || [],
                   quantity: existingProdFull.quantity ?? 1,
@@ -1563,7 +1603,7 @@ class BandPosts extends BandAuth {
                   category: existingProdFull.category || "기타",
                   tags: existingProdFull.tags || [],
                   features: existingProdFull.features || [],
-                  status: existingProdFull.status || "판매중", // 기존 상태 유지
+                  status: existingProdFull.status || "판매중",
                   pickup_info: existingProdFull.pickup_info || null,
                   pickup_date: existingProdFull.pickup_date || null,
                   pickup_type: existingProdFull.pickup_type || null,
@@ -1574,44 +1614,28 @@ class BandPosts extends BandAuth {
                   },
                   created_at:
                     existingProdFull.created_at || postedAt.toISOString(),
-                  updated_at: new Date().toISOString(), // 업데이트 시간 갱신
+                  updated_at: new Date().toISOString(),
                   barcode: existingProdFull.barcode || productBarcode,
                 };
-
-                // Upsert 배열에 추가 (중복 처리)
-                const existingIndexInUpsert = productsToUpsert.findIndex(
+                const existingIndex = productsToUpsert.findIndex(
                   (p) => p.product_id === prodId
                 );
-                if (existingIndexInUpsert === -1) {
-                  logger.debug(
-                    `[Upsert Check - No AI] Adding product to productsToUpsert: ${prodId}, base_price: ${productData.base_price}`
-                  );
+                if (existingIndex === -1) {
                   productsToUpsert.push(productData);
-                  // AI 실행 안했어도 기존 상품 업데이트 위해 플래그 설정 필요 시
                   if (!productNeedsUpdate) productNeedsUpdate = true;
-                  if (!postNeedsUpdate) postNeedsUpdate = true; // 연관 게시물도 업데이트 필요
+                  if (!postNeedsUpdate) postNeedsUpdate = true;
                 } else {
-                  // 이미 있다면 updated_at 갱신 등 필요한 처리
-                  productsToUpsert[existingIndexInUpsert].updated_at =
+                  productsToUpsert[existingIndex].updated_at =
                     new Date().toISOString();
                 }
-              } else {
-                logger.warn(
-                  `[Merge Check - No AI] ID: ${postNumStr}, Item: ${itemNumber}, existingProdFull is unexpectedly undefined.`
-                );
               }
-            }); // end forEach existingProdsForPost
-          } else {
-            logger.warn(
-              `[Merge Check - No AI] ID: ${postNumStr}, No existing products found in map despite isProductPost being true.`
-            );
+            }
           }
-        } // end if (!runAI && isProductPost)
+        }
 
-        // --- 4) 게시물(Post) 데이터 준비 (v_working 추출 데이터 사용) ---
-        // --- 게시물(Post) 데이터 준비 ---
+        // 게시물 데이터 준비
         const postData = {
-          /* ... (이전과 동일하게 postData 생성) ... */ post_id: uniquePostId,
+          post_id: uniquePostId,
           user_id: userId,
           band_number: bandNumberStr,
           post_number: postNumStr,
@@ -1624,19 +1648,16 @@ class BandPosts extends BandAuth {
           view_count: crawledPost.readCount || 0,
           image_urls: crawledPost.imageUrls || [],
           is_product: isProductPost,
-
           status:
-            crawledPost.status === "마감" // 1순위: 크롤링 시 마감 판정된 경우
+            crawledPost.status === "마감"
               ? "마감"
-              : existingPost?.status === "마감" // 2순위: DB에 이미 마감으로 저장된 경우
+              : existingPost?.status === "마감"
               ? "마감"
-              : "활성", // 그 외 기본 '활성'
+              : "활성",
           crawled_at: new Date(crawledPost.crawledAt).toISOString(),
           updated_at: new Date().toISOString(),
-          item_list: [], // 초기화 후 아래에서 채움
+          item_list: [],
         };
-
-        // item_list 업데이트
         const productsForThisPost = productsToUpsert.filter(
           (p) => p.post_number === postNumStr
         );
@@ -1652,58 +1673,37 @@ class BandPosts extends BandAuth {
           postData.item_list = existingPost.item_list;
         }
 
-        // --- 5) 댓글(Order) 처리 (새로운 댓글만, 안정적 저장 방식) ---
+        // --- 댓글(Order) 처리 ---
         let isClosedByNewComment = false;
+        if (newCommentsExist) postNeedsUpdate = true;
 
-        if (postNumStr === "26778") {
-          logger.debug(
-            `[Debug 26778] Before comment processing block - isProductPost: ${isProductPost}, newCommentsExist: ${newCommentsExist}, commentCountDiff: ${commentCountDiff}`
-          );
-        }
-
-        if (newCommentsExist) {
-          postNeedsUpdate = true;
-          logger.debug(
-            `ID ${postNumStr}: 댓글 수 변경 감지됨 (${commentCountStored} -> ${crawledCommentCount}), Post 업데이트 대상.`
-          );
-        }
-
-        // 새 댓글이 있을 경우에만 처리 (v_improved 방식)
         if (isProductPost && newCommentsExist && commentCountDiff > 0) {
-          postNeedsUpdate = true; // 새 댓글 처리 시 게시물 업데이트 필요 간주
-          const newComments = crawledComments.slice(-commentCountDiff); // 새로운 댓글만 추출
-          const startingCommentIndex = commentCountStored; // DB에 저장된 댓글 수부터 시작
-
+          postNeedsUpdate = true;
+          const newComments = crawledComments.slice(-commentCountDiff);
+          const startingCommentIndex = commentCountStored;
           logger.info(
-            `ID ${postNumStr}: ${commentCountDiff}개 신규 댓글 처리 시작 (시작 인덱스: ${startingCommentIndex}).`
+            `ID ${postNumStr}: ${commentCountDiff}개 신규 댓글 처리 시작 (인덱스: ${startingCommentIndex}).`
           );
 
           for (let i = 0; i < newComments.length; i++) {
-            const cm = newComments[i]; // author 키 포함됨
-            const originalCommentIndex = startingCommentIndex + i; // 실제 댓글 순번
-            // 댓글 작성자 이름 (author 키 사용)
+            const cm = newComments[i];
+            const originalCommentIndex = startingCommentIndex + i;
             const author = cm.author?.trim() || "익명";
             const text = cm.content || "";
             const ctime = safeParseDate(cm.time) || postedAt;
 
-            if (!text) continue; // 내용 없는 댓글 건너뛰기
-            if (excludedCustomers.includes(author)) {
-              logger.debug(
-                `ID ${postNumStr} 댓글 ${originalCommentIndex}: 제외 고객(${author})`
-              );
-              continue;
-            }
+            if (!text || excludedCustomers.includes(author)) continue;
 
-            // --- 고객 데이터 준비/업데이트 (v_improved 방식) ---
+            // 고객 데이터 준비/업데이트
             const custId = generateCustomerUniqueId(
               userId,
               bandNumberStr,
               postNumStr,
               originalCommentIndex
             );
-            if (!customersToUpsertMap.has(custId)) {
+            if (!customersToUpsertMap.has(custId))
               customersToUpsertMap.set(custId, {
-                /* ... 고객 초기 정보 ... */ customer_id: custId,
+                customer_id: custId,
                 user_id: userId,
                 band_number: bandNumberStr,
                 name: author,
@@ -1716,51 +1716,44 @@ class BandPosts extends BandAuth {
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
               });
-            }
             const custData = customersToUpsertMap.get(custId);
-            custData.updated_at = new Date().toISOString(); // 항상 업데이트 시간 갱신
+            custData.updated_at = new Date().toISOString();
 
-            // --- 모든 새 댓글에 대한 orderData 기본 생성 (v_working 구조 참고) ---
+            // Order 데이터 초기화
             const bandCommentId = `${postNumStr}_comment_${originalCommentIndex}`;
             const uniqueCommentOrderId = `order_${bandNumberStr}_${postNumStr}_${originalCommentIndex}`;
             let orderData = {
               order_id: uniqueCommentOrderId,
               user_id: userId,
-              post_number: postNumStr, // 문자열 게시물 번호
-              band_number: bandNumberStr, // 문자열 밴드 번호
+              post_number: postNumStr,
+              band_number: bandNumberStr,
               customer_id: custId,
               comment: text,
-              ordered_at: ctime.toISOString(), // 주문 시간 (댓글 시간)
+              ordered_at: ctime.toISOString(),
               band_comment_id: bandCommentId,
               band_comment_url: `${postUrl}#${bandCommentId}`,
               customer_name: author,
-              product_id: null, // 초기화
-              item_number: null, // 초기화
-              quantity: null, // 초기화
-              price: null, // 초기화 (단가)
-              total_amount: null, // 초기화 (총액)
-              price_option_description: null, // 초기화
-              status: "주문완료", // 기본 상태 (v_working 방식은 '댓글' 이었을 수 있음, 확인 필요)
-              sub_status: null, // <<< sub_status 컬럼 추가 및 기본값 null
-
-              extracted_items_details: null, // 추출된 상세 정보 (JSON)
-              is_ambiguous: false, // 모호성 플래그
+              product_id: null,
+              item_number: null,
+              quantity: null,
+              price: 0,
+              total_amount: 0,
+              price_option_description: null,
+              status: "주문완료",
+              sub_status: null,
+              extracted_items_details: null,
+              is_ambiguous: false,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             };
 
-            // 마감 키워드 확인 (v_improved)
-            if (!isClosedByNewComment && hasClosingKeywords(text)) {
+            if (!isClosedByNewComment && hasClosingKeywords(text))
               isClosedByNewComment = true;
-              logger.info(
-                `ID ${postNumStr} 댓글 ${originalCommentIndex}: 마감 키워드 발견.`
-              );
-            }
 
-            let processedAsOrder = false; // 주문으로 처리되었는지 플래그
+            let processedAsOrder = false;
+            let calculatedTotalAmount = 0; // Reset for each comment
 
-            // --- 주문 정보 추출 및 업데이트 (v_working의 안정적 로직 적용) ---
-            // 상품 게시물이고, productMap이 있고, 마감 댓글이 아닐 때 시도
+            // 주문 정보 추출 및 처리
             if (isProductPost && productMap.size > 0 && !isClosedByNewComment) {
               const extractedItems = extractEnhancedOrderFromComment(
                 text,
@@ -1768,39 +1761,32 @@ class BandPosts extends BandAuth {
               );
 
               if (extractedItems.length > 0) {
-                // 주문 정보 추출 성공 시
+                // 명시적 주문 추출 성공
                 orderData.extracted_items_details = extractedItems;
                 let firstValidItemProcessed = false;
-
                 for (const orderItem of extractedItems) {
-                  // 상품 번호 결정 및 폴백 로직 (v_working 참조)
                   let itemNumberToUse = orderItem.itemNumber;
                   let targetProductId = null;
                   let isAmbiguousNow = orderItem.isAmbiguous;
-
+                  // 상품 ID 결정 로직 ...
                   if (isAmbiguousNow) {
-                    // 번호 없는 모호한 주문
                     if (productMap.size === 1) {
-                      // 단일 상품이면 확정
-                      itemNumberToUse = Array.from(productMap.keys())[0];
-                      targetProductId = productMap.get(itemNumberToUse);
+                      [itemNumberToUse, targetProductId] = Array.from(
+                        productMap.entries()
+                      )[0];
                       isAmbiguousNow = false;
                     } else if (productMap.has(1)) {
-                      // 다중 상품이면 1번 시도
                       targetProductId = productMap.get(1);
                       itemNumberToUse = 1;
                     } else if (productMap.size > 0) {
-                      // 1번 없으면 첫번째 상품
                       [itemNumberToUse, targetProductId] = Array.from(
                         productMap.entries()
                       )[0];
                     }
                   } else {
-                    // 번호 있는 주문
                     targetProductId = productMap.get(itemNumberToUse);
                     if (!targetProductId) {
-                      // 번호가 있지만 상품 목록에 없음 -> 모호 처리 및 폴백
-                      isAmbiguousNow = true;
+                      isAmbiguousNow = true; /* ... 폴백 ID 결정 ... */
                       if (productMap.size === 1) {
                         [itemNumberToUse, targetProductId] = Array.from(
                           productMap.entries()
@@ -1815,21 +1801,21 @@ class BandPosts extends BandAuth {
                       }
                     }
                   }
-
-                  if (!targetProductId) continue; // 상품 ID 최종 결정 못하면 이 항목 건너뜀
-
-                  // 상품 정보 조회 (메모리)
+                  if (!targetProductId) continue;
                   const productInfo =
                     productsToUpsert.find(
                       (p) => p.product_id === targetProductId
-                    ) || // 현재 처리 중인 upsert 데이터 우선
+                    ) ||
                     existingProductsFullMap
                       .get(postNumStr)
-                      ?.get(itemNumberToUse); // Map에서 .get()으로 조회
+                      ?.get(itemNumberToUse);
+                  if (!productInfo) {
+                    logger.warn(
+                      `ID ${postNumStr}, Item ${itemNumberToUse}: 상품 정보 없음.`
+                    );
+                    continue;
+                  }
 
-                  if (!productInfo) continue; // 상품 정보 없으면 처리 불가
-
-                  // 수량 결정 (기본값 1)
                   const quantity =
                     typeof orderItem.quantity === "number" &&
                     orderItem.quantity > 0
@@ -1842,65 +1828,49 @@ class BandPosts extends BandAuth {
                       orderItem.quantity > 0
                     )
                   )
-                    isAmbiguousNow = true; // 수량 추론 시 모호
+                    isAmbiguousNow = true;
 
-                  const unitPrice =
+                  const productOptions = productInfo.price_options || [];
+                  const fallbackPrice =
                     typeof productInfo.base_price === "number"
                       ? productInfo.base_price
                       : 0;
-                  const itemTotal = unitPrice * quantity;
+                  calculatedTotalAmount = calculateOptimalPrice(
+                    quantity,
+                    productOptions,
+                    fallbackPrice
+                  ); // 계산 값 저장
 
-                  // 첫 유효 항목 기준으로 orderData 업데이트
                   if (!firstValidItemProcessed) {
                     orderData.product_id = targetProductId;
                     orderData.item_number = itemNumberToUse;
                     orderData.quantity = quantity;
-                    orderData.price = unitPrice;
-                    orderData.total_amount = itemTotal;
+                    orderData.price = fallbackPrice;
+                    orderData.total_amount = calculatedTotalAmount;
                     orderData.price_option_description = productInfo.title
                       ? `${itemNumberToUse}번 (${productInfo.title})`
                       : `${itemNumberToUse}번`;
                     orderData.is_ambiguous = isAmbiguousNow;
-                    // status/sub_status 설정
-                    if (orderData.is_ambiguous) {
-                      orderData.sub_status = orderData.sub_status || "확인필요"; // 기존 sub_status 유지 또는 설정
-                    } else {
-                      orderData.sub_status = null; // 모호하지 않으면 sub_status 초기화
-                    }
+                    orderData.sub_status = isAmbiguousNow ? "확인필요" : null;
                     firstValidItemProcessed = true;
                   }
-
-                  // 고객/상품 요약 업데이트
                   custData.total_orders = (custData.total_orders || 0) + 1;
                   custData.total_spent =
-                    (custData.total_spent || 0) + itemTotal;
+                    (custData.total_spent || 0) + calculatedTotalAmount; // 계산된 값 사용
                   if (!custData.first_order_at)
                     custData.first_order_at = ctime.toISOString();
                   custData.last_order_at = ctime.toISOString();
-
-                  // if (!orderSummaryUpdates.has(targetProductId))
-                  //   orderSummaryUpdates.set(targetProductId, {
-                  //     orders: 0,
-                  //     quantity: 0,
-                  //   });
-                  // const summary = orderSummaryUpdates.get(targetProductId);
-                  // summary.orders += 1;
-                  // summary.quantity += quantity;
-
                   processedAsOrder = true;
-                } // end for (orderItem)
+                }
               } else if (/\d/.test(text)) {
-                // 주문 추출 실패 & 숫자 포함 시 폴백 (v_working 방식)
+                // 폴백 1: 주문 추출 실패 & 숫자 포함
                 logger.warn(
-                  `ID ${postNumStr} 댓글 ${originalCommentIndex}: 주문 추출 실패, 숫자 포함 -> 폴백 처리`
+                  `ID ${postNumStr} 댓글 ${originalCommentIndex}: 폴백 처리`
                 );
                 let targetProductId = null;
                 let itemNumberToUse = 1;
                 let productInfo = null;
-                let unitPrice = 0;
-                const quantity = 1;
-
-                // 폴백 상품 ID 결정
+                // 폴백 상품 ID 결정 ...
                 if (productMap.size === 1) {
                   [itemNumberToUse, targetProductId] = Array.from(
                     productMap.entries()
@@ -1914,83 +1884,64 @@ class BandPosts extends BandAuth {
                   )[0];
                 }
 
-                if (targetProductId) {
+                if (targetProductId)
                   productInfo =
-                    newProductsFromAI.find(
+                    productsToUpsert.find(
                       (p) => p.product_id === targetProductId
                     ) ||
-                    Array.from(
-                      existingProductsFullMap.get(postNumStr)?.values() || []
-                    ).find(
-                      // <--- 수정된 부분
-                      (p) => p.product_id === targetProductId
-                    );
-                  if (productInfo)
-                    unitPrice =
-                      typeof productInfo.base_price === "number"
-                        ? productInfo.base_price
-                        : 0;
-                }
+                    existingProductsFullMap
+                      .get(postNumStr)
+                      ?.get(itemNumberToUse);
 
-                const itemTotal = unitPrice * quantity;
+                const quantity = 1; // 수량 추출
+                const productOptions = productInfo?.price_options || [];
+                const fallbackPrice =
+                  typeof productInfo?.base_price === "number"
+                    ? productInfo.base_price
+                    : 0;
+                calculatedTotalAmount = calculateOptimalPrice(
+                  quantity,
+                  productOptions,
+                  fallbackPrice
+                ); // 계산 값 저장
 
-                // orderData 업데이트 (폴백 값)
                 orderData.product_id = targetProductId;
                 orderData.item_number = itemNumberToUse;
                 orderData.quantity = quantity;
-                orderData.price = unitPrice;
-                orderData.total_amount = itemTotal;
+                orderData.price = fallbackPrice;
+                orderData.total_amount = calculatedTotalAmount;
                 orderData.price_option_description = productInfo
                   ? `${itemNumberToUse}번 (${productInfo.title}) - 추정`
                   : "상품 정보 불명 - 추정";
+                orderData.sub_status = "확인필요";
+                orderData.is_ambiguous = true;
 
-                orderData.sub_status = "확인필요"; // <<< sub_status를 '확인필요'로 설정
-                orderData.is_ambiguous = true; // 부가 정보로 모호했음을 기록 (선택 사항)
-                // status/sub_status 설정
-                if (orderData.is_ambiguous) {
-                  orderData.sub_status = orderData.sub_status || "확인필요"; // 기존 sub_status 유지 또는 설정
-                } else {
-                  orderData.sub_status = null; // 모호하지 않으면 sub_status 초기화
-                }
-
-                // 고객/상품 요약 업데이트 (product_id 있을 때만)
                 if (targetProductId) {
                   custData.total_orders = (custData.total_orders || 0) + 1;
                   custData.total_spent =
-                    (custData.total_spent || 0) + itemTotal;
+                    (custData.total_spent || 0) + calculatedTotalAmount; // 계산된 값 사용
                   if (!custData.first_order_at)
                     custData.first_order_at = ctime.toISOString();
                   custData.last_order_at = ctime.toISOString();
-
-                  // if (!orderSummaryUpdates.has(targetProductId))
-                  //   orderSummaryUpdates.set(targetProductId, {
-                  //     orders: 0,
-                  //     quantity: 0,
-                  //   });
-                  // const summary = orderSummaryUpdates.get(targetProductId);
-                  // summary.orders += 1;
-                  // summary.quantity += quantity;
                 }
                 processedAsOrder = true;
               }
             } // end if (isProductPost && ...)
 
-            // --- 최종 저장 결정 (v_working의 느슨한 방식 - 숫자 포함 여부) ---
+            // 최종 저장 결정 (숫자 포함 시)
             const containsDigit = /\d/.test(text);
             if (containsDigit) {
-              // quantity가 null이면 1로 설정 (폴백 등에서 설정 안됐을 경우 대비)
               if (orderData.quantity === null) {
-                orderData.quantity = 1;
-                // product_id가 없으면 최종 폴백 시도 (매우 방어적)
-                if (
-                  !orderData.product_id &&
-                  isProductPost &&
-                  productMap.size > 0
-                ) {
-                  let targetProductId = null;
-                  let itemNumberToUse = 1;
-                  let productInfo = null;
-                  let unitPrice = 0;
+                // 폴백 2: 수량 정보 누락
+                logger.warn(
+                  `ID ${postNumStr} 댓글 ${originalCommentIndex}: 최종 폴백 처리`
+                );
+                const quantity = 1; // 수량 추출
+                let targetProductId = orderData.product_id;
+                let itemNumberToUse = orderData.item_number;
+                let productInfo = null;
+                // 상품 정보 결정 ...
+                if (!targetProductId && isProductPost && productMap.size > 0) {
                   if (productMap.size === 1) {
                     [itemNumberToUse, targetProductId] = Array.from(
                       productMap.entries()
@@ -2003,40 +1954,56 @@ class BandPosts extends BandAuth {
                       productMap.entries()
                     )[0];
                   }
-
-                  if (targetProductId) {
-                    productInfo =
-                      newProductsFromAI.find(
-                        (p) => p.product_id === targetProductId
-                      ) ||
-                      Array.from(
-                        existingProductsFullMap.get(postNumStr)?.values() || []
-                      ).find(
-                        // <--- 수정된 부분
-                        (p) => p.product_id === targetProductId
-                      );
-                    if (productInfo)
-                      unitPrice =
-                        typeof productInfo.base_price === "number"
-                          ? productInfo.base_price
-                          : 0;
-                  }
-                  orderData.product_id = targetProductId;
-                  orderData.item_number = itemNumberToUse;
-                  orderData.price = unitPrice;
-                  orderData.total_amount = unitPrice * orderData.quantity; // quantity는 1
-                  orderData.price_option_description = productInfo
-                    ? `${itemNumberToUse}번 (${productInfo.title}) - 최종 추정`
-                    : "상품 정보 불명 - 최종 추정";
+                }
+                if (targetProductId) {
+                  productInfo =
+                    productsToUpsert.find(
+                      (p) => p.product_id === targetProductId
+                    ) ||
+                    existingProductsFullMap
+                      .get(postNumStr)
+                      ?.get(itemNumberToUse);
                 }
 
-                orderData.sub_status = "확인필요"; // <<< sub_status를 '확인필요'로 설정
-                orderData.is_ambiguous = true; // 부가 정보로 모호했음을 기록 (선택 사항)
+                const productOptions = productInfo?.price_options || [];
+                const fallbackPrice =
+                  typeof productInfo?.base_price === "number"
+                    ? productInfo.base_price
+                    : 0;
+                calculatedTotalAmount = calculateOptimalPrice(
+                  quantity,
+                  productOptions,
+                  fallbackPrice
+                ); // 계산 값 저장
+
+                orderData.quantity = quantity;
+                orderData.product_id = orderData.product_id || targetProductId;
+                orderData.item_number =
+                  orderData.item_number || itemNumberToUse;
+                orderData.price = orderData.price ?? fallbackPrice;
+                orderData.total_amount = calculatedTotalAmount; // 계산된 총액 저장
+                orderData.price_option_description =
+                  orderData.price_option_description ||
+                  (productInfo
+                    ? `${itemNumberToUse}번 (${productInfo.title}) - 최종 추정`
+                    : "상품 정보 불명 - 최종 추정");
+                orderData.sub_status = "확인필요";
+                orderData.is_ambiguous = true;
+
+                if (targetProductId) {
+                  // 고객 지출액 업데이트 (폴백 2)
+                  custData.total_orders = (custData.total_orders || 0) + 1;
+                  custData.total_spent =
+                    (custData.total_spent || 0) + calculatedTotalAmount; // 계산된 값 사용
+                  if (!custData.first_order_at)
+                    custData.first_order_at = ctime.toISOString();
+                  custData.last_order_at = ctime.toISOString();
+                }
               }
-              // 숫자 포함 댓글은 일단 저장 대상에 추가
+              // 저장 목록에 추가
               ordersToUpsert.push(orderData);
               logger.debug(
-                `ID ${postNumStr} 댓글 ${originalCommentIndex}: 저장 대상 추가 (Product ID: ${orderData.product_id}, Qty: ${orderData.quantity}, Ambiguous: ${orderData.is_ambiguous})`
+                `ID ${postNumStr} 댓글 ${originalCommentIndex}: 저장 대상 추가 (Total: ${orderData.total_amount}, Ambiguous: ${orderData.is_ambiguous})`
               );
             } else {
               logger.debug(
@@ -2046,264 +2013,136 @@ class BandPosts extends BandAuth {
           } // end for newComments
         } // end if newCommentsExist
 
+        // 마감 처리 및 Upsert 대상 추가
         const shouldBeClosed =
           crawledPost.status === "마감" || isClosedByNewComment;
-
-        // --- 6) 상태 업데이트 (마감 처리 - v_improved) ---
-        // 마감 상태여야 하는데, 현재 postData 객체의 상태가 아직 '마감'이 아니라면 마감 처리를 진행
         if (shouldBeClosed && postData.status !== "마감") {
-          postData.status = "마감"; // postData 상태를 '마감'으로 최종 확정
-          postNeedsUpdate = true; // 게시물 정보 업데이트 필요 플래그 설정
-          productNeedsUpdate = true; // 관련 상품 정보 업데이트 필요 플래그 설정
-
-          // 어떤 이유로 마감되었는지 로깅
-          const closeReason =
-            crawledPost.status === "마감" ? "본문/댓글(크롤링시)" : "새 댓글";
+          // --- 게시물 상태 변경 로그 ---
+          const previousPostStatusInDB = existingPost
+            ? existingPost.status
+            : "신규";
+          if (existingPost && previousPostStatusInDB !== "마감") {
+            logger.info(
+              `[마감 상태 변경 감지] 게시물 ID ${postNumStr}: DB 상태(${previousPostStatusInDB}) -> '마감'으로 변경됩니다. (사유: ${
+                crawledPost.status === "마감"
+                  ? "크롤링시 키워드"
+                  : "새 댓글 키워드"
+              })`
+            );
+          } else if (!existingPost) {
+            logger.info(
+              `[마감 상태 감지] 신규 게시물 ID ${postNumStr}: '마감' 상태로 생성됩니다. (사유: ${
+                crawledPost.status === "마감"
+                  ? "크롤링시 키워드"
+                  : "새 댓글 키워드"
+              })`
+            );
+          }
+          // --- 게시물 상태 변경 로그 끝 ---
+          postData.status = "마감";
+          postNeedsUpdate = true;
+          productNeedsUpdate = true;
           logger.info(
-            `ID ${postNumStr}: ${closeReason} 키워드로 인해 마감 처리됨.`
+            `ID ${postNumStr}: ${
+              crawledPost.status === "마감" ? "크롤링시" : "새댓글"
+            } 키워드로 마감 처리됨.`
           );
-
-          // --- 이 게시물과 관련된 모든 상품들의 상태를 '마감'으로 변경하는 로직 ---
-
-          // 1. 현재 DB에 저장(Upsert)하기 위해 준비 중인 상품 목록(productsToUpsert)에서
-          //    이 게시물에 해당하고 아직 '마감' 상태가 아닌 상품들을 찾아 상태 변경
+          // 관련 상품 마감 처리
           const productsToMarkClosedInUpsert = productsToUpsert.filter(
             (p) => p.post_number === postNumStr && p.status !== "마감"
           );
           productsToMarkClosedInUpsert.forEach((p) => {
-            p.status = "마감"; // 상태를 '마감'으로 변경
-            p.updated_at = new Date().toISOString(); // 업데이트 시간 갱신
-            logger.debug(
-              `ID ${postNumStr}: Upsert 대상 상품 ${p.item_number} 마감 상태로 변경 (${closeReason})`
-            );
+            p.status = "마감";
+            p.updated_at = new Date().toISOString();
           });
-
-          // 2. DB에는 이미 존재하지만, 이번 Upsert 대상 목록에는 아직 포함되지 않은 기존 상품들도
-          //    '마감' 상태로 업데이트하기 위해 productsToUpsert 목록에 추가
           const existingProdsMapForPost =
-            existingProductsFullMap.get(postNumStr); // 해당 게시물의 기존 상품 정보 가져오기
+            existingProductsFullMap.get(postNumStr);
           if (existingProdsMapForPost) {
             existingProdsMapForPost.forEach((existingProdInfo) => {
-              // 현재 Upsert 목록에 이미 해당 상품이 있는지 확인
               const alreadyInUpsert = productsToUpsert.some(
                 (p) => p.product_id === existingProdInfo.product_id
               );
-              // Upsert 목록에 없고 & DB 상의 상태가 '마감'이 아닐 경우에만 처리
               if (!alreadyInUpsert && existingProdInfo.status !== "마감") {
-                // '마감' 상태 업데이트를 위한 최소 정보만 포함하여 Upsert 목록에 추가
                 productsToUpsert.push({
                   product_id: existingProdInfo.product_id,
-                  user_id: userId, // 사용자 ID는 필수
-                  status: "마감", // 상태를 '마감'으로 설정
-                  updated_at: new Date().toISOString(), // 업데이트 시간 갱신
-                });
-                logger.debug(
-                  `ID ${postNumStr}: 기존 상품 ${existingProdInfo.item_number} 마감 처리 위해 upsert 추가 (${closeReason})`
-                );
-              }
-            });
-          }
-          // --- 관련 상품들 마감 처리 로직 끝 ---
-        } // end if (shouldBeClosed && postData.status !== "마감")
-
-        // --- 7) Upsert 대상 추가 (v_improved) ---
-        if (postNeedsUpdate) {
-          // postsToUpsert 배열에 이미 있는지 확인 후 추가 또는 업데이트
-          const existingPostIndex = postsToUpsert.findIndex(
-            (p) => p.post_id === uniquePostId
-          );
-          if (existingPostIndex === -1) {
-            postsToUpsert.push(postData);
-            logger.debug(
-              `ID ${postNumStr}: Post upsert 대상 추가 (이유: ${
-                isNewPost
-                  ? "신규"
-                  : contentChanged
-                  ? "내용변경"
-                  : newCommentsExist
-                  ? "댓글변경"
-                  : "상태변경"
-              })`
-            );
-          } else {
-            // 기존 항목 업데이트 (최신 정보 반영)
-            postsToUpsert[existingPostIndex] = {
-              ...postsToUpsert[existingPostIndex], // 기존 데이터 유지
-              ...postData, // 최신 데이터 덮어쓰기
-              updated_at: new Date().toISOString(), // 업데이트 시간 갱신
-            };
-            logger.debug(
-              `ID ${postNumStr}: Post upsert 대상 업데이트 (기존 항목)`
-            );
-          }
-        }
-
-        // Product: AI 결과 반영 또는 상태 변경 시 추가 (v_improved)
-        if (productNeedsUpdate) {
-          // AI로 생성된 상품 추가
-          productsToUpsert.push(...newProductsFromAI);
-          if (newProductsFromAI.length > 0) {
-            logger.debug(
-              `ID ${postNumStr}: ${newProductsFromAI.length}개 상품 upsert 대상 추가 (AI 결과)`
-            );
-          }
-
-          // 마감 처리 시 기존 상품 상태 업데이트
-          if (isClosedByNewComment) {
-            const existingProds = existingProductsFullMap.get(postNumStr) || [];
-            for (const prodInfo of existingProds) {
-              const alreadyInUpsert = productsToUpsert.some(
-                (p) => p.product_id === prodInfo.product_id
-              );
-              if (!alreadyInUpsert && prodInfo.status !== "마감") {
-                // 상태만 업데이트하는 객체 추가 (Edge Function에서 merge 필요)
-                productsToUpsert.push({
-                  product_id: prodInfo.product_id,
                   user_id: userId,
                   status: "마감",
                   updated_at: new Date().toISOString(),
                 });
-                logger.debug(
-                  `ID ${postNumStr}: 기존 상품 ${prodInfo.item_number} 마감 처리 위해 upsert 추가`
-                );
-              } else if (alreadyInUpsert) {
-                // 이미 upsert 대상이면 상태만 마감으로 변경
-                const prodToUpdate = productsToUpsert.find(
-                  (p) => p.product_id === prodInfo.product_id
-                );
-                if (prodToUpdate && prodToUpdate.status !== "마감") {
-                  prodToUpdate.status = "마감";
-                  prodToUpdate.updated_at = new Date().toISOString();
-                  logger.debug(
-                    `ID ${postNumStr}: Upsert 대상 상품 ${prodInfo.item_number} 마감 상태로 변경`
-                  );
-                }
               }
-            }
+            });
           }
         }
+        if (postNeedsUpdate) {
+          const existingPostIndex = postsToUpsert.findIndex(
+            (p) => p.post_id === uniquePostId
+          );
+          if (existingPostIndex === -1) postsToUpsert.push(postData);
+          else
+            postsToUpsert[existingPostIndex] = {
+              ...postsToUpsert[existingPostIndex],
+              ...postData,
+              updated_at: new Date().toISOString(),
+            };
+        }
+        if (productNeedsUpdate) {
+          // AI 결과 추가는 이미 위에서 처리됨
+          // 마감 시 상태 변경을 위한 추가 로직은 위 마감 블록에서 처리됨
+        }
+      } // --- 메인 루프 종료 ---
 
-        // --- 8) 상품 주문 요약 업데이트 적용 (v_improved) ---
-        // if (orderSummaryUpdates.size > 0) {
-        //   orderSummaryUpdates.forEach((summary, productId) => {
-        //     let productToUpdate = productsToUpsert.find(
-        //       (p) => p.product_id === productId
-        //     );
-        //     if (productToUpdate) {
-        //       // 이미 upsert 대상에 있으면 요약 정보 업데이트
-        //       productToUpdate.order_summary = summary;
-        //       productToUpdate.updated_at = new Date().toISOString();
-        //       logger.debug(
-        //         `ID ${postNumStr}: 상품 ${productId} 요약 업데이트 (기존 upsert 대상)`
-        //       );
-        //     } else {
-        //       // upsert 대상에 없으면 요약 정보만 업데이트하는 객체 추가
-        //       productsToUpsert.push({
-        //         product_id: productId,
-        //         user_id: userId, // userId 필요
-        //         order_summary: summary,
-        //         updated_at: new Date().toISOString(),
-        //       });
-        //       logger.debug(
-        //         `ID ${postNumStr}: 상품 ${productId} 요약 업데이트 위해 upsert 추가`
-        //       );
-        //     }
-
-        //     // 상품 요약 변경 시 게시물도 업데이트 필요할 수 있음
-        //     if (!postNeedsUpdate) {
-        //       const existingPostIndex = postsToUpsert.findIndex(
-        //         (p) => p.post_id === uniquePostId
-        //       );
-        //       if (existingPostIndex === -1) {
-        //         // postData를 복사하여 updated_at만 갱신 후 추가
-        //         postsToUpsert.push({
-        //           ...postData,
-        //           updated_at: new Date().toISOString(),
-        //         });
-        //       } else {
-        //         postsToUpsert[existingPostIndex].updated_at =
-        //           new Date().toISOString();
-        //       }
-        //       postNeedsUpdate = true; // 플래그 설정
-        //       logger.debug(
-        //         `ID ${postNumStr}: 상품 요약 변경으로 Post 업데이트 대상 추가`
-        //       );
-        //     } else {
-        //       // 이미 업데이트 대상이면 updated_at만 갱신
-        //       const postInArray = postsToUpsert.find(
-        //         (p) => p.post_id === uniquePostId
-        //       );
-        //       if (postInArray)
-        //         postInArray.updated_at = new Date().toISOString();
-        //     }
-        //   });
-        // } // end if orderSummaryUpdates
-      } // end for detailedPosts (메인 루프 종료)
-
-      // --- 최종 주문 요약 정보 계산 및 적용 ---
+      // --- 7. 최종 주문 요약 계산 및 적용 ---
       const finalOrderSummaryUpdates = new Map();
-
-      // ... (이전 답변의 최종 요약 계산 및 적용 로직 사용) ...
+      logger.debug("Calculating final order summaries...");
       for (const order of ordersToUpsert) {
         if (
           order.product_id &&
           typeof order.quantity === "number" &&
           order.quantity > 0
         ) {
-          if (!finalOrderSummaryUpdates.has(order.product_id)) {
-            finalOrderSummaryUpdates.set(order.product_id, {
-              orders: 0,
-              quantity: 0,
-            });
-          }
-          const summary = finalOrderSummaryUpdates.get(order.product_id);
+          const productId = order.product_id;
+          if (!finalOrderSummaryUpdates.has(productId))
+            finalOrderSummaryUpdates.set(productId, { orders: 0, quantity: 0 });
+          const summary = finalOrderSummaryUpdates.get(productId);
           summary.orders += 1;
           summary.quantity += order.quantity;
         }
       }
+      logger.debug(
+        `Applying final order summaries to ${finalOrderSummaryUpdates.size} products...`
+      );
       finalOrderSummaryUpdates.forEach((summary, productId) => {
         const productIndex = productsToUpsert.findIndex(
           (p) => p.product_id === productId
         );
         if (productIndex > -1) {
-          productsToUpsert[productIndex].order_summary = summary; // 덮어쓰기 (필요시 합산 로직 추가)
+          productsToUpsert[productIndex].order_summary = summary;
           productsToUpsert[productIndex].updated_at = new Date().toISOString();
           logger.debug(
-            `상품 ${productId}의 주문 요약 정보 최종 업데이트됨: ${JSON.stringify(
+            `Product ${productId} final order_summary updated: ${JSON.stringify(
               summary
             )}`
           );
         } else {
           logger.warn(
-            `주문 요약 업데이트 대상 상품 ${productId}을(를) 최종 Upsert 목록에서 찾을 수 없습니다.`
+            `Could not find product ${productId} in productsToUpsert for final summary.`
           );
         }
       });
+      logger.debug("Finished applying final order summaries.");
 
-      // --- Edge Function 호출 준비 ---
-      this._updateStatus(
-        "processing",
-        `DB 저장을 위한 최종 데이터 준비...`,
-        93
-      );
+      // --- 8. Edge Function 호출 준비 및 실행 ---
+      if (this._updateStatus)
+        this._updateStatus("processing", `DB 저장 데이터 준비...`, 93);
       const customersArray = Array.from(customersToUpsertMap.values());
-
-      // 최종 데이터 확인 로그
-      logger.debug("Final data prepared for Edge Function:");
-      logger.debug(`Posts to upsert: ${postsToUpsert.length}`);
-      logger.debug(
-        `Products to upsert (count only): ${productsToUpsert.length}`
-      );
-      logger.debug(`Orders to upsert: ${ordersToUpsert.length}`);
-      logger.debug(`Customers to upsert: ${customersArray.length}`);
-
       if (
         customersArray.length === 0 &&
         postsToUpsert.length === 0 &&
         productsToUpsert.length === 0 &&
         ordersToUpsert.length === 0
       ) {
-        this._updateStatus("completed", "DB 업데이트할 변경 사항 없음", 100);
+        if (this._updateStatus)
+          this._updateStatus("completed", "DB 업데이트 변경 사항 없음", 100);
         logger.info("DB 업데이트할 변경 사항 없음");
         return;
       }
@@ -2311,7 +2150,6 @@ class BandPosts extends BandAuth {
       logger.info(
         `DB 업데이트 대상: Posts ${postsToUpsert.length}, Products ${productsToUpsert.length}, Orders ${ordersToUpsert.length}, Customers ${customersArray.length}`
       );
-
       const payload = {
         userId,
         customers: customersArray,
@@ -2319,16 +2157,12 @@ class BandPosts extends BandAuth {
         products: productsToUpsert,
         orders: ordersToUpsert,
       };
-      const payloadString = JSON.stringify(payload);
-      logger.debug(
-        `Edge Function 페이로드 크기: ${payloadString.length} bytes`
-      );
-
-      this._updateStatus(
-        "processing",
-        `Edge Function 호출하여 DB 저장 중...`,
-        95
-      );
+      if (this._updateStatus)
+        this._updateStatus(
+          "processing",
+          `Edge Function 호출하여 DB 저장 중...`,
+          95
+        );
       const { data, error } = await supabase.functions.invoke(
         "save-crawled-data",
         { body: payload }
@@ -2340,22 +2174,20 @@ class BandPosts extends BandAuth {
           error
         );
         const detailedErrorMsg = error.context?.errorMessage || error.message;
-        this._updateStatus(
-          "failed",
-          `DB 저장 실패 (Edge Function): ${detailedErrorMsg}`,
-          95
-        );
+        if (this._updateStatus)
+          this._updateStatus("failed", `DB 저장 실패: ${detailedErrorMsg}`, 95);
         throw new Error(`Edge Function Error: ${detailedErrorMsg}`);
       }
-
       logger.info(`Edge Function 실행 결과: ${JSON.stringify(data)}`);
-      this._updateStatus("completed", "DB 저장 완료 (Edge Function)", 100);
+      if (this._updateStatus)
+        this._updateStatus("completed", "DB 저장 완료", 100);
     } catch (e) {
       logger.error(
         `saveDetailPostsToSupabase 전체 프로세스 중 오류: ${e.message}`,
         e.stack
       );
-      this._updateStatus("failed", `처리 중 오류: ${e.message}`, 95);
+      if (this._updateStatus)
+        this._updateStatus("failed", `처리 중 오류: ${e.message}`, 95);
       throw e; // 에러를 다시 던져서 상위 호출자가 알 수 있도록 함
     }
   } // --- saveDetailPostsToSupabase 종료 ---

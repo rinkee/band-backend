@@ -26,6 +26,22 @@ create table "public"."crawl_history" (
 );
 
 
+create table "public"."crawl_tasks" (
+    "task_id" text not null,
+    "user_id" text,
+    "band_number" text,
+    "status" text not null default 'pending'::text,
+    "message" text,
+    "progress" integer default 0,
+    "start_time" timestamp with time zone default now(),
+    "end_time" timestamp with time zone,
+    "error_message" text,
+    "created_at" timestamp with time zone default now(),
+    "updated_at" timestamp with time zone default now(),
+    "params" jsonb
+);
+
+
 create table "public"."customer_recent_orders" (
     "id" uuid not null default uuid_generate_v4(),
     "customer_id" uuid not null,
@@ -114,7 +130,9 @@ create table "public"."orders" (
     "price_per_unit" text,
     "item_number" numeric,
     "commented_at" timestamp with time zone,
-    "product_name" text
+    "product_name" text,
+    "paid_at" timestamp with time zone,
+    "sub_status" character varying(50) default NULL::character varying
 );
 
 
@@ -182,7 +200,10 @@ create table "public"."products" (
     "product_index" integer default 0,
     "item_number" numeric,
     "post_number" text,
-    "stock_quantity" bigint
+    "stock_quantity" bigint,
+    "memo" text,
+    "is_closed" boolean not null default false,
+    "last_comment_at" timestamp with time zone
 );
 
 
@@ -225,13 +246,17 @@ create table "public"."users" (
     "excluded_customers" jsonb,
     "cookies" jsonb,
     "cookies_updated_at" timestamp with time zone,
-    "naver_login_status" text
+    "naver_login_status" text,
+    "last_crawled_post_id" integer not null default 0,
+    "auto_barcode_generation" boolean not null default false
 );
 
 
 CREATE UNIQUE INDEX barcodes_pkey ON public.barcodes USING btree (barcode_id);
 
 CREATE UNIQUE INDEX crawl_history_pkey ON public.crawl_history USING btree (crawl_id);
+
+CREATE UNIQUE INDEX crawl_tasks_pkey ON public.crawl_tasks USING btree (task_id);
 
 CREATE UNIQUE INDEX customer_recent_orders_pkey ON public.customer_recent_orders USING btree (id);
 
@@ -242,6 +267,8 @@ CREATE UNIQUE INDEX customers_user_band_user_unique ON public.customers USING bt
 CREATE INDEX idx_customer_recent_orders_customer_id ON public.customer_recent_orders USING btree (customer_id);
 
 CREATE INDEX idx_order_history_order_id ON public.order_history USING btree (order_id);
+
+CREATE INDEX idx_orders_sub_status ON public.orders USING btree (sub_status);
 
 CREATE INDEX idx_orders_user_id_ordered_at ON public.orders USING btree (user_id, ordered_at);
 
@@ -277,6 +304,8 @@ alter table "public"."barcodes" add constraint "barcodes_pkey" PRIMARY KEY using
 
 alter table "public"."crawl_history" add constraint "crawl_history_pkey" PRIMARY KEY using index "crawl_history_pkey";
 
+alter table "public"."crawl_tasks" add constraint "crawl_tasks_pkey" PRIMARY KEY using index "crawl_tasks_pkey";
+
 alter table "public"."customer_recent_orders" add constraint "customer_recent_orders_pkey" PRIMARY KEY using index "customer_recent_orders_pkey";
 
 alter table "public"."customers" add constraint "customers_pkey" PRIMARY KEY using index "customers_pkey";
@@ -306,6 +335,10 @@ alter table "public"."barcodes" validate constraint "barcodes_user_id_fkey";
 alter table "public"."crawl_history" add constraint "crawl_history_user_id_fkey" FOREIGN KEY (user_id) REFERENCES users(user_id) not valid;
 
 alter table "public"."crawl_history" validate constraint "crawl_history_user_id_fkey";
+
+alter table "public"."crawl_tasks" add constraint "crawl_tasks_user_id_fkey" FOREIGN KEY (user_id) REFERENCES users(user_id) not valid;
+
+alter table "public"."crawl_tasks" validate constraint "crawl_tasks_user_id_fkey";
 
 alter table "public"."customers" add constraint "customers_user_band_user_unique" UNIQUE using index "customers_user_band_user_unique";
 
@@ -393,30 +426,80 @@ END;
 $function$
 ;
 
+-- 함수 삭제 구문 추가 (인자 타입을 정확히 맞춰야 함)
+DROP FUNCTION IF EXISTS public.get_order_stats_by_date_range(text, timestamp with time zone, timestamp with time zone);
+
 CREATE OR REPLACE FUNCTION public.get_order_stats_by_date_range(p_user_id text, p_start_date timestamp with time zone, p_end_date timestamp with time zone)
- RETURNS TABLE(total_orders_count bigint, completed_orders_count bigint, total_estimated_revenue numeric, total_confirmed_revenue numeric)
+ RETURNS TABLE(total_orders_count bigint, completed_orders_count bigint, pending_receipt_orders_count bigint, total_estimated_revenue numeric, total_confirmed_revenue numeric)
  LANGUAGE sql
  STABLE
 AS $function$
   SELECT
-      -- 총 주문 건수: '주문취소' 상태를 제외할지 여부에 따라 수정 가능
-      -- count(*)::bigint AS total_orders_count, -- 취소 포함 시
-      count(CASE WHEN status <> '주문취소' THEN 1 ELSE NULL END)::bigint AS total_orders_count, -- 취소 제외 시
+      -- 총 주문 건수 ('주문취소' 제외)
+      count(CASE WHEN status <> '주문취소' THEN 1 END)::bigint AS total_orders_count,
 
       -- 수령완료 건수
-      count(CASE WHEN status = '수령완료' THEN 1 ELSE NULL END)::bigint AS completed_orders_count,
+      count(CASE WHEN status = '수령완료' THEN 1 END)::bigint AS completed_orders_count,
 
-      -- 예상 매출: total_amount 합계 ('주문취소' 제외 시)
+      -- '미수령' 상태 주문 건수 계산 추가
+      -- ⚠️ 중요: 실제 DB의 orders 테이블 status 컬럼에서 '미수령' 상태를 나타내는 정확한 문자열 값으로 변경하세요!
+      count(CASE WHEN status = '미수령' THEN 1 END)::bigint AS pending_receipt_orders_count,
+
+      -- 예상 매출 ('주문취소' 제외, NULL은 0으로 처리)
       sum(CASE WHEN status <> '주문취소' THEN COALESCE(total_amount, 0) ELSE 0 END)::numeric AS total_estimated_revenue,
-      -- 예상 매출: total_amount 합계 ('주문취소' 포함 시)
-      -- sum(COALESCE(total_amount, 0))::numeric AS total_estimated_revenue,
 
-      -- 실 매출: '수령완료' 주문의 total_amount 합계
+      -- 실 매출 ('수령완료', NULL은 0으로 처리)
       sum(CASE WHEN status = '수령완료' THEN COALESCE(total_amount, 0) ELSE 0 END)::numeric AS total_confirmed_revenue
+
+  -- ⚠️ 중요: 실제 사용하는 테이블/컬럼 이름 확인 (public.orders, user_id, ordered_at, status, total_amount)
   FROM public.orders
-  WHERE user_id = p_user_id
+  WHERE
+    user_id = p_user_id
     AND ordered_at >= p_start_date
     AND ordered_at <= p_end_date;
+$function$
+;
+
+
+
+CREATE OR REPLACE FUNCTION public.get_order_stats_by_date_range(p_user_id text, p_start_date timestamp with time zone, p_end_date timestamp with time zone, p_status_filter text DEFAULT NULL::text, p_sub_status_filter text DEFAULT NULL::text, p_search_term text DEFAULT NULL::text)
+ RETURNS TABLE(total_orders_count bigint, completed_orders_count bigint, pending_receipt_orders_count bigint, total_estimated_revenue numeric, total_confirmed_revenue numeric)
+ LANGUAGE plpgsql
+AS $function$
+BEGIN
+  -- 임시 테이블이나 CTE를 사용하여 필터링된 주문을 먼저 선택 (선택적이지만 가독성/유지보수에 도움)
+  RETURN QUERY
+  WITH filtered_orders AS (
+    SELECT *
+    FROM orders_with_products o -- 최신 뷰 사용 (sub_status 포함)
+    WHERE
+        o.user_id = p_user_id
+        AND o.ordered_at >= p_start_date
+        AND o.ordered_at <= p_end_date
+        -- <<< WHERE 절에 모든 필터 조건 통합 >>>
+        AND (p_status_filter IS NULL OR p_status_filter = 'all' OR o.status = p_status_filter)
+        AND (
+              p_sub_status_filter IS NULL
+              OR p_sub_status_filter = 'all'
+              OR (p_sub_status_filter = 'none' AND o.sub_status IS NULL)
+              OR (p_sub_status_filter <> 'none' AND o.sub_status = p_sub_status_filter)
+            )
+        AND (p_search_term IS NULL OR (
+               o.customer_name ILIKE p_search_term
+            OR o.product_title ILIKE p_search_term
+            OR o.product_barcode ILIKE p_search_term
+        ))
+  )
+  -- 필터링된 주문(filtered_orders)을 기반으로 최종 통계 집계
+  SELECT
+      COUNT(fo.order_id) AS total_orders_count,
+      COUNT(fo.order_id) FILTER (WHERE fo.status = '수령완료') AS completed_orders_count,
+      COUNT(fo.order_id) FILTER (WHERE fo.status = '주문완료' AND fo.sub_status = '미수령') AS pending_receipt_orders_count,
+      COALESCE(SUM(fo.total_amount) FILTER (WHERE fo.status <> '주문취소'), 0) AS total_estimated_revenue,
+      COALESCE(SUM(fo.total_amount) FILTER (WHERE fo.status IN ('수령완료', '결제완료')), 0) AS total_confirmed_revenue
+  FROM filtered_orders fo; -- <<< FROM 절 변경
+
+END;
 $function$
 ;
 
@@ -451,8 +534,11 @@ create or replace view "public"."orders_with_products" as  SELECT o.order_id,
     o.item_number,
     o.commented_at,
     o.product_name,
+    o.paid_at,
+    o.sub_status,
     p.title AS product_title,
-    p.barcode AS product_barcode
+    p.barcode AS product_barcode,
+    p.pickup_date AS product_pickup_date
    FROM (orders o
      LEFT JOIN products p ON ((o.product_id = p.product_id)));
 
@@ -816,6 +902,48 @@ grant trigger on table "public"."crawl_history" to "service_role";
 grant truncate on table "public"."crawl_history" to "service_role";
 
 grant update on table "public"."crawl_history" to "service_role";
+
+grant delete on table "public"."crawl_tasks" to "anon";
+
+grant insert on table "public"."crawl_tasks" to "anon";
+
+grant references on table "public"."crawl_tasks" to "anon";
+
+grant select on table "public"."crawl_tasks" to "anon";
+
+grant trigger on table "public"."crawl_tasks" to "anon";
+
+grant truncate on table "public"."crawl_tasks" to "anon";
+
+grant update on table "public"."crawl_tasks" to "anon";
+
+grant delete on table "public"."crawl_tasks" to "authenticated";
+
+grant insert on table "public"."crawl_tasks" to "authenticated";
+
+grant references on table "public"."crawl_tasks" to "authenticated";
+
+grant select on table "public"."crawl_tasks" to "authenticated";
+
+grant trigger on table "public"."crawl_tasks" to "authenticated";
+
+grant truncate on table "public"."crawl_tasks" to "authenticated";
+
+grant update on table "public"."crawl_tasks" to "authenticated";
+
+grant delete on table "public"."crawl_tasks" to "service_role";
+
+grant insert on table "public"."crawl_tasks" to "service_role";
+
+grant references on table "public"."crawl_tasks" to "service_role";
+
+grant select on table "public"."crawl_tasks" to "service_role";
+
+grant trigger on table "public"."crawl_tasks" to "service_role";
+
+grant truncate on table "public"."crawl_tasks" to "service_role";
+
+grant update on table "public"."crawl_tasks" to "service_role";
 
 grant delete on table "public"."customer_recent_orders" to "anon";
 
@@ -1194,5 +1322,11 @@ grant trigger on table "public"."users" to "service_role";
 grant truncate on table "public"."users" to "service_role";
 
 grant update on table "public"."users" to "service_role";
+
+
+drop index if exists "storage"."idx_name_bucket_level_unique";
+
+-- 수정 후:
+CREATE UNIQUE INDEX IF NOT EXISTS idx_name_bucket_unique ON storage.objects USING btree (name COLLATE "C", bucket_id);
 
 

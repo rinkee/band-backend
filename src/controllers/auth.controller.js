@@ -51,7 +51,8 @@ const getUserData = async (req, res) => {
         crawl_interval,
         naver_login_status,
         excluded_customers,
-        job_id
+        job_id,
+        auto_barcode_generation
       `
       )
       .eq("user_id", id)
@@ -589,66 +590,88 @@ const logout = (req, res) => {
 const updateProfile = async (req, res) => {
   console.log("\n--- [updateProfile 시작] ---"); // 함수 시작 로그
   try {
-    // 1. URL 파라미터에서 대상 사용자 ID 추출
     const { userId: targetUserId } = req.params;
 
-    // 2. JWT 미들웨어에서 설정한 요청자 정보 추출 (req.user)
-    //    authMiddleware가 이 라우트에 적용되어 req.user 객체를 생성한다고 가정합니다.
     if (!req.user) {
-      // 혹시 모를 에러 상황 대비: authMiddleware가 적용되지 않았거나 실패한 경우
-      console.error(
-        "[updateProfile] 오류: req.user 객체가 없습니다. 인증 미들웨어를 확인하세요."
-      );
+      console.error("[updateProfile] 오류: req.user 객체가 없습니다.");
       return res
         .status(401)
         .json({ success: false, message: "인증 정보가 없습니다." });
     }
     const { userId: requesterUserId, role: requesterRole } = req.user;
 
-    // 3. 권한 확인: 요청자가 자기 자신이거나 관리자인지 확인
     console.log("[updateProfile] 권한 확인 중:", {
       targetUserId,
       requesterUserId,
       requesterRole,
     });
     if (requesterUserId !== targetUserId && requesterRole !== "admin") {
-      console.log(
-        `[updateProfile] 권한 없음 (Forbidden): 요청자(${requesterUserId}/${requesterRole})가 대상(${targetUserId}) 프로필 수정 불가`
-      );
+      console.log(`[updateProfile] 권한 없음`);
       console.log("--- [updateProfile 종료 - Forbidden] ---");
-      return res.status(403).json({
-        success: false,
-        message: "요청을 수행할 권한이 없습니다.", // 좀 더 명확한 메시지
-      });
+      return res
+        .status(403)
+        .json({ success: false, message: "요청을 수행할 권한이 없습니다." });
     }
     console.log("[updateProfile] 권한 확인 통과.");
 
-    // 4. 요청 본문(req.body)에서 업데이트할 데이터 추출
-    const { storeName, storeAddress, ownerName, phoneNumber, bandUrl } =
-      req.body;
-    console.log("[updateProfile] 업데이트 요청 데이터:", {
-      storeName,
-      storeAddress,
-      ownerName,
-      phoneNumber,
-      bandUrl,
-    });
+    // 4. 요청 본문(req.body) 전체를 일단 받음
+    const requestBody = req.body;
+    console.log("[updateProfile] 전체 요청 데이터:", requestBody);
 
-    // 5. 업데이트할 데이터 객체 생성 (존재하는 필드만 포함)
+    // 5. 업데이트할 데이터 객체 생성 및 유효 필드 매핑
     const updateData = {};
-    if (storeName !== undefined) updateData.store_name = storeName;
-    if (storeAddress !== undefined) updateData.store_address = storeAddress;
-    if (ownerName !== undefined) updateData.owner_name = ownerName;
-    if (phoneNumber !== undefined) updateData.phone_number = phoneNumber;
-    if (bandUrl !== undefined) updateData.band_url = bandUrl;
+    const allowedDbFields = {
+      // 프론트엔드 key : DB 컬럼명(snake_case)
+      ownerName: "owner_name",
+      storeName: "store_name",
+      storeAddress: "store_address", // DB에 이 컬럼이 있는지 확인 필요
+      phoneNumber: "phone_number", // DB에 이 컬럼이 있는지 확인 필요
+      bandUrl: "band_url", // DB에 이 컬럼이 있는지 확인 필요
+      band_number: "band_number", // 프론트에서 band_number도 보낸다면 추가 (읽기전용이면 제외)
+      auto_barcode_generation: "auto_barcode_generation", // 새로 추가된 필드
+      excluded_customers: "excluded_customers", // 새로 추가된 필드
+      // 필요한 다른 필드들도 여기에 추가...
+    };
 
-    // 업데이트할 내용이 있는지 확인 (updated_at 제외)
-    if (Object.keys(updateData).length === 0) {
-      console.log("[updateProfile] 업데이트할 데이터 없음.");
+    let hasUpdateData = false; // 업데이트할 유효 데이터가 있는지 플래그
+    for (const key in requestBody) {
+      // 허용된 필드 목록(allowedDbFields의 key)에 현재 key가 있는지 확인
+      if (Object.prototype.hasOwnProperty.call(allowedDbFields, key)) {
+        const dbColumn = allowedDbFields[key]; // DB 컬럼명 가져오기
+        // 값의 유효성 검사 (선택적이지만 권장)
+        // 예: auto_barcode_generation은 boolean이어야 함
+        if (
+          key === "auto_barcode_generation" &&
+          typeof requestBody[key] !== "boolean"
+        ) {
+          console.warn(
+            `[updateProfile] 잘못된 타입 (${key}): boolean이어야 함`
+          );
+          continue; // 유효하지 않으면 건너뜀
+        }
+        // 예: excluded_customers는 배열이어야 함
+        if (key === "excluded_customers" && !Array.isArray(requestBody[key])) {
+          console.warn(`[updateProfile] 잘못된 타입 (${key}): array여야 함`);
+          continue; // 유효하지 않으면 건너뜀
+        }
+        // 다른 필드 타입 검사 추가 가능...
+
+        updateData[dbColumn] = requestBody[key]; // DB 컬럼명으로 데이터 추가
+        hasUpdateData = true;
+      } else {
+        console.warn(
+          `[updateProfile] 요청에 허용되지 않거나 매핑되지 않은 필드 포함: ${key}`
+        );
+      }
+    }
+
+    // 업데이트할 유효한 내용이 없는 경우
+    if (!hasUpdateData) {
+      console.log("[updateProfile] 업데이트할 유효 데이터 없음.");
       console.log("--- [updateProfile 종료 - Bad Request] ---");
       return res.status(400).json({
         success: false,
-        message: "업데이트할 데이터가 요청 본문에 없습니다.",
+        message: "요청 본문에 업데이트 가능한 유효 데이터가 없습니다.",
       });
     }
 
@@ -658,11 +681,11 @@ const updateProfile = async (req, res) => {
 
     // 6. Supabase 데이터베이스 업데이트 실행
     const { data: updatedResult, error: updateError } = await supabase
-      .from("users")
+      .from("users") // <<<--- 실제 사용자 테이블 이름 확인!
       .update(updateData)
-      .eq("user_id", targetUserId) // 대상 사용자의 ID로 필터링
-      .select() // 업데이트된 행의 데이터를 반환하도록 요청
-      .single(); // 단일 행 업데이트 및 반환 예상
+      .eq("user_id", targetUserId) // <<<--- 실제 사용자 ID 컬럼 이름 확인! ('user_id'가 아니라 'id'일 수 있음)
+      .select()
+      .single();
 
     // 7. 업데이트 오류 처리
     if (updateError) {
@@ -670,16 +693,15 @@ const updateProfile = async (req, res) => {
         `[updateProfile] Supabase 업데이트 오류 (User: ${targetUserId}):`,
         updateError
       );
-      // 여기에서 특정 Supabase 오류 코드(예: RLS 위반 등)에 따라 다른 응답을 줄 수도 있습니다.
       console.log("--- [updateProfile 종료 - DB 오류] ---");
       return res.status(500).json({
         success: false,
         message: "사용자 정보 업데이트 중 데이터베이스 오류가 발생했습니다.",
-        error: updateError.message, // 개발 중에는 에러 메시지 포함
+        error: updateError.message,
       });
     }
 
-    // 8. 업데이트된 사용자를 찾지 못한 경우 (이론상 발생하기 어려움)
+    // 8. 업데이트된 사용자를 찾지 못한 경우
     if (!updatedResult) {
       console.error(
         `[updateProfile] 업데이트 후 사용자를 찾을 수 없음 (User: ${targetUserId})`
@@ -691,25 +713,14 @@ const updateProfile = async (req, res) => {
       });
     }
 
-    // 9. 성공 응답 데이터 구성 (민감 정보 제외)
-    const responseData = {
-      userId: updatedResult.user_id, // DB에서 반환된 ID 사용
-      storeName: updatedResult.store_name,
-      storeAddress: updatedResult.store_address,
-      ownerName: updatedResult.owner_name,
-      phoneNumber: updatedResult.phone_number,
-      bandUrl: updatedResult.band_url,
-      bandNumber: updatedResult.band_number, // bandNumber는 업데이트되지 않았으므로 기존 값 유지됨
-      updatedAt: updatedResult.updated_at, // DB에서 반환된 시간 사용
-    };
-    console.log("[updateProfile] 프로필 업데이트 성공:", responseData);
+    // 9. 성공 응답 반환 (필요한 필드만 포함)
+    //    updatedResult 객체 전체를 반환하거나 필요한 것만 골라서 반환
+    console.log("[updateProfile] 프로필 업데이트 성공:", updatedResult);
     console.log("--- [updateProfile 종료 - 성공] ---");
-
-    // 10. 성공 응답 반환
     return res.json({
       success: true,
       message: "프로필이 성공적으로 업데이트되었습니다.",
-      data: responseData,
+      data: updatedResult, // 또는 필요한 필드만 골라서 새 객체 생성
     });
   } catch (error) {
     // 11. 예상치 못한 전체 오류 처리
@@ -721,7 +732,7 @@ const updateProfile = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "프로필 업데이트 처리 중 서버 내부 오류가 발생했습니다.",
-      error: error.message, // 개발 중에는 에러 메시지 포함
+      error: error.message,
     });
   }
 };

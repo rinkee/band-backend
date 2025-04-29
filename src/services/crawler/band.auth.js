@@ -101,7 +101,7 @@ class BandAuth {
       this.updateTaskStatus("processing", "initialize", 0);
 
       this.browser = await puppeteer.launch({
-        headless: "new",
+        headless: true,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -110,10 +110,21 @@ class BandAuth {
         ],
         ignoreHTTPSErrors: true,
         defaultViewport: null,
+        // setRequestInterception: true,
       });
 
       this.page = await this.browser.newPage();
       await this.page.setViewport({ width: 1280, height: 720 });
+      await this.page.setRequestInterception(true);
+      await this.page.on("request", (req) => {
+        if (req.resourceType() === "image") {
+          // 만약 요청 타입이 '이미지'라면
+          req.abort(); // 거부
+        } else {
+          // 이미지가 아니라면
+          req.continue(); // 수락
+        }
+      });
 
       // 쿠키를 유지하기 위한 설정
       await this.page.setExtraHTTPHeaders({
@@ -123,11 +134,6 @@ class BandAuth {
       });
 
       this.updateTaskStatus("processing", "브라우저 초기화 완료", 5);
-
-      await this.page.goto("https://band.us/band/82443310/", {
-        waitUntil: "networkidle2",
-        timeout: 30000,
-      });
 
       if (naverId) {
         // 먼저 쿠키 로그인 시도

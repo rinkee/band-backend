@@ -19,4 +19,7 @@ router.put("/:id/status", authMiddleware, ordersController.updateOrderStatus);
 // 주문 취소
 router.post("/:id/cancel", authMiddleware, ordersController.cancelOrder);
 
+// 주문 상세 정보 업데이트
+router.put("/:id", authMiddleware, ordersController.updateOrderDetails);
+
 module.exports = router;

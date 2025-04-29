@@ -15,7 +15,8 @@ const {
 const COOKIES_PATH = path.join(__dirname, "../../../cookies");
 
 // 가격 추출 함수와 ID 생성 함수는 utils에서 가져옴
-const { extractPriceFromContent, generateSimpleId } = utils;
+const { extractPriceFromContent, generateSimpleId, updateTaskStatusInDB } =
+  utils;
 
 // --- 실제 크롤링 로직을 수행하는 내부 함수 ---
 // 이 함수는 req, res를 직접 받지 않고 필요한 데이터만 받습니다.
@@ -32,6 +33,39 @@ async function _performCrawling(params) {
   } = params;
 
   try {
+    // <<<--- 작업 시작 시 DB 레코드 생성 --- START --->>>
+    const { data: insertData, error: insertError } = await supabase
+      .from("crawl_tasks")
+      .insert({
+        task_id: taskId,
+        user_id: userId,
+        band_number: bandNumber,
+        status: "initializing",
+        message: "작업 초기화 중...",
+        progress: 2,
+        start_time: new Date().toISOString(),
+        params: params, // 요청 파라미터 저장
+      })
+      .select();
+
+    if (insertError) {
+      logger.error(
+        `!!! DB 작업 레코드 생성 실패 (Task ID: ${taskId}): ${insertError.message}`,
+        insertError
+      );
+      // 이 경우 taskId가 DB에 없으므로 폴링은 계속 404를 반환할 것임
+    } else {
+      logger.info(
+        `DB 작업 레코드 생성 성공 (Task ID: ${taskId}), Data: ${JSON.stringify(
+          insertData
+        )}`
+      );
+    }
+
+    // <<<--- 작업 시작 시 DB 레코드 생성 --- END --->>>
+
+    await updateTaskStatusInDB(taskId, "processing", "계정 정보 확인 중...", 5);
+
     // 1. 사용자 계정 정보 조회
     const userAccount = await getUserNaverAccount(userId); // 아래에 정의된 함수 사용
     if (!userAccount) {
@@ -49,8 +83,20 @@ async function _performCrawling(params) {
       params, // 전달받은 파라미터 저장
     });
 
+    await updateTaskStatusInDB(
+      taskId,
+      "processing",
+      "업데이트 엔진 초기화 및 로그인 시도...",
+      10
+    );
+
     // 3. 크롤러 인스턴스 생성
     crawler = new BandPosts(bandNumber, { numPostsToLoad: maxPosts || 30 });
+
+    // <<<--- 여기가 중요! 크롤러에게 "상태 바뀌면 이 함수(updateTaskStatusInDB) 호출해줘" 라고 알려주는 부분 --->>>
+    crawler.setOnStatusUpdate(updateTaskStatusInDB);
+    // taskId를 crawler 인스턴스에 저장하여 콜백 함수 내에서 사용할 수 있도록 함 (선택적이지만 권장)
+    crawler.taskId = taskId;
 
     // 4. 상태 업데이트 콜백 설정
     crawler.onStatusUpdate = (status, message, progress) => {
@@ -63,6 +109,13 @@ async function _performCrawling(params) {
       });
     };
 
+    await updateTaskStatusInDB(
+      taskId,
+      "processing",
+      "밴드 페이지 접속 및 데이터 업데이트 시작...",
+      20
+    );
+
     // 5. 크롤링 실행 - maxScrollAttempts 파라미터 전달
     const result = await crawler.crawlAndSave(
       userId,
@@ -70,13 +123,28 @@ async function _performCrawling(params) {
       userAccount.naverPassword,
       maxScrollAttempts || 50, // <<<--- params에서 받은 maxScrollAttempts 사용 (기본값 50)
       processProducts ?? true,
-      daysLimit
+      daysLimit,
+      taskId
+    );
+
+    await updateTaskStatusInDB(
+      taskId,
+      "processing",
+      "밴드 페이지 접속 및 데이터 업데이트 완료",
+      50
     );
 
     // <<<--- 수정된 로직 --- START --->>>
     // 1. 명시적인 실패 확인: success가 false이거나 result 객체 자체가 없는 경우만 에러 처리
     if (!result || !result.success) {
       const errorMessage = result?.error || "알 수 없는 크롤링 오류 발생";
+      await updateTaskStatusInDB(
+        taskId,
+        "failed",
+        `업데이트 실패: ${errorMessage}`,
+        crawler.lastProgress || 95,
+        errorMessage
+      ); // 실패 시 progress는 마지막 값 유지 시도
       logger.error(
         `백그라운드 크롤링 오류 (Task ID: ${taskId}): ${errorMessage}`
       );
@@ -88,14 +156,25 @@ async function _performCrawling(params) {
       logger.info(
         `크롤링 작업 완료 (Task ID: ${taskId}): 처리할 새로운 데이터 없음.`
       );
+      await updateTaskStatusInDB(
+        taskId,
+        "completed",
+        "업데이트 완료 (처리할 새 데이터 없음)",
+        100
+      );
+
       // throw new Error(...) 부분을 제거하거나 주석 처리
     } else {
       // 3. 성공했고 처리한 데이터가 있는 경우: 기존 로그 유지
       logger.info(
         `크롤링 작업 완료 (Task ID: ${taskId}): ${result.data.length}개 처리됨.`
       );
-      // '저장'이라는 표현 대신 '처리됨' 등으로 변경하는 것이 더 정확할 수 있음
-      // (실제 저장은 saveDetailPostsToSupabase 내부에서 이루어지므로)
+      await updateTaskStatusInDB(
+        taskId,
+        "completed",
+        "업데이트 완료 (처리된 데이터 있음)",
+        100
+      );
     }
 
     // 6. 결과 처리 및 저장
@@ -120,6 +199,12 @@ async function _performCrawling(params) {
         completedAt: new Date().toISOString(),
         params,
       });
+      await updateTaskStatusInDB(
+        taskId,
+        "completed",
+        "업데이트 완료 (처리된 데이터 있음)",
+        100
+      );
       logger.info(
         `크롤링 작업 완료 (Task ID: ${taskId}): ${result.data.length}개 저장`
       );
@@ -127,6 +212,12 @@ async function _performCrawling(params) {
       // 크롤링은 성공했으나 데이터가 없는 경우도 성공으로 처리할지, 오류로 처리할지 결정 필요
       // 여기서는 오류로 간주
       throw new Error(result?.error || "크롤링된 데이터가 없습니다.");
+      await updateTaskStatusInDB(
+        taskId,
+        "completed",
+        "업데이트 완료 (처리된 데이터 있음)",
+        100
+      );
     }
   } catch (error) {
     // 7. 오류 처리
@@ -134,6 +225,13 @@ async function _performCrawling(params) {
       `백그라운드 크롤링 오류 (Task ID: ${taskId}): ${error.message}`,
       error.stack
     ); // 스택 트레이스 로깅 추가
+    await updateTaskStatusInDB(
+      taskId,
+      "failed",
+      `업데이트 실패: ${error.message}`,
+      0,
+      error.message
+    );
     taskStatusMap.set(taskId, {
       status: "failed",
       message: `크롤링 실패: ${error.message}`,
@@ -272,33 +370,48 @@ const getUserNaverAccount = async (userId) => {
 const taskStatusMap = new Map();
 
 /**
- * 작업 상태 조회
+ * DB에서 작업 상태를 조회하는 함수
+ * @param {string} taskId - 작업 ID
+ * @returns {Promise<Object>} - 작업 상태 객체
  */
-const getTaskStatus = (req, res) => {
+const getTaskStatus = async (req, res) => {
+  // async 추가
   try {
     const { taskId } = req.params;
 
     if (!taskId) {
-      return res.status(400).json({
-        success: false,
-        message: "작업 ID가 필요합니다.",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "작업 ID가 필요합니다." });
     }
 
-    // 작업 상태 확인
-    const task = taskStatusMap.get(taskId);
+    // DB에서 작업 상태 조회
+    const { data: task, error } = await supabase
+      .from("crawl_tasks")
+      .select("*")
+      .eq("task_id", taskId)
+      .single();
+
+    if (error && error.code !== "PGRST116") {
+      // 존재하지 않는 경우 외의 DB 오류
+      logger.error(
+        `DB 작업 상태 조회 오류 (Task ID: ${taskId}): ${error.message}`
+      );
+      throw error;
+    }
 
     if (!task) {
-      return res.status(404).json({
-        success: false,
-        message: "작업을 찾을 수 없습니다.",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "작업을 찾을 수 없습니다." });
     }
 
-    res.json({
-      success: true,
-      task,
-    });
+    // password 등 민감 정보 제거 후 반환 (params에 저장했다면)
+    if (task.params) {
+      delete task.params.naverPassword;
+    }
+
+    res.json({ success: true, task });
   } catch (error) {
     console.error("상태 확인 오류:", error);
     res.status(500).json({

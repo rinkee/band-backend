@@ -490,10 +490,68 @@ const getOrderStats = async (req, res) => {
   }
 };
 
+const updateOrderDetails = async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const userId = req.user.userId; // Get userId from authMiddleware
+    const { item_number, quantity, price, total_amount } = req.body;
+
+    if (
+      !orderId ||
+      !userId ||
+      !item_number ||
+      !quantity ||
+      !price ||
+      !total_amount
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing parameters" });
+    }
+
+    // Check if order belongs to the user (add security check!)
+    const { data: order, error } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("order_id", orderId)
+      .eq("user_id", userId) // added user ID check for security
+      .single();
+    if (error) throw error;
+    if (!order)
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
+
+    const { data: updatedOrder, error: updateError } = await supabase
+      .from("orders")
+      .update({
+        item_number,
+        quantity,
+        price,
+        total_amount,
+        updated_at: new Date(),
+      })
+      .eq("order_id", orderId)
+      .single();
+
+    if (updateError) throw updateError;
+
+    return res.status(200).json({ success: true, data: updatedOrder });
+  } catch (error) {
+    logger.error("Error updating order details:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error updating order details",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getAllOrders,
   getOrderById,
   updateOrderStatus,
   cancelOrder,
   getOrderStats,
+  updateOrderDetails,
 };
