@@ -305,10 +305,6 @@ class BandPosts extends BandAuth {
     return loadedPostsCount;
   }
 
-  /**
-   * 게시물 상세 정보 추출 (v_working의 안정적인 버전 사용)
-   * @returns {Promise<Object|null>} - 게시물 상세 정보 객체 또는 null
-   */
   async extractPostDetailFromPage() {
     if (!this.page) {
       logger.error("페이지 없음. 추출 불가.");
@@ -316,6 +312,7 @@ class BandPosts extends BandAuth {
     }
     const currentUrl = this.page.url();
     try {
+      // --- 초기 페이지 상태 확인 (삭제/비공개 등) ---
       const isBlockedOrNotFound = await this.page.evaluate(() => {
         const blockKeywords = [
           "삭제되었거나",
@@ -341,107 +338,274 @@ class BandPosts extends BandAuth {
         return null;
       }
 
-      // try {
-      //   await this.page.waitForSelector(
-      //     ".postSubject, .postWriterInfoWrap, .postText, .txtBody",
-      //     { timeout: 10000 }
-      //   );
-      // } catch (waitError) {
-      //   logger.warn(
-      //     `필수 콘텐츠 대기 실패 (${currentUrl}): ${waitError.message}`
-      //   );
-      // }
-
+      const commentListSelector = ".sCommentList";
+      const firstCommentSelector = ".cComment";
+      const commentAreaSelector = `${commentListSelector}, ${firstCommentSelector}`;
+      logger.debug(
+        `댓글 목록/첫 댓글(${commentAreaSelector}) 로딩 대기 시작 - ${currentUrl}`
+      );
       try {
-        await this.page.waitForSelector(".dPostCommentMainView", {
-          timeout: 5000,
+        await this.page.waitForSelector(commentAreaSelector, {
+          timeout: 15000,
         });
+        logger.debug(
+          `댓글 목록/첫 댓글 요소 확인됨. 추가 대기 시간 부여... - ${currentUrl}`
+        );
+        // --- FIX: Replace waitForTimeout ---
+        await new Promise((resolve) => setTimeout(resolve, 1500)); // Extra 1.5 seconds wait
       } catch (e) {
         logger.warn(
-          `댓글 영역 로딩 실패 (${currentUrl}): ${e.message}. 계속 진행.`
+          `댓글 목록/첫 댓글(${commentAreaSelector}) 대기 시간 초과 (${currentUrl}): ${e.message}. 댓글이 없거나 로딩 문제일 수 있음. 계속 진행.`
         );
       }
+      // --- END IMPROVED WAIT ---
 
-      // 이전 댓글 로드 로직 (v_working과 동일)
-      const prevButtonSelector =
-        "button[data-uiselector='previousCommentButton']";
+      // --- 이전 댓글 로드 로직 (개선됨) ---
+      const prevButtonSelector = ".prevComment"; // More specific selector
       let commentLoadAttempts = 0;
-      const MAX_COMMENT_LOAD_ATTEMPTS = 30; // 이전 댓글 로드 시도 횟수
-      while (
-        (await this.page.$(prevButtonSelector)) &&
-        commentLoadAttempts < MAX_COMMENT_LOAD_ATTEMPTS
-      ) {
-        logger.info(
-          `이전 댓글 버튼 클릭 (시도 ${
-            commentLoadAttempts + 1
-          }) - ${currentUrl}`
-        );
-        try {
-          await new Promise((resolve) =>
-            setTimeout(resolve, 2000 + Math.random() * 1000)
+      const MAX_COMMENT_LOAD_ATTEMPTS = 50; // 시도 횟수 증가 (댓글이 매우 많을 경우 대비)
+      const CLICK_DELAY_MS = 2000; // 클릭 전후 기본 대기 시간
+      const RANDOM_DELAY_MS = 1500; // 랜덤 추가 대기 시간
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      logger.info(
+        `이전 댓글 로딩 로직 시작. 버튼(${prevButtonSelector}) 초기 존재 여부 확인 중... - ${currentUrl}`
+      );
+
+      let initialButtonHandle = null;
+      try {
+        initialButtonHandle = await this.page.$(prevButtonSelector);
+        if (!initialButtonHandle) {
+          logger.info(
+            `초기 확인: '${prevButtonSelector}' 버튼 없음. 클릭 로직 불필요/건너뜀. - ${currentUrl}`
           );
-          await this.page.click(prevButtonSelector);
-          // 대기 시간 증가 (네트워크 상태 고려)
-          await new Promise((resolve) =>
-            setTimeout(resolve, 2000 + Math.random() * 1000)
+        } else {
+          logger.info(
+            `초기 확인: '${prevButtonSelector}' 버튼 찾음. 클릭 로직 진입 시도. - ${currentUrl}`
           );
-          commentLoadAttempts++;
-        } catch (clickError) {
-          logger.warn(`이전 댓글 버튼 클릭 오류: ${clickError.message}. 중단.`);
-          break; // 오류 발생 시 중단
         }
+      } catch (initialCheckError) {
+        logger.warn(
+          `'${prevButtonSelector}' 버튼 초기 확인 중 오류: ${initialCheckError.message}. 계속 진행.`
+        );
+        // Proceed even if the initial check fails, the loop will re-check
       }
+      // --- END ADDED LOGGING ---
+
+      while (commentLoadAttempts < MAX_COMMENT_LOAD_ATTEMPTS) {
+        // 1. 버튼 핸들 찾기
+        const buttonHandle = await this.page.$(prevButtonSelector);
+
+        // 2. 버튼이 없으면 루프 종료
+        if (!buttonHandle) {
+          // Log only if we break *after* having clicked at least once
+          if (commentLoadAttempts > 0) {
+            logger.info(
+              `'${prevButtonSelector}' 버튼이 클릭 ${commentLoadAttempts}회 후 사라짐. 로딩 완료 추정.`
+            );
+          } else if (initialButtonHandle) {
+            // Log if it existed initially but disappeared before the first click attempt in the loop
+            logger.info(
+              `'${prevButtonSelector}' 버튼이 초기에는 있었으나 루프 진입 시 사라짐. 로딩 완료 추정.`
+            );
+          }
+          // If it was never found initially, that was already logged above.
+          break;
+        }
+
+        // 3. 버튼이 보이는지 확인 및 스크롤 (Handle potential stale elements)
+        let isClickable = false;
+        try {
+          // Check if button is visible in viewport
+          const isVisible = await this.page.evaluate((selector) => {
+            const elem = document.querySelector(selector);
+            if (!elem) return false;
+            const style = window.getComputedStyle(elem);
+            if (
+              style.display === "none" ||
+              style.visibility === "hidden" ||
+              parseFloat(style.opacity) === 0
+            ) {
+              return false;
+            }
+            const rect = elem.getBoundingClientRect();
+            return (
+              rect.top >= 0 &&
+              rect.left >= 0 &&
+              rect.bottom <=
+                (window.innerHeight || document.documentElement.clientHeight) &&
+              rect.right <=
+                (window.innerWidth || document.documentElement.clientWidth)
+            );
+          }, prevButtonSelector);
+
+          if (!isVisible) {
+            logger.debug(
+              `'${prevButtonSelector}' 버튼이 viewport 밖에 있거나 숨겨져 있어 스크롤/대기 시도.`
+            );
+            await this.page.evaluate((selector) => {
+              document
+                .querySelector(selector)
+                ?.scrollIntoView({ block: "center" }); // Scroll to center
+            }, prevButtonSelector);
+            await new Promise((resolve) =>
+              setTimeout(resolve, 500 + Math.random() * 500)
+            ); // Pre-click delay
+
+            // Re-evaluate clickability after scroll attempt (use waitForSelector for better check)
+            try {
+              await this.page.waitForSelector(prevButtonSelector, {
+                visible: true,
+                timeout: 2000,
+              }); // Wait briefly for it to become visible
+              isClickable = true;
+            } catch (waitVisibleError) {
+              logger.warn(
+                `스크롤 후 '${prevButtonSelector}' 버튼이 visible 상태가 되지 않음: ${waitVisibleError.message}. 클릭 시도 건너뛸 수 있음.`
+              );
+              // Check one last time if it simply disappeared
+              const existsAfterWait = await this.page.$(prevButtonSelector);
+              if (!existsAfterWait) {
+                logger.info(
+                  `스크롤/대기 후 '${prevButtonSelector}' 버튼 사라짐 확인. 로딩 완료 추정.`
+                );
+                break; // Exit loop
+              }
+              isClickable = false; // Cannot guarantee clickability
+            }
+          } else {
+            isClickable = true; // Already visible
+          }
+        } catch (visibilityError) {
+          logger.warn(
+            `버튼 가시성 확인/스크롤 중 오류: ${visibilityError.message}. 클릭 시도 계속.`
+          );
+          isClickable = true; // Assume potentially clickable despite error
+        }
+        // 4. 버튼 클릭 시도 (Only if deemed clickable)
+        if (isClickable) {
+          logger.info(
+            `이전 댓글 버튼 클릭 (시도 ${
+              commentLoadAttempts + 1
+            }) - ${currentUrl}`
+          );
+          try {
+            await new Promise((resolve) =>
+              setTimeout(resolve, 500 + Math.random() * 500)
+            ); // Pre-click delay
+
+            // Use evaluate for click to potentially bypass some overlay issues
+            await this.page.evaluate((selector) => {
+              const button = document.querySelector(selector);
+              button?.click(); // Use optional chaining in case it disappears
+            }, prevButtonSelector);
+
+            //await this.page.click(prevButtonSelector, { delay: 100 + Math.random() * 100 }); // Alternative
+
+            const waitTime = CLICK_DELAY_MS + Math.random() * RANDOM_DELAY_MS;
+            logger.debug(`클릭 후 대기: ${waitTime.toFixed(0)}ms`);
+            await new Promise((resolve) =>
+              setTimeout(resolve, 500 + Math.random() * 500)
+            ); // Pre-click delay
+
+            commentLoadAttempts++;
+          } catch (clickError) {
+            // ... (keep the robust click error handling from the previous version) ...
+            const errorMsg = clickError.message.toLowerCase();
+            if (
+              errorMsg.includes("node is detached") ||
+              errorMsg.includes("no node found for selector") ||
+              errorMsg.includes("element is not visible") ||
+              clickError.name === "TargetClosedError" ||
+              errorMsg.includes("waiting for element")
+            ) {
+              // Broader check
+              logger.info(
+                `클릭 시도 중 '${prevButtonSelector}' 버튼 문제 발생 (사라졌거나 클릭 불가 상태). 로딩 완료로 간주. 오류: ${clickError.message}`
+              );
+              break;
+            } else {
+              logger.error(
+                `이전 댓글 버튼 클릭 중 예상치 못한 오류: ${clickError.message}. 댓글 로딩 중단.`
+              );
+              break;
+            }
+          }
+        } else {
+          logger.warn(
+            `'${prevButtonSelector}' 버튼이 클릭 가능한 상태가 아니어서 이번 시도 건너뜀.`
+          );
+          // Add a small delay even if not clicking, to prevent overly fast looping if stuck
+          await new Promise((resolve) =>
+            setTimeout(resolve, 500 + Math.random() * 500)
+          ); // Pre-click delay
+          commentLoadAttempts++; // Increment attempt counter to avoid infinite loops if button is stuck in non-clickable state
+        }
+      } // End of while loop
+
+      // 5. 최대 시도 횟수 도달 경고
       if (commentLoadAttempts >= MAX_COMMENT_LOAD_ATTEMPTS) {
-        logger.warn(`최대 댓글 로드 시도 도달 (${currentUrl}).`);
+        logger.warn(
+          `최대 댓글 로드 시도 (${MAX_COMMENT_LOAD_ATTEMPTS}) 도달 (${currentUrl}). 버튼이 아직 남아있을 수 있습니다.`
+        );
       }
 
-      // --- 이전 댓글 버튼이 사라질 때까지 대기 --- START ---
+      // --- 이전 댓글 버튼이 *확실히* 사라졌는지 최종 확인 ---
       try {
         logger.info(
-          `모든 댓글 로드를 위해 '${prevButtonSelector}' 버튼이 사라지기를 기다립니다...`
+          `최종 확인: '${prevButtonSelector}' 버튼이 사라지거나 숨겨지기를 기다립니다 (최대 15초)...`
         );
         await this.page.waitForSelector(prevButtonSelector, {
-          hidden: true, // <<<--- 버튼이 숨겨지거나 DOM에서 제거될 때까지 대기
-          timeout: 15000, // <<<--- 최대 대기 시간 설정 (예: 15초, 필요시 조정)
+          hidden: true, // DOM에서 제거되거나 visibility: hidden, display: none 상태 확인
+          timeout: 15000, // 최종 확인을 위한 타임아웃
         });
         logger.info(
-          `'${prevButtonSelector}' 버튼 사라짐 확인. 모든 댓글 로딩 완료 추정.`
+          `최종 확인: '${prevButtonSelector}' 버튼 사라짐/숨겨짐 확인 완료.`
         );
       } catch (error) {
-        // 타임아웃 발생 시: 버튼이 계속 남아있거나, 예상보다 오래 걸림
         if (error.name === "TimeoutError") {
-          logger.warn(
-            `'${prevButtonSelector}' 버튼이 제한 시간 내에 사라지지 않았습니다. 댓글이 완전히 로드되지 않았을 수 있습니다.`
-          );
-          // 계속 진행하거나, 오류로 처리할 수 있음
+          // 타임아웃 시, 버튼이 아직 남아있는지 한번 더 체크
+          const stillExists = await this.page.$(prevButtonSelector);
+          if (stillExists) {
+            logger.warn(
+              `최종 확인 실패: '${prevButtonSelector}' 버튼이 제한 시간 내에 사라지거나 숨겨지지 않았습니다. (버튼 아직 존재) 댓글 누락 가능성 있음.`
+            );
+          } else {
+            logger.warn(
+              `최종 확인 실패: '${prevButtonSelector}' 버튼이 제한 시간 내에 사라지거나 숨겨지지 않았습니다. (버튼은 없으나 hidden 조건 불충족) 댓글 누락 가능성 있음.`
+            );
+          }
         } else {
-          // 다른 예외 상황
           logger.error(
-            `'${prevButtonSelector}' 대기 중 오류 발생: ${error.message}`
+            `'${prevButtonSelector}' 최종 확인 대기 중 오류 발생: ${error.message}`
           );
         }
       }
-      // --- 이전 댓글 버튼이 사라질 때까지 대기 --- END ---
+      // --- 최종 확인 끝 ---
 
-      // --- START: 댓글 로딩 보장을 위해 페이지 맨 아래로 스크롤하는 코드 추가 ---
-      try {
-        logger.debug(`페이지 맨 아래로 스크롤 시도 - ${currentUrl}`);
-        await this.page.evaluate(() => {
-          window.scrollTo(0, document.body.scrollHeight);
-        });
-        // 스크롤 후 잠시 대기하여 콘텐츠 로딩 시간 확보
-        await new Promise((resolve) => setTimeout(resolve, 1500)); // 1.5초 대기 (필요시 조정)
-        logger.debug(`페이지 맨 아래로 스크롤 완료 및 대기 - ${currentUrl}`);
-      } catch (scrollError) {
-        logger.warn(
-          `페이지 맨 아래로 스크롤 중 오류 발생 (${currentUrl}): ${scrollError.message}`
-        );
-      }
-      // --- END: 스크롤 코드 추가 ---
+      // --- 스크롤 코드 (댓글 로딩 보조 및 다른 동적 콘텐츠 로딩 위해 유지) ---
+      // try {
+      //   logger.debug(`페이지 맨 아래로 스크롤 시도 - ${currentUrl}`);
+      //   await this.page.evaluate(() => {
+      //     window.scrollTo(0, document.body.scrollHeight);
+      //   });
+      //   await this.page.waitForTimeout(1500); // 스크롤 후 잠시 대기
+      //   logger.debug(`페이지 맨 아래로 스크롤 완료 및 대기 - ${currentUrl}`);
+      // } catch (scrollError) {
+      //   logger.warn(
+      //     `페이지 맨 아래로 스크롤 중 오류 발생 (${currentUrl}): ${scrollError.message}`
+      //   );
+      // }
+      // --- 스크롤 코드 끝 ---
 
+      // --- 페이지 콘텐츠 가져오기 및 댓글 추출 시작 ---
+      logger.info(
+        `모든 댓글 로딩 시도 완료. 페이지 콘텐츠 분석 시작 - ${currentUrl}`
+      );
       const content = await this.page.content();
       const $ = cheerio.load(content);
 
+      // --- Post ID 추출 ---
       const postIdMatch = currentUrl.match(/\/post\/(\d+)/);
       if (!postIdMatch || !postIdMatch[1]) {
         logger.error(
@@ -449,31 +613,24 @@ class BandPosts extends BandAuth {
         );
         return null;
       }
-      const postId = postIdMatch[1]; // 문자열 형태의 ID
+      const postId = postIdMatch[1];
 
-      // --- v_working의 상세 추출 로직 ---
-      const authorName = // v_working의 선택자 사용
+      // --- 게시물 기본 정보 추출 ---
+      const authorName =
         $(".postWriterInfoWrap .text, .userName").first().text().trim() ||
         "작성자 불명";
-
-      let postTitle = $(".postSubject").first().text().trim() || ""; // 초기화
-
-      const postContent = $(".postBody .dPostTextView .txtBody") // v_working의 선택자 사용
-        .map((index, element) => $(element).text().trim())
+      let postTitle = $(".postSubject").first().text().trim() || "";
+      const postContent = $(".postBody .dPostTextView .txtBody")
+        .map((_, element) => $(element).text().trim())
         .get()
         .join("\n");
-
-      // 제목이 없으면 내용 첫 줄 사용
       if (!postTitle && postContent)
         postTitle = postContent.split("\n")[0].substring(0, 50);
-      if (!postTitle) postTitle = authorName || "제목 없음"; // 작성자 이름 또는 기본값
-
+      if (!postTitle) postTitle = authorName || "제목 없음";
       const postTimeText =
         $(".postListInfoWrap .time, .etcArea .time").first().attr("title") ||
         $(".postListInfoWrap .time, .etcArea .time").first().text().trim() ||
         "";
-
-      // 조회수 추출 (v_working 로직)
       const readCountText = $("._postReaders strong, .postMeta .count")
         .text()
         .trim();
@@ -482,24 +639,28 @@ class BandPosts extends BandAuth {
         readCountText.match(/(\d+)\s*명 읽음/) ||
         readCountText.match(/(\d+)/);
       const readCount = readCountMatch ? parseInt(readCountMatch[1], 10) : 0;
-
-      const imageUrls = []; // 이미지 URL 추출 (v_working 로직)
+      const imageUrls = [];
       $(".imageListInner img, ._imageListView img, .attachedImage img").each(
-        (i, el) => {
+        (_, el) => {
           const src = $(el).attr("src") || $(el).attr("data-src");
           if (src && !src.startsWith("data:image")) {
-            // 고해상도 URL 시도 (옵션)
-            const highResSrc = src.replace(/\[\d+x\d+\]/, "");
+            const highResSrc = src.replace(/\[\d+x\d+\]/, ""); // Optional: try getting higher res
             imageUrls.push(highResSrc || src);
           }
         }
       );
 
-      const comments = []; // 댓글 추출 (v_working 로직 - author 키 사용!)
-      $(".cComment, .uCommentList li").each((index, el) => {
-        const isSecret = $(el).find(".secretGuideBox").length > 0; // 비밀 댓글인지
-        const author = // <<<--- 'author' 키 사용
-          $(el)
+      // --- 댓글 추출 (개선된 로딩 후) ---
+      const comments = [];
+      // Use the selector based on the provided HTML structure
+      $(".sCommentList .cComment").each((index, el) => {
+        // Select comments within the list container
+        const $el = $(el);
+        const isSecret =
+          $el.find(".secretGuideBox").length > 0 ||
+          $el.find('p.txt._commentContent:contains("[비밀 댓글]")').length > 0; // Check for secret box or text
+        const author =
+          $el
             .find(
               "button[data-uiselector='authorNameButton'] strong.name, .writerName"
             )
@@ -507,67 +668,71 @@ class BandPosts extends BandAuth {
             .text()
             .trim() || "익명";
         const commentTime =
-          $(el).find("time.time, .commentDate").first().attr("title") ||
-          $(el).find("time.time, .commentDate").first().text().trim();
+          $el.find("time.time, .commentDate").first().attr("title") ||
+          $el.find("time.time, .commentDate").first().text().trim();
         let commentContent = null;
+
         if (isSecret) {
-          commentContent = "[비밀 댓글]"; // 비밀 댓글 내용 대체
-          // 또는 비밀 댓글임을 나타내는 다른 정보 추출
+          commentContent = "[비밀 댓글]";
         } else {
-          commentContent = $(el)
+          // Extract text, handling potential mentions (@user links)
+          const contentElement = $el
             .find("p.txt._commentContent, .commentBody .text")
-            .first()
-            .text()
-            .trim();
+            .first();
+          // Clone the element, remove mentions, then get text
+          const contentClone = contentElement.clone();
+          contentClone.find('a[data-uiselector="bandRefer"]').remove(); // Remove mention links
+          commentContent = contentClone.text().trim(); // Get remaining text
+
+          // If content is still empty after removing mentions (e.g., only mentions), use original text
+          if (!commentContent && contentElement.length > 0) {
+            commentContent = contentElement.text().trim();
+          }
         }
 
-        // author 정보가 있고, 내용(또는 비밀댓글 표시)이 있으면 comments 배열에 추가
-        if (author && commentContent) {
+        // Add comment if author and content (or secret placeholder) exist
+        if (author && (commentContent || isSecret)) {
           comments.push({
             author: author,
-            content: commentContent,
+            content: commentContent || "[내용 없음]", // Ensure content is never null/undefined if author exists
             time: commentTime,
-            isSecret: isSecret, // 비밀 댓글 여부 플래그 추가 (선택 사항)
-          });
-        } else if (isSecret && author) {
-          // 작성자만 있고 비밀 댓글 표시인 경우
-          comments.push({
-            author: author,
-            content: "[비밀 댓글]",
-            time: commentTime,
-            isSecret: true,
+            isSecret: isSecret,
           });
         } else {
           logger.warn(
-            `댓글 정보 추출 실패 (Index ${index}, Secret: ${isSecret}) on ${currentUrl}`
+            `댓글 정보 부분 추출 실패 (Index ${index}, Author: ${author}, Secret: ${isSecret}, Content Found: ${!!commentContent}) on ${currentUrl}`
           );
         }
       });
+
+      const extractedCommentCount = comments.length;
       logger.info(
-        `게시물 ID ${postId} (${currentUrl}) - 댓글 ${comments.length}개 추출 완료`
+        `게시물 ID ${postId} (${currentUrl}) - 댓글 ${extractedCommentCount}개 추출 완료 (로드 시도 ${commentLoadAttempts}회)`
       );
 
-      // 반환 객체 구조 (v_working 기준)
+      // --- 최종 반환 객체 ---
       return {
-        postId: postId, // 문자열 ID
+        postId: postId,
         bandNumber: this.bandNumber,
         postTitle: postTitle,
         postContent: postContent,
         postTime: postTimeText,
-        authorName: authorName, // <<<--- 추가됨
-        readCount: readCount, // <<<--- 추가됨
-        commentCount: comments.length,
-        imageUrls: imageUrls, // <<<--- 추가됨
-        comments: comments, // author 키 사용
+        authorName: authorName,
+        readCount: readCount,
+        commentCount: extractedCommentCount, // Use the count of extracted comments
+        imageUrls: imageUrls,
+        comments: comments,
         crawledAt: new Date().toISOString(),
         postUrl: currentUrl,
       };
     } catch (e) {
       logger.error(
-        `게시물 상세 정보 추출 중 오류 (${currentUrl}): ${e.message}`,
+        `게시물 상세 정보 추출 중 심각한 오류 발생 (${currentUrl}): ${e.message}`,
         e.stack
       );
-      return null;
+      // Consider capturing a screenshot or HTML dump on error for debugging
+      // await this.page.screenshot({ path: `error_screenshot_${Date.now()}.png` });
+      return null; // Return null on significant errors
     }
   }
 

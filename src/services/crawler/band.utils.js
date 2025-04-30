@@ -712,43 +712,50 @@ function generateOrderUniqueId(bandNumber, postId, index) {
 }
 
 /**
- * 게시물 내용에 가격 관련 키워드와 '100' 이상의 숫자가 포함되어 있는지 확인합니다.
- * @param {string} content - 게시물 본문 텍스트
- * @returns {boolean} - 가격 표시 존재 여부
+ * 게시물 본문 내용에 가격 표시가 있는지 확인하는 함수 (수정된 정규식 적용)
+ * @param {string} content - 게시물 본문 내용
+ * @returns {boolean} - 가격 표시가 있으면 true, 없으면 false
  */
 function contentHasPriceIndicator(content) {
+  // 함수 내부 디버깅 로그는 필요에 따라 유지하거나 제거/주석 처리하세요.
   if (!content) return false;
 
-  // 1. 키워드 확인: '수령', '픽업', '도착', '가격', '원' 등 가격 관련 키워드 포함 여부
-  //    '상품', '댓글' 등은 너무 광범위할 수 있어 제외하거나 조정 필요
-  const keywordRegex = /수령|픽업|도착|예약|주문|특가|정상가|할인가|가격|원|₩/; // 가격 관련 키워드 강화
+  // 1. 키워드 확인
+  const keywordRegex = /수령|픽업|도착|예약|주문|특가|정상가|할인가|가격|원|₩/;
   const hasKeyword = keywordRegex.test(content);
+  // logger.debug(`[Price Indicator Step 1] hasKeyword: ${hasKeyword} for content starting with: ${content.substring(0, 30)}`);
 
-  // 키워드가 없으면 바로 false 반환 (효율성)
   if (!hasKeyword) {
     return false;
   }
 
-  // 2. 세 자리 이상의 숫자 확인 (쉼표 포함 가능)
-  //    정규식: 3자리 이상 숫자 또는 쉼표(,)로 구분된 숫자를 찾음
-  const numberRegex = /(?:[1-9]\d{2,}|[1-9]\d{0,2}(?:,\d{3})+(?!\d))/g; // 100 이상 또는 쉼표 포함 3자리 이상 숫자
-  const numbersFound = content.match(numberRegex); // 모든 일치하는 숫자 찾기
+  // 2. 세 자리 이상의 숫자 확인 (쉼표 포함 가능) - (?!\d) 제거됨!
+  // const numberRegex = /(?:[1-9]\d{2,}|[1-9]\d{0,2}(?:,\d{3})+)/g; // <--- 여기 수정됨
+  const numberRegex = /\b\d{1,3}(?:,\d{3})+\b/g; // 더 관대하게 수정
+  const numbersFound = content.match(numberRegex);
+  // logger.debug(`[Price Indicator Step 2] numbersFound: ${JSON.stringify(numbersFound)} for content starting with: ${content.substring(0, 30)}`);
 
-  // 숫자가 전혀 없으면 false 반환
   if (!numbersFound) {
     return false;
   }
 
   // 3. 찾은 숫자 중 100 이상인 숫자가 있는지 확인
-  const hasPriceLikeNumber = numbersFound.some((numStr) => {
-    // 쉼표 제거 후 숫자로 변환
+  let foundPriceLikeNumber = false;
+  for (const numStr of numbersFound) {
     const num = parseInt(numStr.replace(/,/g, ""), 10);
-    return !isNaN(num) && num >= 100; // 숫자로 변환 가능하고 100 이상인지 확인
-  });
+    const isPriceLike = !isNaN(num) && num >= 100;
+    // logger.debug(`[Price Indicator Step 3] Checking number '${numStr}' -> parsed: ${num}, isPriceLike: ${isPriceLike}`);
+    if (isPriceLike) {
+      foundPriceLikeNumber = true;
+      break;
+    }
+  }
+  const hasPriceLikeNumber = foundPriceLikeNumber;
 
-  // 4. 키워드와 100 이상의 숫자가 모두 존재하면 true 반환
+  // logger.debug(`[Price Indicator Step 4] Final result: hasKeyword=${hasKeyword}, hasPriceLikeNumber=${hasPriceLikeNumber}`);
   return hasKeyword && hasPriceLikeNumber;
 }
+
 /**
  * 댓글 내용에서 주문 정보를 추출합니다.
  * - "번"이라는 단어가 있으면 "1번 3개요", "1번 상품 3개요" 같은 형식에서 앞의 숫자는 itemNumber, 뒤의 숫자는 quantity로 처리합니다.
