@@ -32,7 +32,7 @@ const getAllProducts = async (req, res) => {
       .from("products")
       .select("*", { count: "exact" }) // count 옵션 확인
       .eq("user_id", userId)
-      .order("created_at", { ascending: false }); //
+      .order("posted_at", { ascending: false }); //
 
     // 상태 필터링 (req.query.status 값이 "all"이 아닐 때만 적용)
     if (
@@ -428,23 +428,19 @@ const patchProduct = async (req, res) => {
       throw error; // Re-throw the error for higher-level handling
     }
 
-    return res
-      .status(200)
-      .json({
-        success: true,
-        message: "상품 정보가 업데이트되었습니다.",
-        data,
-      });
+    return res.status(200).json({
+      success: true,
+      message: "상품 정보가 업데이트되었습니다.",
+      data,
+    });
   } catch (error) {
     logger.error(`상품 정보 부분 업데이트 오류 (ID: ${req.params.id}):`, error);
     // Improved error response - include error details and status code
-    return res
-      .status(error.code === 22007 ? 400 : 500)
-      .json({
-        success: false,
-        message: "상품 정보 업데이트 중 오류가 발생했습니다.",
-        error: error.message,
-      });
+    return res.status(error.code === 22007 ? 400 : 500).json({
+      success: false,
+      message: "상품 정보 업데이트 중 오류가 발생했습니다.",
+      error: error.message,
+    });
   }
 };
 module.exports = {

@@ -312,6 +312,20 @@ function parseKoreanDate(dateString) {
  * @returns {Date} - 파싱된 Date 객체, 실패하면 현재 날짜
  */
 function safeParseDate(dateString) {
+  // 숫자 타입 입력 처리 (Unix timestamp ms 가정)
+  if (typeof dateString === 'number') {
+    const dateFromTimestamp = new Date(dateString);
+    // 유효한 Date 객체인지 확인
+    if (!isNaN(dateFromTimestamp.getTime())) {
+      return dateFromTimestamp;
+    } else {
+      // 유효하지 않은 숫자 타임스탬프인 경우 경고 로깅 (선택 사항)
+      // logger.warn(`safeParseDate: Invalid timestamp number provided: ${dateString}`);
+      // 실패 시 기본값 (예: 현재 시간) 반환 또는 오류 처리
+      return new Date(); 
+    }
+  }
+
   if (!dateString) return new Date();
   try {
     const koreanDate = parseKoreanDate(dateString);

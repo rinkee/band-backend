@@ -66,7 +66,17 @@ basePrice로 설정된 가격 정보(가장 기본 단위 옵션)도 priceOption
 🔥게시물에 명확히 다른 상품(예: 사과, 배)이나 동일 품목이라도 종류/색상(빨간 파프리카, 노란 파프리카)이 다른 상품이 여러 개 있으면 multipleProducts를 true로 설정하고, 각 상품 정보를 products 배열에 담으세요. 특히 '1번', '2번' 또는 '1️⃣', '2️⃣' 와 같이 번호가 매겨진 목록 형태는 여러 상품일 가능성이 매우 높으므로 주의 깊게 분석하세요.
 동일 상품에 대한 수량/단위별 가격 차이는 여러 상품이 아니라, 단일 상품의 priceOptions로 처리해야 합니다. 이 경우 multipleProducts는 false입니다.
 기타 필드:
-title: 상품의 핵심 명칭 (수량/단위 제외 권장. 예: "아보카도", "씨앗젓갈") 이름에 절대로 () 괄호를 넣지마세요. 옆에 게시물 작성 시간을 포함하여 명시하세요. (예시:아보카도 [5월2일])
+title: 상품의 핵심 명칭만 간결하게 추출합니다. (수량/단위 정보는 반드시 제외)
+  🔥 **날짜 접두사:** 맨 앞에 반드시 **\`[M월D일]\` 형식**으로 게시물 작성 시간의 월과 일을 포함하세요. (예: 5월 2일이면 \`[5월2일]\`).
+  🔥 **상품명:** 날짜 접두사 바로 뒤에 **자연스러운 상품명**을 공백 하나로 구분하여 붙입니다.
+      - **띄어쓰기:** 원문 텍스트의 불필요한 띄어쓰기나 줄바꿈을 제거하고, 일반적인 상품명 표기법에 따라 자연스럽게 띄어씁니다. 고유명사나 복합명사는 적절히 붙여 씁니다. (예: "성주 꿀 참외" -> \`성주꿀참외\` 또는 \`성주 꿀참외\`, "블랙 라벨 오렌지" -> \`블랙라벨오렌지\`, "메주리알 장조림" -> \`메주리알장조림\` 또는 \`메주리알 장조림\`) AI가 가장 자연스럽다고 판단하는 형태로 정제하세요.
+  🔥 **특수문자/괄호:** 상품명 자체에는 괄호 \`()\` 를 포함하지 마세요. 원산지 등 부가 정보도 포함하지 마세요. (예:마늘 (국내산) -> 마늘)
+      
+  - **최종 형식 예시:**
+      - \`[5월2일] 성주꿀참외\`
+      - \`[12월25일] 블랙라벨오렌지\`
+      - \`[5월2일] 메주리알 장조림\`
+      - \`[5월2일] 마늘 국내산\`
 🔥 quantity (루트 레벨): 상품의 가장 기본적인 판매 단위 수량을 나타냅니다. 예를 들어, 상품이 기본적으로 '1봉지' 단위로 판매된다면 이 값은 1입니다. '2개 묶음'으로만 판매된다면 기본 판매 단위는 '묶음'이므로, 이 값은 1입니다. 이 값은 priceOptions 배열 내 quantity와 직접적인 연관성은 없으며, 상품 자체의 최소 판매 단위를 나타냅니다. 대부분의 경우 1로 설정됩니다.
 🔥 quantityText: 루트 레벨 quantity에 해당하는 기본 판매 단위를 설명하는 텍스트입니다. (예: "1봉지", "1세트", "1개", "500g 팩") 내용물 정보(예: 6알)는 여기에 포함하지 않고, priceOptions의 description에서 상세히 설명합니다.
 productId: prod_bandNumber_postId_itemNumber 형식으로 생성. itemNumber는 게시물 본문에 명시된 상품 번호(1번, 2번...) 또는 순서대로 부여. 여러 상품일 경우 각 상품 객체 내에 포함. 단일 상품 시 기본 1 또는 명시된 번호 사용.
@@ -86,7 +96,7 @@ pickupType: 픽업/배송 방식 (예: "도착", "수령", "픽업", "배송", "
     {
       "productId": "prod_${postKey}_1", // 예시, 실제 값으로 대체
       "itemNumber": 1,
-      "title": "상품명1 [오늘날짜 월일]",
+      "title": "[5월2일] 상품명1", // <<< 예시 수정
       "basePrice": 숫자, // 상품1 기본 단위(quantity:1) 가격
       "priceOptions": [
         { "quantity": 1, "price": 숫자, "description": "상품1 옵션1 설명 (예: 1팩(6개입))" }, // 주문 단위 수량: 1
@@ -113,7 +123,7 @@ Json
   "multipleProducts": false,
   "productId": "prod_${postKey}_1", // 예시, 실제 값으로 대체
   "itemNumber": 1, // 또는 해당 상품 번호
-  "title": "퓨어스펙 블랙라벨 오렌지 [오늘날짜 월일]",
+  "title": "[5월2일] 퓨어스펙 블랙라벨 오렌지", // <<< 예시 수정
   "basePrice": 8900, // 기본 단위(1봉지) 가격
   "priceOptions": [
     { "quantity": 1, "price": 8900, "description": "1봉지(6알)" }, // quantity: 주문 단위 수량 = 1
@@ -190,7 +200,14 @@ ${content}
           if (mergedProduct) {
             logger.info("수량 기반 상품들을 하나의 상품으로 통합했습니다.");
             // processProduct는 단일 상품을 처리하므로, multipleProducts: false 인 객체를 반환함
-            return processProduct(mergedProduct, postTime);
+            const processedMergedProduct = processProduct(
+              mergedProduct,
+              postTime
+            );
+            return {
+              multipleProducts: false, // 병합되었으므로 단일 상품
+              products: [processedMergedProduct], // 배열로 감싸기
+            };
           }
 
           logger.info(
@@ -209,7 +226,7 @@ ${content}
               singleProduct;
 
             // processProduct 호출 시 자동으로 multipleProducts: false 처리됨
-            return processProduct(
+            const processedSingleProduct = processProduct(
               {
                 ...cleanProduct,
                 // 공통 픽업 정보 병합 (선택적)
@@ -222,6 +239,10 @@ ${content}
               },
               postTime
             );
+            return {
+              multipleProducts: false, // 병합되었으므로 단일 상품
+              products: [processedSingleProduct], // 배열로 감싸기
+            };
           }
 
           // 실제 여러 상품 처리
@@ -249,7 +270,11 @@ ${content}
         }
 
         // 단일 상품 처리 (기존과 동일하게 유지)
-        return processProduct(result, postTime);
+        const processedSingleProduct = processProduct(result, postTime);
+        return {
+          multipleProducts: false, // 단일 상품이므로 false
+          products: [processedSingleProduct], // 배열로 감싸서 반환
+        };
       } catch (parseError) {
         logger.error("JSON 파싱 오류:", parseError);
         logger.error("파싱 실패한 내용:", responseText); // 파싱 실패 시 원본 내용 로깅
@@ -283,22 +308,35 @@ ${content}
   logger.warn("재시도 로직 후 예기치 않게 함수 종료됨. 기본값 반환.");
   return getDefaultProduct("알 수 없는 오류");
 }
-
-function getDefaultProduct(title = "제목 없음") {
-  return {
-    title,
+/**
+ * Gemini API 호출 중 오류가 발생하거나, 제품 정보가 부족할 때 기본 상품 정보를 반환하는 함수
+ * @param {string} [reason="정보 없음"] - 기본 상품 제목에 사용할 오류나 기본값 사유
+ * @returns {Object} - 기본 상품 정보를 포함하는 객체 (multipleProducts: false, products: [defaultProdData])
+ */
+function getDefaultProduct(reason = "정보 없음") {
+  // 기본 상품 객체 생성 (이전 로직과 유사)
+  const defaultProdData = {
+    title: reason, // 오류나 기본값 사유를 제목으로 사용
     basePrice: 0,
     priceOptions: [{ quantity: 1, price: 0, description: "기본가" }],
     quantity: 1,
     quantityText: null,
     category: "기타",
-    status: "판매중",
+    status: "판매중", // 또는 "오류" 등으로 설정 가능
     tags: [],
     features: [],
     pickupInfo: null,
     pickupDate: null,
     pickupType: null,
-    multipleProducts: false,
+    // 여기에 multipleProducts: false 를 넣지 않습니다.
+  };
+
+  // <<< 수정: 최종 반환 구조 >>>
+  return {
+    multipleProducts: false, // 기본값은 항상 단일 상품(오류 표시용)으로 간주
+    products: [defaultProdData], // 기본 상품 데이터를 배열에 담아 반환
+    // 필요시 에러 상태를 명시적으로 추가할 수도 있음
+    // error: `기본값 반환됨: ${reason}`
   };
 }
 
@@ -781,4 +819,5 @@ function detectAndMergeQuantityBasedProducts(products) {
 module.exports = {
   extractProductInfo,
   extractPickupDate,
+  getDefaultProduct,
 };

@@ -630,6 +630,7 @@ const updateProfile = async (req, res) => {
       band_number: "band_number", // 프론트에서 band_number도 보낸다면 추가 (읽기전용이면 제외)
       auto_barcode_generation: "auto_barcode_generation", // 새로 추가된 필드
       excluded_customers: "excluded_customers", // 새로 추가된 필드
+      post_fetch_limit: "post_fetch_limit", // 새로 추가된 필드
       // 필요한 다른 필드들도 여기에 추가...
     };
 

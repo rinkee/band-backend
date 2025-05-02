@@ -18,10 +18,7 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
-// 제외할 고객 이름 목록 (환경설정 등에서 관리 권장)
-const excludedCustomers = ["밴드지기", "가빈과일마켓 김실장"];
-
-// --- getAllBandPosts 함수 (변경 없음) ---
+// --- getAllBandPosts 함수 ---
 async function getAllBandPosts(userId, requestedLimit = 500) {
   // ... 이전 코드와 동일 ...
   if (!userId) {
@@ -87,7 +84,7 @@ async function getAllBandPosts(userId, requestedLimit = 500) {
         // API 응답 데이터 구조에 맞춰 필요한 정보 추출
         const processedPosts = items.map((post) => ({
           postKey: post.post_key, // 고유 식별자 <= postKey로 이름 변경
-          bandKey: bandKey, // 소속 밴드 식별자
+          bandKey: post.band_key || bandKey, // 응답에 band_key가 있다면 사용, 없으면 요청 파라미터 사용
           author: {
             // 작성자 정보 (필요한 필드만 선택)
             name: post.author.name,
@@ -97,6 +94,7 @@ async function getAllBandPosts(userId, requestedLimit = 500) {
           content: post.content, // 게시물 내용
           createdAt: new Date(post.created_at), // Date 객체로 변환 <= createdAt으로 이름 변경
           commentCount: post.comment_count, // <= commentCount로 이름 변경
+          latestComments: post.latest_comments || [], // 최신 댓글 정보 추가
           photo_count: post.photo_count || 0,
           photos: post.photos?.map((p) => p.url) || [], // 사진 URL 목록
           emotion_count: post.emotion_count,
@@ -141,12 +139,15 @@ async function getAllBandPosts(userId, requestedLimit = 500) {
   return allPosts;
 }
 
-// --- getBandComments 함수 (변경 없음) ---
-async function getBandComments(userId, bandNumber) {
-  // ... 이전 코드와 동일 ...
-  if (!userId) {
-    logger.error("getBandComments 호출 오류: userId가 제공되지 않았습니다.");
-    throw new Error("User ID is required.");
+// --- getBandComments 함수 ---
+async function getBandComments(userId, postKey, bandKey) {
+  if (!userId || !postKey || !bandKey) {
+    logger.error(
+      "getBandComments 호출 오류: userId, postKey, 또는 bandKey가 제공되지 않았습니다."
+    );
+    throw new Error(
+      "User ID, Post Key, and Band Key are required to fetch comments."
+    );
   }
 
   // 1. Supabase에서 사용자 정보 (토큰) 조회
@@ -173,167 +174,113 @@ async function getBandComments(userId, bandNumber) {
     throw error; // 에러 재발생 시켜 호출 측에서 처리하도록 함
   }
 
-  // 2. Supabase에서 해당 사용자의 모든 게시물 키(post_key)와 밴드 키(band_key) 조회
-  //    (어떤 밴드의 게시물인지 알아야 API 호출 시 band_key를 넣을 수 있음)
-  let postsToFetchCommentsFor = []; // { postKey: '...', bandKey: '...' } 형태의 객체 배열
-  try {
-    // posts 테이블에서 user_id가 일치하고 post_key, band_key가 있는 레코드 조회
-    // **중요:** 실제 테이블과 컬럼명 확인 필요 ('post_key', 'band_key')
-    const { data: postsData, error: postsError } = await supabase
-      .from("posts") // 실제 게시물 테이블 이름 확인
-      .select("post_key, band_key") // post_key 와 band_key 둘 다 필요
-      .eq("user_id", userId)
-      .not("post_key", "is", null)
-      .not("band_key", "is", null); // band_key도 null이 아니어야 함
-
-    if (postsError) throw postsError;
-
-    postsToFetchCommentsFor = postsData
-      .map((post) => ({ postKey: post.post_key, bandKey: post.band_key }))
-      .filter((item) => item.postKey && item.bandKey); // 둘 다 유효한 값만 필터링
-
-    if (postsToFetchCommentsFor.length === 0) {
-      logger.info(
-        `사용자 ${userId}에 대해 댓글을 조회할 게시물 (post_key, band_key 포함)이 DB에 없습니다.`
-      );
-      return {}; // 빈 객체 반환
-    }
-    logger.info(
-      `사용자 ${userId}의 댓글 조회 대상 게시물 ${postsToFetchCommentsFor.length}개 확인 완료.`
-    );
-  } catch (error) {
-    logger.error(
-      `Supabase에서 사용자 ${userId}의 게시물 키/밴드 키 조회 실패: ${error.message}`
-    );
-    throw new Error(
-      `Failed to retrieve post/band keys for user ${userId}: ${error.message}`
-    );
-  }
-
-  // 3. 각 post_key/band_key 조합에 대해 댓글 API 호출
-  const allCommentsByPost = {}; // 결과를 저장할 객체 { postKey: [comments] }
-
-  // API 호출 부하를 줄이기 위해 순차 처리 또는 Promise.allSettled 등 사용 고려 (여기서는 순차 처리)
-  for (const { postKey, bandKey } of postsToFetchCommentsFor) {
-    let postComments = [];
-    let nextParams = {};
-    let hasMore = true;
-    let attempt = 0;
-    const maxAttempts = 3; // 재시도 횟수
-
-    logger.debug(`게시물 ${postKey} (밴드 ${bandKey})의 댓글 가져오기 시작...`);
-
-    while (hasMore && attempt < maxAttempts) {
-      try {
-        const response = await axios.get(COMMENTS_API_URL, {
-          params: {
-            access_token: bandAccessToken,
-            band_key: bandKey, // 해당 게시물의 밴드 키 사용
-            post_key: postKey, // 해당 게시물의 포스트 키 사용
-            limit: 50, // API 페이지당 최대치 확인 (예: 50)
-            ...nextParams,
-          },
-          timeout: 10000, // 10초 타임아웃 설정
-        });
-
-        if (response.data.result_code === 1) {
-          const items = response.data.result_data.items || []; // 댓글 목록 (없으면 빈 배열)
-
-          // API 응답 데이터 구조에 맞춰 필요한 필드만 추출 및 가공
-          const extractedComments = items.map((item) => ({
-            comment_key: item.comment_key, // Band 댓글 고유 ID (★★★★★ 중요)
-            post_key: postKey, // 현재 처리 중인 postKey 추가 (컨텍스트용)
-            band_key: bandKey, // 현재 사용 중인 bandKey 추가 (컨텍스트 및 ID 생성용)
-            author: {
-              // 작성자 정보
-              name: item.author.name,
-              user_key: item.author.user_key, // Band 사용자 고유 ID (★★★★★ 중요)
-              profile_image_url: item.author.profile_image_url,
-            },
-            content: item.content, // 댓글 내용 (후처리 필요: <band:refer> 제거 등)
-            created_at: item.created_at, // UNIX timestamp (milliseconds) -> 후처리에서 new Date() 사용
-            // sticker: item.sticker, // 스티커 정보 (필요시)
-            // photo: item.photo, // 사진 정보 (필요시)
-          }));
-          postComments = postComments.concat(extractedComments);
-
-          // 페이징 처리
-          if (
-            response.data.result_data.paging &&
-            response.data.result_data.paging.next_params
-          ) {
-            nextParams = response.data.result_data.paging.next_params;
-            hasMore = true;
-            logger.debug(
-              `  - 게시물 ${postKey}: 다음 페이지 댓글 로딩... ${JSON.stringify(
-                nextParams
-              )}`
-            );
-            await new Promise((resolve) => setTimeout(resolve, 300)); // Rate limit 방지
-          } else {
-            hasMore = false; // 다음 페이지 없음
-          }
-          attempt = 0; // 성공 시 재시도 카운터 리셋
-        } else {
-          // API 응답 코드가 1이 아닌 경우 (에러)
-          logger.error(
-            `  - 게시물 ${postKey} 댓글 API 오류: 코드 ${
-              response.data.result_code
-            }, 메시지: ${response.data.result_data || "Unknown error"}`
-          );
-          // 특정 에러 코드(e.g., 1010: 게시물 없음)는 무시하고 다음으로 진행 가능
-          hasMore = false; // 에러 발생 시 해당 게시물 댓글 가져오기 중단
-          // allCommentsByPost[postKey] = { error: `API Error ${response.data.result_code}` }; // 에러 정보 기록도 가능
-          break; // 현재 postKey 루프 탈출
-        }
-      } catch (error) {
-        // 네트워크 오류 등 axios 요청 자체의 실패
-        attempt++;
-        logger.error(
-          `  - 게시물 ${postKey} 댓글 요청 오류 (시도 ${attempt}/${maxAttempts}): ${
-            error.response ? JSON.stringify(error.response.data) : error.message
-          }`
-        );
-        if (attempt >= maxAttempts) {
-          logger.error(`  - 게시물 ${postKey} 댓글 가져오기 최종 실패.`);
-          // allCommentsByPost[postKey] = { error: `Fetch failed after ${maxAttempts} attempts` }; // 에러 정보 기록
-          hasMore = false; // 실패 시 더 이상 시도 안 함
-        } else {
-          // 재시도 전 대기 시간 (점점 늘림)
-          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
-        }
-      }
-    } // end while (페이징 처리 루프)
-
-    // 성공적으로 가져온 댓글 (0개 포함) 저장
-    if (allCommentsByPost[postKey] === undefined) {
-      // 에러가 기록되지 않은 경우에만 저장
-      allCommentsByPost[postKey] = postComments;
-      if (postComments.length > 0) {
-        logger.info(
-          `게시물 ${postKey}: 총 ${postComments.length}개 댓글 가져오기 완료.`
-        );
-      } else {
-        logger.info(`게시물 ${postKey}: 가져온 댓글이 없습니다.`);
-      }
-    }
-
-    // 다음 게시물 처리 전 짧은 대기 (API 서버 부하 감소)
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  } // end for (각 게시물 처리 루프)
+  // 2. 특정 게시물의 댓글 가져오기
+  let allComments = [];
+  let nextParams = {};
+  let hasMore = true;
+  let latestCommentTimestamp = 0; // 해당 포스트의 가장 최신 댓글 타임스탬프
 
   logger.info(
-    `모든 대상 게시물(${postsToFetchCommentsFor.length}개)에 대한 댓글 가져오기 시도 완료.`
+    `Fetching comments for post ${postKey} in band ${bandKey} for user ${userId}`
   );
-  return allCommentsByPost; // { postKey: [comments], ... } 객체 반환
+
+  while (hasMore) {
+    try {
+      const response = await axios.get(COMMENTS_API_URL, {
+        params: {
+          access_token: bandAccessToken,
+          band_key: bandKey,
+          post_key: postKey,
+          limit: 50, // API 페이지당 최대치 확인 필요 (문서상 50)
+          // since 파라미터 제거
+          ...nextParams,
+        },
+        timeout: 15000, // 타임아웃 설정
+      });
+
+      if (response.data.result_code === 1 && response.data.result_data) {
+        const data = response.data.result_data;
+        const items = data.items || [];
+        logger.debug(
+          `Fetched ${items.length} comments in this page for post ${postKey}`
+        );
+
+        if (items.length > 0) {
+          // 가져온 댓글 처리 (여기서는 예시로 필요한 정보만 추출)
+          const processedComments = items.map((comment) => {
+            const createdAt = parseInt(comment.created_at, 10);
+            // 최신 댓글 타임스탬프 업데이트
+            if (createdAt > latestCommentTimestamp) {
+              latestCommentTimestamp = createdAt;
+            }
+            return {
+              comment_key: comment.comment_key,
+              post_key: postKey,
+              band_key: bandKey,
+              author: {
+                name: comment.author.name,
+                user_key: comment.author.user_key,
+                profile_image_url: comment.author.profile_image_url,
+              },
+              content: comment.content,
+              created_at: createdAt, // Unix timestamp (ms)
+              // rawData: comment, // 필요시 원본 데이터 포함
+            };
+          });
+          allComments = allComments.concat(processedComments);
+        } else {
+          logger.debug(`No comments found in this page for post ${postKey}`);
+        }
+
+        if (data.paging && data.paging.next_params) {
+          nextParams = data.paging.next_params;
+          logger.debug(
+            `Next comment page parameters found for post ${postKey}:`,
+            nextParams
+          );
+          hasMore = true;
+        } else {
+          logger.info(`No more comment pages for post ${postKey}`);
+          hasMore = false;
+        }
+      } else {
+        logger.error(
+          `Band API Error fetching comments for post ${postKey}:`,
+          response.data.result_data || "Unknown error"
+        );
+        throw new Error(
+          `Band API Error fetching comments (code ${response.data.result_code}) for post ${postKey}`
+        );
+      }
+    } catch (error) {
+      logger.error(
+        `Error fetching Band comments for post ${postKey}:`,
+        error.response ? error.response.data : error.message
+      );
+      // 특정 포스트 댓글 조회 실패 시, 다른 포스트 처리를 위해 에러 전파 대신 빈 배열 반환 고려 가능
+      // throw new Error(`Failed to fetch comments for post ${postKey}`);
+      logger.warn(
+        `댓글 조회 실패: postKey=${postKey}, bandKey=${bandKey}. 빈 댓글 목록 반환.`
+      );
+      hasMore = false; // 에러 발생 시 해당 포스트 댓글 조회 중단
+      // 또는 return { comments: [], latestTimestamp: 0 }; 와 같이 에러 처리 후 반환
+    }
+
+    // API Rate Limit 고려 (옵션)
+    // if (hasMore) {
+    //   await new Promise(resolve => setTimeout(resolve, 200));
+    // }
+  }
+
+  logger.info(
+    `Total ${allComments.length} comments fetched for post ${postKey}`
+  );
+
+  // 모든 댓글 목록과 해당 포스트의 가장 최신 댓글 타임스탬프 반환
+  return { comments: allComments, latestTimestamp: latestCommentTimestamp };
 }
 
-/**
- * Supabase 'products' 테이블에서 특정 사용자의 특정 게시물에 해당하는 상품 정보를 조회합니다.
- * @param {string} userId - 서비스 사용자 ID
- * @param {string} postKey - 조회할 게시물의 Band post_key
- * @returns {Promise<Map<number, object>>} - Key: item_number, Value: productData 객체 (product_id, title, base_price, price_options 포함)
- */
+// --- _fetchProductMapForPost 함수 (변경 없음) ---
 async function _fetchProductMapForPost(userId, postKey) {
   // ... 이전 코드와 동일 ...
   const productMap = new Map(); // 결과를 저장할 Map 객체 초기화
@@ -341,7 +288,7 @@ async function _fetchProductMapForPost(userId, postKey) {
     logger.debug(`상품 정보 조회 시작: 사용자 ${userId}, 게시물 ${postKey}`);
 
     // products 테이블에서 필요한 컬럼 조회
-    // **중요:** 실제 테이블 컬럼명 확인 필요 ('user_id', 'post_number', 'item_number', 'product_id', 'title', 'base_price', 'price_options')
+    // **중요:** 실제 테이블 컬럼명 확인 필요 ('user_id', 'post_number', 'item_number', 'product_id', 'title', 'price', 'price_options')
     const { data: products, error } = await supabase
       .from("products")
       .select("product_id, item_number, title, base_price, price_options")
@@ -393,13 +340,11 @@ async function _fetchProductMapForPost(userId, postKey) {
 /**
  * API로 가져온 댓글 데이터를 분석하여 주문 및 고객 정보를 생성합니다. (DB 저장 X)
  * @param {string} userId - 서비스 사용자 ID (데이터 매핑용)
- * @param {string} bandNumber - 컨텍스트용 밴드 번호 (로그 등) -> 이 파라미터 대신 comments 데이터 내 band_key 사용
  * @param {object} allCommentsByPost - getBandComments에서 반환된 댓글 데이터 객체 { postKey: [comments] }
  * @returns {Promise<{ orders: Array<Object>, customers: Array<Object>, summary: object }>} - 가공된 주문, 고객 데이터 및 처리 요약 정보
  */
 async function processAndGenerateOrdersFromComments(userId, allCommentsByPost) {
-  // bandNumber 파라미터 제거
-  // ---> 함수 이름 변경: processAndSave... -> processAndGenerate...
+  // ... 이전 코드와 동일 ...
   logger.info(`주문 데이터 생성 시작: 사용자 ID ${userId}`);
 
   // 1. 입력 데이터 확인 (allCommentsByPost)
@@ -507,7 +452,7 @@ async function processAndGenerateOrdersFromComments(userId, allCommentsByPost) {
         .replace(/<band:refer[^>]*>.*?<\/band:refer>/g, "")
         .trim();
       const text = cleanedContent;
-      const ctime = safeParseDate(comment.created_at) || new Date();
+      const ctime = new Date(comment.created_at); // Date 객체로 변환
       const bandKey = comment.band_key;
       const userKey = author.user_key;
       const commentKey = comment.comment_key;
@@ -521,7 +466,7 @@ async function processAndGenerateOrdersFromComments(userId, allCommentsByPost) {
       }
 
       // --- 5. 주문(Order) 데이터 초기화 ---
-      const uniqueCommentOrderId = `order_${bandKey}_${postKey}_${commentKey}`;
+      const uniqueCommentOrderId = `order_${commentKey}`;
       let orderData = {
         order_id: uniqueCommentOrderId,
         user_id: userId,
@@ -561,17 +506,17 @@ async function processAndGenerateOrdersFromComments(userId, allCommentsByPost) {
       let calculatedTotalAmount = 0;
 
       if (isProductPost && productMap.size > 0 && !isClosedByNewComment) {
-        const extractedItems = extractEnhancedOrderFromComment(text, logger);
+        const extractedOrder = extractEnhancedOrderFromComment(text, logger);
 
         // --- 7-1. 명시적 주문 추출 성공 ---
-        if (extractedItems.length > 0) {
+        if (extractedOrder && extractedOrder.length > 0) {
           logger.debug(
-            `게시물 ${postKey}, 댓글 ${commentKey}: ${extractedItems.length}개 주문 항목 추출 성공.`
+            `게시물 ${postKey}, 댓글 ${commentKey}: ${extractedOrder.length}개 주문 항목 추출 성공.`
           );
 
           let firstValidItemProcessed = false;
 
-          for (const orderItem of extractedItems) {
+          for (const orderItem of extractedOrder) {
             let itemNumberToUse = orderItem.itemNumber;
             let targetProductId = null;
             let isAmbiguousNow = orderItem.isAmbiguous;
@@ -643,9 +588,7 @@ async function processAndGenerateOrdersFromComments(userId, allCommentsByPost) {
             // 가격 계산 (이전과 동일)
             const productOptions = productInfo.price_options || [];
             const fallbackPrice =
-              typeof productInfo.base_price === "number"
-                ? productInfo.base_price
-                : 0;
+              typeof productInfo.price === "number" ? productInfo.price : 0;
             calculatedTotalAmount = calculateOptimalPrice(
               quantity,
               productOptions,
@@ -675,9 +618,9 @@ async function processAndGenerateOrdersFromComments(userId, allCommentsByPost) {
           }
 
           // --- 7-2. Fallback 1: 추출 실패 + 숫자 포함 ---
-        } else if (/\d/.test(text)) {
-          logger.warn(
-            `게시물 ${postKey}, 댓글 ${commentKey}: 추출 실패, 숫자 포함 Fallback 1 적용.`
+        } else {
+          logger.debug(
+            `게시물 ${postKey}, 댓글 ${commentKey}: 명시적 주문 추출 실패. Fallback 시도.`
           );
           let targetProductId = null;
           let itemNumberToUse = 1;
@@ -697,9 +640,7 @@ async function processAndGenerateOrdersFromComments(userId, allCommentsByPost) {
             const quantity = 1;
             const productOptions = productInfo.price_options || [];
             const fallbackPrice =
-              typeof productInfo.base_price === "number"
-                ? productInfo.base_price
-                : 0;
+              typeof productInfo.price === "number" ? productInfo.price : 0;
             calculatedTotalAmount = calculateOptimalPrice(
               quantity,
               productOptions,
@@ -784,9 +725,418 @@ async function processAndGenerateOrdersFromComments(userId, allCommentsByPost) {
   };
 }
 
+// src/services/bandService.js
+
+// ... (다른 함수들 및 require 문은 그대로) ...
+
+/**
+ * 주어진 신규 댓글 목록과 상품 정보를 바탕으로 주문 및 고객 데이터를 생성합니다.
+ * (DB 저장은 하지 않고 데이터만 생성하여 반환)
+ * *** 수정: 댓글당 첫 번째 유효 주문 항목만 처리 ***
+ *
+ * @param {string} userId - 사용자 ID
+ * @param {Array<object>} newComments - 처리할 새로운 댓글 객체 배열
+ * @param {Map<string, object>} productMap - 해당 게시물의 상품 정보 Map
+ * @returns {Promise<{orders: Array<object>, customers: Map<string, object>, summary: object}>} - 생성된 주문 배열, 고객 정보 Map, 처리 요약
+ */
+async function generateOrderDataFromComments(
+  userId,
+  newComments,
+  productMap,
+  postKey,
+  isMultipleProductsPost = false
+) {
+  const ordersToSave = [];
+  const customersToSaveMap = new Map();
+  const processingSummary = {
+    totalCommentsProcessed: newComments.length,
+    generatedOrders: 0,
+    generatedCustomers: 0,
+    skippedExcluded: 0,
+    skippedClosing: 0,
+    skippedNoOrder: 0,
+    skippedMissingInfo: 0,
+    errors: [],
+  };
+
+  // <<< *** 수정 시작: 함수 실행 시 DB에서 제외 고객 목록 조회 *** >>>
+  let excludedCustomers = []; // 함수 내 지역 변수로 선언
+  try {
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("excluded_customers")
+      .eq("user_id", userId)
+      .single();
+    // userError 처리 (PGRST116은 결과 없음 오류이므로 무시 가능)
+    if (userError && userError.code !== "PGRST116") {
+      logger.error(
+        `[generateOrderDataFromComments] Failed to fetch excluded customers for user ${userId}: ${userError.message}`
+      );
+    } else if (
+      userData?.excluded_customers &&
+      Array.isArray(userData.excluded_customers)
+    ) {
+      excludedCustomers = userData.excluded_customers
+        .filter((name) => typeof name === "string") // 문자열만 필터링
+        .map((name) => name.trim()); // 앞뒤 공백 제거
+    }
+    logger.debug(
+      "[generateOrderDataFromComments] Fetched excludedCustomers list:",
+      excludedCustomers
+    );
+  } catch (e) {
+    logger.error(
+      `[generateOrderDataFromComments] Error fetching excluded customers: ${e.message}`
+    );
+    excludedCustomers = []; // 오류 발생 시 빈 배열 사용
+  }
+  // <<< *** 수정 끝 *** >>>
+
+  // <<< 디버깅 로그 추가 >>>
+  logger.debug(
+    "[generateOrderDataFromComments] Initial excludedCustomers list:",
+    excludedCustomers
+  );
+  // <<< 디버깅 로그 추가 끝 >>>
+
+  const firstCommentKeyInfo =
+    newComments.length > 0
+      ? `band ${newComments[0].band_key} / post ${newComments[0].post_key}`
+      : "N/A";
+  logger.info(
+    `[generateOrderDataFromComments] Starting processing for ${newComments.length} new comments on ${firstCommentKeyInfo}`
+  );
+
+  if (!(productMap instanceof Map)) {
+    logger.warn(
+      `[generateOrderDataFromComments] productMap is not a valid Map for ${firstCommentKeyInfo}. Product matching might be affected.`
+    );
+    productMap = new Map();
+  }
+
+  for (const [index, comment] of newComments.entries()) {
+    let bandKey = null;
+    let postKey = null;
+    try {
+      // 1. 기본 정보 추출 및 필터링
+      bandKey = comment.band_key;
+      postKey = comment.post_key;
+      const authorName = comment.author?.name?.trim();
+      const authorId = comment.author?.user_key;
+      const commentContent = comment.content;
+      const createdAt = safeParseDate(comment.created_at);
+      const commentKey = comment.comment_key;
+
+      if (
+        !authorName ||
+        !authorId ||
+        !commentContent ||
+        !createdAt ||
+        !commentKey ||
+        !postKey ||
+        !bandKey
+      ) {
+        logger.warn(
+          `  - Skipping comment due to missing basic info: commentKey=${commentKey}, postKey=${postKey}, bandKey=${bandKey}`
+        );
+        processingSummary.skippedMissingInfo++;
+        continue;
+      }
+      if (excludedCustomers.includes(authorName)) {
+        logger.debug(`  - Skipping excluded customer: ${authorName}`);
+        processingSummary.skippedExcluded++;
+        continue;
+      }
+      if (hasClosingKeywords(commentContent)) {
+        logger.info(`  - Skipping closing keyword comment: ${authorName}`);
+        processingSummary.skippedClosing++;
+        continue;
+      }
+
+      // 2. 주문 정보 추출
+      const extractedOrderItems = extractEnhancedOrderFromComment(
+        commentContent,
+        logger
+      ); // 이 함수는 이제 배열을 반환한다고 가정
+
+      // <<< *** 수정: 대표 주문 항목 결정 (기본값 생성 포함) - 이 블록만 남김 *** >>>
+      let representativeItem = null;
+
+      if (extractedOrderItems && extractedOrderItems.length > 0) {
+        // 주문 항목 추출 성공 시 첫 번째 항목 사용
+        representativeItem = extractedOrderItems[0];
+        logger.debug(
+          `  - Processing representative item (extracted) for comment ${commentKey}:`,
+          representativeItem
+        );
+      } else {
+        // 주문 항목 추출 실패 시 기본값 생성
+        logger.info(
+          `  - No specific order item extracted for comment ${commentKey}. Creating default ambiguous order.`
+        );
+        representativeItem = {
+          itemNumber: 1,
+          quantity: 1,
+          isAmbiguous: true,
+          option: null,
+          price_option_description: "확인필요 (내용 분석 불가)",
+        };
+        processingSummary.skippedNoOrder++; // 카운트 유지 또는 조정
+      }
+      // <<< *** 수정 끝: 중복 코드 블록 제거됨 *** >>>
+
+      // 3. 고객 정보 생성/업데이트 준비 (동일)
+      const customerId = authorId;
+      const customerData = {
+        customer_id: customerId,
+        user_id: userId,
+        // name: authorName, // 'name' 대신 'customer_name' 사용 일관성
+        customer_name: authorName,
+        // phone_number, address 등은 extractEnhancedOrderFromComment에서 추출해야 함 (현재 로직에는 없음)
+        last_order_at: createdAt.toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      // 고객 정보 Map 업데이트 (동일)
+      if (!customersToSaveMap.has(customerId)) {
+        customersToSaveMap.set(customerId, customerData);
+        processingSummary.generatedCustomers++; // 신규 고객일 때만 카운트
+      } else {
+        // 기존 고객 정보 업데이트 (last_order_date 등)
+        const existingCustomer = customersToSaveMap.get(customerId);
+        if (new Date(existingCustomer.last_order_at) < createdAt) {
+          existingCustomer.last_order_at = createdAt.toISOString();
+        }
+        existingCustomer.updated_at = new Date().toISOString();
+        // 필요시 다른 필드 업데이트 (예: 이름 변경 감지 등)
+      }
+
+      // 4. 주문 정보 생성 (representativeItem 사용)
+      const uniqueCommentOrderId = `order_${bandKey}_${postKey}_${commentKey}`;
+      const bandCommentId = commentKey;
+      let subStatusList = [];
+      // <<< *** 수정: representativeItem 사용 확인 *** >>>
+      let isAmbiguous = representativeItem.isAmbiguous || false;
+      let productId = null;
+      let itemNumber = representativeItem.itemNumber || 1;
+      let quantity = parseInt(representativeItem.quantity, 10) || 1;
+      let basePriceForOrder = 0;
+      let calculatedTotalAmount = 0;
+      let priceOptionDescription =
+        representativeItem.price_option_description || null;
+
+      let matchedExactly = false; // 변수 선언 및 false로 초기화
+      // <<< *** 수정 끝 *** >>>
+
+      logger.debug(
+        `  [Order Gen Start] CommentKey: ${commentKey}, Extracted Item:`,
+        representativeItem
+      ); // 추출된 항목 로그
+
+      // 4.1. Product ID 및 ProductInfo 매칭 (폴백 로직 포함 - 이전과 동일)
+      let productInfo = null; // 찾은 상품 정보 저장 변수
+      if (itemNumber !== null && productMap.has(itemNumber)) {
+        productInfo = productMap.get(itemNumber);
+        if (productInfo && productInfo.product_id) {
+          productId = productInfo.product_id;
+          matchedExactly = !isAmbiguous; // representativeItem이 모호하지 않았다면 정확한 매칭
+          logger.debug(
+            `  [PID Match] Exact match success: productId = ${productId} for itemNumber ${itemNumber}`
+          );
+        } else {
+          logger.warn(
+            `  [PID Match] Product info found for itemNumber ${itemNumber}, but product_id is missing.`
+          );
+          productInfo = null; // 확실하지 않으므로 null 처리
+        }
+      }
+      // productId 매칭 실패 또는 모호한 경우, itemNumber 1로 폴백 시도
+      if (!productId && productMap.has(1)) {
+        const defaultProductInfo = productMap.get(1);
+        if (defaultProductInfo && defaultProductInfo.product_id) {
+          productId = defaultProductInfo.product_id;
+          productInfo = defaultProductInfo; // 폴백된 상품 정보 사용
+          itemNumber = 1; // 아이템 번호 1로 확정
+          logger.info(
+            `  [PID Fallback] Success: Using default productId = ${productId} (itemNumber set to 1).`
+          );
+          if (!subStatusList.includes("상품 추정"))
+            subStatusList.push("상품 추정");
+        } else {
+          logger.warn(
+            `  [PID Fallback] Default product (itemNumber 1) found, but product_id is missing or invalid.`
+          );
+          productInfo = null; // 폴백 실패
+        }
+      }
+
+      // 최종 productId 확인 및 productInfo 재확인
+      if (!productId || !productInfo) {
+        logger.error(
+          `  [PID Match Failed] Could not determine productId or productInfo for comment ${commentKey}. Order will have null productId and 0 price/amount.`
+        );
+        if (!subStatusList.includes("상품 매칭 불가"))
+          subStatusList.push("상품 매칭 불가");
+        isAmbiguous = true;
+        productInfo = null; // 확실히 null 처리
+      }
+      logger.debug(
+        `  [PID Final] Final productId: ${productId}, Final itemNumber: ${itemNumber}`
+      );
+
+      // <<< *** 수정 시작: 기존 가격/총액 계산 방식 적용 *** >>>
+      // 4.2. 가격 및 총액 계산
+      if (productInfo) {
+        // 유효한 productInfo가 있을 때만 계산 시도
+        const productOptions = productInfo.price_options || [];
+        const fallbackPrice =
+          typeof productInfo.price === "number" ? productInfo.price : 0;
+        basePriceForOrder = fallbackPrice; // orderData.price 에 저장할 값
+
+        logger.debug(
+          `  [price Calc] Using basePrice: ${basePriceForOrder}, quantity: ${quantity}, options:`,
+          productOptions
+        );
+
+        try {
+          // calculateOptimalPrice 함수를 사용하여 총액 계산
+          calculatedTotalAmount = calculateOptimalPrice(
+            quantity,
+            productOptions,
+            fallbackPrice
+          );
+          logger.debug(
+            `  [price Calc] Calculated Optimal Total Amount: ${calculatedTotalAmount}`
+          );
+
+          // 가격 옵션 설명 결정 (옵션)
+          if (!priceOptionDescription) {
+            const matchingOption = productOptions.find(
+              (opt) => opt.quantity === quantity
+            );
+            if (matchingOption) {
+              priceOptionDescription =
+                matchingOption.description || `${quantity} 단위 옵션`;
+            } else {
+              priceOptionDescription = productInfo.title
+                ? `기본 (${productInfo.title})`
+                : "기본 가격";
+            }
+          }
+        } catch (calcError) {
+          logger.error(
+            `  [price Calc] Error during calculateOptimalPrice: ${calcError.message}`
+          );
+          calculatedTotalAmount = 0; // 계산 오류 시 0으로
+          if (!subStatusList.includes("금액 계산 오류"))
+            subStatusList.push("금액 계산 오류");
+          isAmbiguous = true;
+        }
+      } else {
+        // productInfo가 없을 때 (productId 매칭 실패)
+        logger.warn(
+          `  [price Calc] Skipping calculation because productInfo is null.`
+        );
+        basePriceForOrder = 0;
+        calculatedTotalAmount = 0;
+        if (!subStatusList.includes("가격 확인 불가"))
+          subStatusList.push("가격 확인 불가");
+      }
+      // <<< *** 수정 끝 *** >>>
+
+      logger.debug(
+        `  [price/Amount Final] Final basePriceForOrder: ${basePriceForOrder}, Final calculatedTotalAmount: ${calculatedTotalAmount}`
+      );
+
+      // <<< *** 수정 시작: 최종 subStatus 결정 로직 수정 *** >>>
+      // subStatusList에 이미 기록된 문제점들로 기본 subStatus 구성
+      let subStatus =
+        subStatusList.length > 0 ? subStatusList.join(", ") : null;
+
+      // 조건 1: 여러 상품 게시물인데, 정확한 상품 번호 매칭이 안 된 경우 (폴백 포함)
+      if (isMultipleProductsPost && productId && !matchedExactly) {
+        const msg = "확인필요(상품 지정 모호)";
+        subStatus = "확인필요";
+        logger.debug(
+          `  [SubStatus Update] Added '${msg}' because multiple products and ambiguous/fallback match.`
+        );
+      }
+      // 조건 2: 숫자가 없는 댓글 처리 (이전 로직 유지 - 단, 위 조건과 중복될 수 있으므로 순서 고려)
+      else if (
+        isAmbiguous &&
+        !subStatusList.includes("상품 추정") && // 상품 추정은 이미 모호함을 내포
+        !subStatusList.includes("상품 매칭 불가") &&
+        !subStatusList.includes("가격 확인 불가") &&
+        !subStatusList.includes("금액 계산 불가") &&
+        !/\d/.test(commentContent)
+      ) {
+        const msg = "확인필요(내용 분석 불가)";
+        subStatus = "확인필요";
+        logger.debug(
+          `  [SubStatus Update] Added '${msg}' because comment is ambiguous AND contains no digits.`
+        );
+      }
+      // <<< *** 수정 끝 *** >>>
+
+      const orderData = {
+        order_id: uniqueCommentOrderId, // 댓글당 고유 ID
+        user_id: userId,
+        post_key: postKey,
+        band_key: bandKey,
+        customer_id: customerId,
+        comment: commentContent, // 원본 댓글 내용 저장
+        ordered_at: createdAt.toISOString(),
+        band_comment_id: bandCommentId,
+        band_comment_url: null,
+        customer_name: authorName,
+        product_id: productId, // 매칭된 Product ID
+        item_number: itemNumber, // 추출/결정된 Item Number
+        quantity: quantity,
+        price: basePriceForOrder, // price 저장 (변수 이름 수정)
+        total_amount: calculatedTotalAmount, // 계산된 총액 저장
+        price_option_description: priceOptionDescription, // 가격 옵션 설명
+        status: "주문완료",
+        sub_status: subStatus, // 처리 상태
+        comment_key: commentKey,
+        // order_date: createdAt.toISOString(), // ordered_at과 중복될 수 있으므로 제거 또는 용도 명확화
+        updated_at: new Date().toISOString(),
+      };
+
+      ordersToSave.push(orderData);
+      processingSummary.generatedOrders++;
+      logger.debug(`  - Generated single order data for comment ${commentKey}`);
+      // <<< *** 수정 끝 *** >>>
+    } catch (error) {
+      logger.error(
+        `[generateOrderDataFromComments] Error processing comment ${comment?.comment_key} on post ${postKey}: ${error.message}`,
+        error.stack
+      );
+      processingSummary.errors.push({
+        commentKey: comment?.comment_key,
+        postKey: postKey,
+        error: error.message,
+      });
+    }
+  } // End of comment loop
+
+  logger.info(
+    `[generateOrderDataFromComments] Finished. Summary: ${JSON.stringify(
+      processingSummary
+    )}`
+  );
+
+  return {
+    orders: ordersToSave,
+    customers: customersToSaveMap, // Map 반환
+    summary: processingSummary,
+  };
+}
+
 module.exports = {
   getAllBandPosts,
   getBandComments,
-  // processAndSaveOrdersFromComments, // 이전 함수 이름 대신 새 함수 이름 사용
-  processAndGenerateOrdersFromComments, // <<<--- 이름 변경 및 DB 저장 로직 제거된 함수
+  _fetchProductMapForPost, // export 추가
+  generateOrderDataFromComments, // 신규 함수 export 추가
+  processAndGenerateOrdersFromComments, // 기존 함수 유지 (다른 곳에서 사용될 수 있음)
 };
