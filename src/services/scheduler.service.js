@@ -105,15 +105,15 @@ const createJob = (jobId, cronExpression, jobFunction, description = "") => {
       const restrictedStartHour = 22; // 새벽 1시 (포함)
       const restrictedEndHour = 6; // 새벽 6시 (포함) -> 즉, 1:00 ~ 6:59까지 실행 안 함
 
-      if (
-        currentHour >= restrictedStartHour ||
-        currentHour <= restrictedEndHour
-      ) {
-        logger.info(
-          `작업 ${jobId}: 현재 시간(${currentHour}시)이 제한 시간(${restrictedStartHour}시 ~ ${restrictedEndHour}시)에 해당하여 실행을 건너뜁니다.`
-        );
-        return; // 실제 작업 실행 안 함
-      }
+      // if (
+      //   currentHour >= restrictedStartHour ||
+      //   currentHour <= restrictedEndHour
+      // ) {
+      //   logger.info(
+      //     `작업 ${jobId}: 현재 시간(${currentHour}시)이 제한 시간(${restrictedStartHour}시 ~ ${restrictedEndHour}시)에 해당하여 실행을 건너뜁니다.`
+      //   );
+      //   return; // 실제 작업 실행 안 함
+      // }
       try {
         logger.info(`작업 실행 시작: ${jobId}`);
 

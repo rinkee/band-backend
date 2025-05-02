@@ -8,6 +8,7 @@ const customersRoutes = require("./customers.routes");
 const postsRoutes = require("./posts.routes");
 const schedulerRoutes = require("./scheduler.routes");
 const userRoutes = require("./user.routes");
+const bandRoutes = require("./bandRoutes"); // Band 라우트 추가
 
 const router = express.Router();
 
@@ -35,6 +36,9 @@ router.use("/scheduler", schedulerRoutes);
 // 사용자 관련 라우트
 router.use("/users", userRoutes);
 
+// Band API 관련 라우트 추가
+router.use("/band", bandRoutes);
+
 // API 테스트를 위한 기본 경로
 router.get("/", (req, res) => {
   res.json({
@@ -48,6 +52,7 @@ router.get("/", (req, res) => {
       "/api/orders - 주문 관련 API",
       "/api/scheduler - 스케줄러 및 자동 크롤링 관련 API",
       "/api/users - 사용자 관련 API",
+      "/api/band - Band API 관련 API", // 엔드포인트 설명 추가
     ],
   });
 });

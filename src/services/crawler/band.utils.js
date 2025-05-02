@@ -257,6 +257,12 @@ async function generateBarcodeFromProductId(productId, userId) {
  * @returns {Date|null} - 파싱된 Date 객체 또는 null
  */
 function parseKoreanDate(dateString) {
+  // 타입 검사 추가: dateString이 문자열이 아니면 null 반환
+  if (typeof dateString !== 'string') {
+    logger.warn(`parseKoreanDate: 문자열이 아닌 입력값 (${typeof dateString}) ${dateString}`);
+    return null;
+  }
+
   // 형식 1: "3월 14일 오후 8:58"
   let match = dateString.match(/(\d+)월 (\d+)일 (오전|오후) (\d+):(\d+)/);
   if (match) {
