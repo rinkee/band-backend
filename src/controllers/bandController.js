@@ -491,7 +491,7 @@ async function getBandPosts(req, res) {
             if (customersArray.length > 0) {
               const { error: customerSaveError } = await supabase
                 .from("customers")
-                .upsert(customersArray, { onConflict: "customer_id" });
+                .upsert(customersArray, { onConflict: "customer_id" }); // 'customer_id'는 실제 PK/Unique 키여야 함
               if (customerSaveError)
                 console.error(
                   `    - 고객 저장 오류: ${customerSaveError.message}`
@@ -571,22 +571,32 @@ async function getBandPosts(req, res) {
 
             // 2.1.2. 새로운 댓글 필터링 로직 수정
             const lastCheckedTs = dbPostData.last_checked_comment_at || 0;
-            // <<< 수정: 댓글 수 변경 여부에 따라 분기 >>>
-            if (commentCountChanged) {
-              console.log(`  - 게시물 ${postKey}: 댓글 수 변경 감지(${dbPostData.comment_count} -> ${apiPost.commentCount}). 모든 댓글(${fullComments.length}개)을 잠재적 주문 처리 대상으로 간주합니다.`);
-              newCommentsFound = fullComments; // 댓글 수 변경 시 모든 댓글을 대상으로 함
-            } else {
-              // 댓글 수는 그대로인 경우, 시간 기준으로 필터링
-              console.log(`  - 게시물 ${postKey}: 댓글 수 변경 없음. last_checked_comment_at (${new Date(lastCheckedTs).toISOString()}) 이후 댓글만 확인합니다.`);
-              newCommentsFound = fullComments.filter(
-                (comment) => comment.createdAt > lastCheckedTs
-              );
-            }
-            // <<< 수정 끝 >>>
+            console.log(
+              `  - 게시물 ${postKey}: last_checked_comment_at (${new Date(lastCheckedTs).toISOString()}) 이후 댓글만 확인하여 신규 주문 처리합니다.`
+            );
 
-            if (newCommentsFound.length > 0) {
+            const newComments = fullComments.filter((comment) => {
+              // <<< 유효성 검사 추가 >>>
+              if (typeof comment.created_at !== 'number' || isNaN(comment.created_at)) {
+                console.warn(
+                  `    - 댓글 ID ${comment.comment_id}: Invalid or missing created_at value (${comment.created_at}). Skipping.`
+                );
+                return false; // 유효하지 않으면 필터링
+              }
+              // <<< // 유효성 검사 추가 끝 >>>
+
+              const commentTimestampMs = comment.created_at; // created_at을 그대로 사용
+              const commentDate = new Date(commentTimestampMs);
+              const isNew = commentDate > lastCheckedTs;
               console.log(
-                `  - 게시물 ${postKey}: 새로운 댓글 ${newCommentsFound.length}개 발견. 주문 처리 시작...`
+                `    - 댓글 ID ${comment.comment_id}: raw_created_at=${comment.created_at} (ms assumed), date=${commentDate.toISOString()}, lastChecked=${new Date(lastCheckedTs).toISOString()}, isNew=${isNew}`
+              );
+              return isNew;
+            });
+
+            if (newComments.length > 0) {
+              console.log(
+                `  - 게시물 ${postKey}: 새로운 댓글 ${newComments.length}개 발견. 주문 처리 시작...`
               );
               // <<< 변경 시작: DB에서 상품 정보 조회 로직 추가 >>>
 
@@ -611,7 +621,7 @@ async function getBandPosts(req, res) {
                   const orderData =
                     await bandService.generateOrderDataFromComments(
                       userId,
-                      newCommentsFound,
+                      newComments,
                       productMap,
                       postKey, // postKey 전달 (옵션)
                       // <<< isMultipleProductsPost 값 전달 추가 >>>
@@ -626,6 +636,38 @@ async function getBandPosts(req, res) {
                   console.log(
                     `      - 신규 댓글 주문 ${orderData.orders.length}개, 고객 ${orderData.customers.size}명 생성/저장 시도 완료.`
                   );
+
+                  // Supabase upsert logic to save the generated orders and customers to the database
+                  if (orderData && orderData.orders && orderData.orders.length > 0) {
+                    console.log(`      - Saving ${orderData.orders.length} orders to DB...`);
+                    const { error: orderError } = await supabase
+                      .from("orders")
+                      .upsert(orderData.orders, { onConflict: "order_id" }); // 'order_id'는 실제 PK/Unique 키여야 함
+                    if (orderError) {
+                      console.error(
+                        `      - Error saving orders for post ${postKey}:`,
+                        orderError
+                      );
+                    } else {
+                       console.log(`      - Orders saved successfully.`);
+                    }
+                  }
+
+                  if (orderData && orderData.customers && orderData.customers.size > 0) {
+                    const customersArray = Array.from(orderData.customers.values());
+                    console.log(`      - Saving ${customersArray.length} customers to DB...`);
+                    const { error: customerError } = await supabase
+                      .from("customers")
+                      .upsert(customersArray, { onConflict: "customer_id" }); // 'customer_id'는 실제 PK/Unique 키여야 함
+                    if (customerError) {
+                      console.error(
+                        `      - Error saving customers for post ${postKey}:`,
+                        customerError
+                      );
+                    } else {
+                       console.log(`      - Customers saved successfully.`);
+                    }
+                  }
                 } else {
                   console.log(
                     `      - DB에서 상품 정보를 찾을 수 없어 신규 댓글 주문 처리를 건너<0xEB><0x9B><0x84>니다.`
@@ -683,23 +725,35 @@ async function getBandPosts(req, res) {
     } // End of posts loop
     console.log(`[단계 4] ${postsFromApi.length}개 게시물 순회 처리 완료.`);
 
-    // --- 5. 댓글 정보 필드 일괄 업데이트 (기존 게시물 대상) ---
+    // --- 5. 댓글 정보 필드 일괄 업데이트 (기존 게시물 대상) --- (Upsert 복원, checked_at만 업데이트 시도)
     if (postsToUpdateCommentInfo.length > 0) {
       console.log(
-        `[단계 5] ${postsToUpdateCommentInfo.length}개 기존 게시물의 댓글 정보 일괄 업데이트 시작...`
+        `[단계 5] ${postsToUpdateCommentInfo.length}개 기존 게시물의 last_checked_comment_at 일괄 업데이트 시작 (upsert)...`
       );
+      
+      // Upsert할 데이터에서 comment_count 제외
+      const postsToUpdateCheckedAt = postsToUpdateCommentInfo.map(post => ({
+        post_id: post.post_id,
+        last_checked_comment_at: post.last_checked_comment_at
+      }));
+
+      console.log("[DEBUG] Data for posts checked_at update:", JSON.stringify(postsToUpdateCheckedAt, null, 2));
+
       try {
         const { error: updateError } = await supabase
           .from("posts")
-          .upsert(postsToUpdateCommentInfo, {
-            onConflict: "post_id", // PK 기준 업데이트
+          .upsert(postsToUpdateCheckedAt, { // comment_count 제외된 데이터 사용
+            onConflict: "post_id", 
           });
 
+        // <<< 반환된 에러 객체 로깅 추가 >>>
+        console.log("[DEBUG] Supabase upsert returned error:", updateError);
+
         if (updateError) throw updateError;
-        console.log("[단계 5] 댓글 정보 필드 업데이트 완료.");
+        console.log("[단계 5] last_checked_comment_at 필드 업데이트 완료.");
       } catch (error) {
         console.error(
-          `[단계 5] 댓글 정보 필드 업데이트 중 오류: ${error.message}`
+          `[단계 5] last_checked_comment_at 필드 업데이트 중 오류: ${error.message}`
         );
       }
     } else {
@@ -716,9 +770,13 @@ async function getBandPosts(req, res) {
       `getBandPosts 처리 중 예외 발생: ${error.message}`,
       error.stack
     );
-    res.status(500).json({ success: false, message: "Internal Server Error" });
+    res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+    });
   }
 }
+
 /**
  * 특정 사용자의 밴드 댓글을 가져와 처리하고, 주문 및 고객 정보를 DB에 저장/업데이트합니다.
  */

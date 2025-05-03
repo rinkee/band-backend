@@ -588,7 +588,9 @@ async function processAndGenerateOrdersFromComments(userId, allCommentsByPost) {
             // 가격 계산 (이전과 동일)
             const productOptions = productInfo.price_options || [];
             const fallbackPrice =
-              typeof productInfo.price === "number" ? productInfo.price : 0;
+              typeof productInfo.base_price === "number"
+                ? productInfo.base_price
+                : 0;
             calculatedTotalAmount = calculateOptimalPrice(
               quantity,
               productOptions,
@@ -640,7 +642,9 @@ async function processAndGenerateOrdersFromComments(userId, allCommentsByPost) {
             const quantity = 1;
             const productOptions = productInfo.price_options || [];
             const fallbackPrice =
-              typeof productInfo.price === "number" ? productInfo.price : 0;
+              typeof productInfo.base_price === "number"
+                ? productInfo.base_price
+                : 0;
             calculatedTotalAmount = calculateOptimalPrice(
               quantity,
               productOptions,
@@ -991,7 +995,9 @@ async function generateOrderDataFromComments(
         // 유효한 productInfo가 있을 때만 계산 시도
         const productOptions = productInfo.price_options || [];
         const fallbackPrice =
-          typeof productInfo.price === "number" ? productInfo.price : 0;
+          typeof productInfo.base_price === "number"
+            ? productInfo.base_price
+            : 0;
         basePriceForOrder = fallbackPrice; // orderData.price 에 저장할 값
 
         logger.debug(
