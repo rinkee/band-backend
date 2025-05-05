@@ -1895,14 +1895,15 @@ Deno.serve(async (req) => {
         let processCommentsAndOrders = false;
         let postProcessingError = null; // 게시물별 오류 저장
         let aiExtractionStatus = "not_attempted"; // AI 추출 상태 초기값
-        console.log(
-          `  -> 게시물 ${postKey} 처리 중 (${isNewPost ? "신규" : "기존"})`
-        );
-        console.log(
-          `  -> 기존 댓글 ${dbPostData?.comment_count ?? 0}개 api 댓글 ${
-            apiPost.commentCount ?? 0
-          }개`
-        );
+
+        // console.log(
+        //   `  -> 게시물 ${postKey} 처리 중 (${isNewPost ? "신규" : "기존"})`
+        // );
+        // console.log(
+        //   `  -> 기존 댓글 ${dbPostData?.comment_count ?? 0}개 api 댓글 ${
+        //     apiPost.commentCount ?? 0
+        //   }개`
+        // );
         try {
           // 개별 게시물 처리 try-catch
           if (isNewPost) {
@@ -2389,11 +2390,11 @@ Deno.serve(async (req) => {
             } else if (!isNewPost) {
               // 'else if' 추가: 기존 게시물인데 업데이트 필요 없을 때 로그
               // 기존 게시물이지만 댓글 업데이트 필요 없는 경우 로그
-              console.log(
-                `  - 게시물 ${postKey}: 댓글 업데이트 필요 없음 (DB: ${
-                  dbPostData?.comment_count ?? 0
-                }, API: ${apiPost.commentCount ?? 0})`
-              );
+              // console.log(
+              //   `  - 게시물 ${postKey}: 댓글 업데이트 필요 없음 (DB: ${
+              //     dbPostData?.comment_count ?? 0
+              //   }, API: ${apiPost.commentCount ?? 0})`
+              // );
             } // end of if (needsCommentUpdate)
           }
           // 성공적으로 처리된 게시물 정보 반환
