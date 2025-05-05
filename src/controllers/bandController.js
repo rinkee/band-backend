@@ -110,7 +110,7 @@ async function saveAiResultsToSupabase(
           post_number: post.postKey,
           item_number: product.itemNumber,
           title: product.title,
-          content: product.content,
+          content: post.content,
           base_price: product.basePrice,
           original_price: product.originalPrice,
           price_options: product.priceOptions,
@@ -239,9 +239,7 @@ async function getBandPosts(req, res) {
           `[단계 2] DB에서 ${dbPostsMap.size}개의 기존 게시물 정보 조회 완료.`
         );
       } catch (error) {
-        console.error(
-          `[단계 2] DB 게시물 정보 조회 중 오류: ${error.message}`
-        );
+        console.error(`[단계 2] DB 게시물 정보 조회 중 오류: ${error.message}`);
         // DB 조회 실패 시에도 진행은 하되, 모든 게시물을 신규로 처리하게 될 수 있음
       }
     } else {
@@ -572,12 +570,17 @@ async function getBandPosts(req, res) {
             // 2.1.2. 새로운 댓글 필터링 로직 수정
             const lastCheckedTs = dbPostData.last_checked_comment_at || 0;
             console.log(
-              `  - 게시물 ${postKey}: last_checked_comment_at (${new Date(lastCheckedTs).toISOString()}) 이후 댓글만 확인하여 신규 주문 처리합니다.`
+              `  - 게시물 ${postKey}: last_checked_comment_at (${new Date(
+                lastCheckedTs
+              ).toISOString()}) 이후 댓글만 확인하여 신규 주문 처리합니다.`
             );
 
             const newComments = fullComments.filter((comment) => {
               // <<< 유효성 검사 추가 >>>
-              if (typeof comment.created_at !== 'number' || isNaN(comment.created_at)) {
+              if (
+                typeof comment.created_at !== "number" ||
+                isNaN(comment.created_at)
+              ) {
                 console.warn(
                   `    - 댓글 ID ${comment.comment_id}: Invalid or missing created_at value (${comment.created_at}). Skipping.`
                 );
@@ -589,7 +592,11 @@ async function getBandPosts(req, res) {
               const commentDate = new Date(commentTimestampMs);
               const isNew = commentDate > lastCheckedTs;
               console.log(
-                `    - 댓글 ID ${comment.comment_id}: raw_created_at=${comment.created_at} (ms assumed), date=${commentDate.toISOString()}, lastChecked=${new Date(lastCheckedTs).toISOString()}, isNew=${isNew}`
+                `    - 댓글 ID ${comment.comment_id}: raw_created_at=${
+                  comment.created_at
+                } (ms assumed), date=${commentDate.toISOString()}, lastChecked=${new Date(
+                  lastCheckedTs
+                ).toISOString()}, isNew=${isNew}`
               );
               return isNew;
             });
@@ -626,11 +633,15 @@ async function getBandPosts(req, res) {
                       postKey, // postKey 전달 (옵션)
                       // <<< isMultipleProductsPost 값 전달 추가 >>>
                       dbPostData.ai_analysis_result?.is_multiple_products ??
-                        (productMap.size > 1)
+                        productMap.size > 1
                     );
                   // <<< 디버깅 로그 추가 >>>
                   console.log(
-                    `[DEBUG ${postKey}] generateOrderDataFromComments returned order count: ${orderData?.orders?.length || 0}, authors to update count: ${orderData?.authorsToUpdate?.length || 0}`
+                    `[DEBUG ${postKey}] generateOrderDataFromComments returned order count: ${
+                      orderData?.orders?.length || 0
+                    }, authors to update count: ${
+                      orderData?.authorsToUpdate?.length || 0
+                    }`
                   );
                   // ... (주문/고객 정보 저장 로직 - Foreign Key 문제 없음) ...
                   console.log(
@@ -638,8 +649,14 @@ async function getBandPosts(req, res) {
                   );
 
                   // Supabase upsert logic to save the generated orders and customers to the database
-                  if (orderData && orderData.orders && orderData.orders.length > 0) {
-                    console.log(`      - Saving ${orderData.orders.length} orders to DB...`);
+                  if (
+                    orderData &&
+                    orderData.orders &&
+                    orderData.orders.length > 0
+                  ) {
+                    console.log(
+                      `      - Saving ${orderData.orders.length} orders to DB...`
+                    );
                     const { error: orderError } = await supabase
                       .from("orders")
                       .upsert(orderData.orders, { onConflict: "order_id" }); // 'order_id'는 실제 PK/Unique 키여야 함
@@ -649,13 +666,21 @@ async function getBandPosts(req, res) {
                         orderError
                       );
                     } else {
-                       console.log(`      - Orders saved successfully.`);
+                      console.log(`      - Orders saved successfully.`);
                     }
                   }
 
-                  if (orderData && orderData.customers && orderData.customers.size > 0) {
-                    const customersArray = Array.from(orderData.customers.values());
-                    console.log(`      - Saving ${customersArray.length} customers to DB...`);
+                  if (
+                    orderData &&
+                    orderData.customers &&
+                    orderData.customers.size > 0
+                  ) {
+                    const customersArray = Array.from(
+                      orderData.customers.values()
+                    );
+                    console.log(
+                      `      - Saving ${customersArray.length} customers to DB...`
+                    );
                     const { error: customerError } = await supabase
                       .from("customers")
                       .upsert(customersArray, { onConflict: "customer_id" }); // 'customer_id'는 실제 PK/Unique 키여야 함
@@ -665,7 +690,7 @@ async function getBandPosts(req, res) {
                         customerError
                       );
                     } else {
-                       console.log(`      - Customers saved successfully.`);
+                      console.log(`      - Customers saved successfully.`);
                     }
                   }
                 } else {
@@ -681,7 +706,7 @@ async function getBandPosts(req, res) {
               // <<< *** 수정 끝 *** >>>
             } else {
               console.log(
-                `  - 게시물 ${postKey}: 댓글 수는 변경되었으나 DB 확인 시간 이후의 새로운 댓글은 없음.`
+                `  - 게시물 ${postKey}: 댓글 수는 변경되었으나 DB 확인 후의 새로운 댓글은 없음.`
               );
             }
           } catch (commentError) {
@@ -730,20 +755,24 @@ async function getBandPosts(req, res) {
       console.log(
         `[단계 5] ${postsToUpdateCommentInfo.length}개 기존 게시물의 last_checked_comment_at 일괄 업데이트 시작 (upsert)...`
       );
-      
+
       // Upsert할 데이터에서 comment_count 제외
-      const postsToUpdateCheckedAt = postsToUpdateCommentInfo.map(post => ({
+      const postsToUpdateCheckedAt = postsToUpdateCommentInfo.map((post) => ({
         post_id: post.post_id,
-        last_checked_comment_at: post.last_checked_comment_at
+        last_checked_comment_at: post.last_checked_comment_at,
       }));
 
-      console.log("[DEBUG] Data for posts checked_at update:", JSON.stringify(postsToUpdateCheckedAt, null, 2));
+      console.log(
+        "[DEBUG] Data for posts checked_at update:",
+        JSON.stringify(postsToUpdateCheckedAt, null, 2)
+      );
 
       try {
         const { error: updateError } = await supabase
           .from("posts")
-          .upsert(postsToUpdateCheckedAt, { // comment_count 제외된 데이터 사용
-            onConflict: "post_id", 
+          .upsert(postsToUpdateCheckedAt, {
+            // comment_count 제외된 데이터 사용
+            onConflict: "post_id",
           });
 
         // <<< 반환된 에러 객체 로깅 추가 >>>

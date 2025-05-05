@@ -19,7 +19,7 @@ const getAllProducts = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10; // 기본값 10으로 설정 (프론트엔드와 맞추거나 조정)
     const startIndex = (page - 1) * limit;
-    const sortBy = req.query.sortBy || "created_at"; // 기본 정렬 created_at으로 변경 가능성 있음 (updated_at?)
+    const sortBy = req.query.sortBy || "posted_at"; // 기본 정렬 created_at으로 변경 가능성 있음 (updated_at?)
     const sortOrder = req.query.sortOrder === "asc" ? true : false;
 
     if (!userId) {
@@ -31,8 +31,7 @@ const getAllProducts = async (req, res) => {
     let query = supabase
       .from("products")
       .select("*", { count: "exact" }) // count 옵션 확인
-      .eq("user_id", userId)
-      .order("posted_at", { ascending: false }); //
+      .eq("user_id", userId);
 
     // 상태 필터링 (req.query.status 값이 "all"이 아닐 때만 적용)
     if (

@@ -258,8 +258,10 @@ async function generateBarcodeFromProductId(productId, userId) {
  */
 function parseKoreanDate(dateString) {
   // 타입 검사 추가: dateString이 문자열이 아니면 null 반환
-  if (typeof dateString !== 'string') {
-    logger.warn(`parseKoreanDate: 문자열이 아닌 입력값 (${typeof dateString}) ${dateString}`);
+  if (typeof dateString !== "string") {
+    logger.warn(
+      `parseKoreanDate: 문자열이 아닌 입력값 (${typeof dateString}) ${dateString}`
+    );
     return null;
   }
 
@@ -313,7 +315,7 @@ function parseKoreanDate(dateString) {
  */
 function safeParseDate(dateString) {
   // 숫자 타입 입력 처리 (Unix timestamp ms 가정)
-  if (typeof dateString === 'number') {
+  if (typeof dateString === "number") {
     const dateFromTimestamp = new Date(dateString);
     // 유효한 Date 객체인지 확인
     if (!isNaN(dateFromTimestamp.getTime())) {
@@ -322,7 +324,7 @@ function safeParseDate(dateString) {
       // 유효하지 않은 숫자 타임스탬프인 경우 경고 로깅 (선택 사항)
       // logger.warn(`safeParseDate: Invalid timestamp number provided: ${dateString}`);
       // 실패 시 기본값 (예: 현재 시간) 반환 또는 오류 처리
-      return new Date(); 
+      return new Date();
     }
   }
 
@@ -749,9 +751,9 @@ function contentHasPriceIndicator(content) {
     return false;
   }
 
-  // 2. 세 자리 이상의 숫자 확인 (쉼표 포함 가능) - (?!\d) 제거됨!
-  // const numberRegex = /(?:[1-9]\d{2,}|[1-9]\d{0,2}(?:,\d{3})+)/g; // <--- 여기 수정됨
-  const numberRegex = /\b\d{1,3}(?:,\d{3})+\b/g; // 더 관대하게 수정
+  // 2. 세 자리 이상의 숫자 확인 (점, 쉼표, 아무 구분자 없어도 됨)
+  // 예: 100, 1000, 10000, 000, 29.000, 27,900 등 모두 포함
+  const numberRegex = /\d{3,}/g; // 세 자리 이상 숫자
   const numbersFound = content.match(numberRegex);
   // logger.debug(`[Price Indicator Step 2] numbersFound: ${JSON.stringify(numbersFound)} for content starting with: ${content.substring(0, 30)}`);
 

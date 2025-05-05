@@ -1,0 +1,1457 @@
+// supabase/functions/band-get-posts/index.ts - NO JWT AUTH (Security Risk!)
+import { createClient, SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { corsHeadersGet, createJsonResponseHeaders } from '../_shared/cors.ts'; // CORS 헬퍼 (경로 확인!)
+
+// === 응답 헤더 미리 생성 ===
+const responseHeaders = createJsonResponseHeaders(corsHeadersGet);
+
+// ========================================================================
+// === 통합된 유틸리티 함수들 (ai.service.js, band.utils.js 내용) ===
+// ========================================================================
+
+
+// --- AI 관련 인터페이스 (이전과 동일) ---
+interface AiProductInfo {
+  productId?: string; itemNumber?: number; title: string; basePrice?: number;
+  priceOptions?: { quantity: number; price: number; description: string }[];
+  quantity?: number; quantityText?: string; category?: string; status?: string;
+  tags?: string[]; features?: string[]; pickupInfo?: string;
+  pickupDate?: string | null; pickupType?: string; stockQuantity?: number | null;
+}
+interface AiAnalysisResult {
+  multipleProducts: boolean; products: AiProductInfo[];
+  commonPickupInfo?: string; commonPickupDate?: string | null; commonPickupType?: string;
+  error?: string;
+}
+
+// --- AI 정보 추출 함수 (Gemini API 호출 가정) ---
+async function extractProductInfoAI(content: string, postTime: number | string | Date | null = null, postKey: string): Promise<AiAnalysisResult> {
+  console.log(`[AI Analysis] Starting for postKey: ${postKey}.`);
+  // ⚠️ 실제 환경 변수 이름으로 변경하세요 (예: GEMINI_API_KEY)
+  const aiApiKey = Deno.env.get("GOOGLE_API_KEY");
+  // ⚠️ Gemini API 엔드포인트 확인 필요 (예시)
+  const aiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${aiApiKey}`; // 모델명 확인 및 엔드포인트 확인
+
+  const parsedPostTime = postTime ? safeParseDate(postTime).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' }) : "알수없음"; // 예: "5월 4일"
+
+  if (!aiApiKey || !aiEndpoint || !aiEndpoint.includes('?key=')) { // 엔드포인트 형식 체크 추가
+    console.warn("AI API Key or Endpoint not configured correctly. Using fallback.");
+    // AI API 설정이 잘못된 경우, 기본 상품 정보 반환
+    return getDefaultProduct("AI API 설정 오류");
+  }
+
+  // --- 상세 프롬프트 구성 ---
+  const systemInstructions = `
+당신은 게시물 텍스트에서 상품 정보를 정확하게 추출하는 도우미입니다. 반드시 JSON 형식으로만 응답해야 하며, 그 외 텍스트는 절대 포함하지 마세요.
+※ 상품 정보 추출 핵심 규칙:
+basePrice 필드: 반드시 고객이 실제로 구매할 수 있는 가장 낮은 '판매 가격'이어야 합니다. 원가, 정상가 등 참고용 가격은 제외하세요. 동일 단위/수량에 대한 가격이 여러 개면, 가장 마지막/낮은 가격 또는 '판매가' 표시 가격을 사용하고 나머지는 제외합니다. 유효한 판매 가격이 없으면 0으로 설정합니다.
+priceOptions 배열: 고객이 선택 가능한 모든 유효한 '판매 가격 옵션'만 { "quantity": 숫자(판매단위 수량), "price": 숫자(판매가격), "description": "옵션 상세 설명(단위, 내용물 등)" } 형식으로 포함합니다. basePrice 옵션도 포함해야 합니다. 원가/참고가는 제외합니다.
+multipleProducts 필드: 다른 종류의 상품(예: 사과 vs 배)이나 번호가 매겨진 목록(1번, 2번)이 있으면 true, 동일 상품의 가격 옵션만 있으면 false입니다.
+title 필드: [M월D일] 형식 날짜 접두사 + 자연스러운 상품명 (띄어쓰기 주의, 괄호/원산지 제외). 예: "[5월4일] 성주꿀참외"
+quantity (루트 레벨): 상품 기본 판매 단위 수량 (보통 1)
+quantityText: 상품 기본 판매 단위 설명 (예: "1봉지", "1개")
+productId: 나중에 시스템에서 생성되므로 응답에 포함하지 마세요.
+itemNumber: 여러 상품일 경우 각 상품의 번호 (1번, 2번...) 또는 순서(1, 2...). 단일 상품은 1.
+category: 상품 분류 ("식품", "의류", "기타" 등)
+status: 판매 상태 ("판매중", "품절", "예약중", "마감" 등). stockQuantity와 연관지어 판단.
+tags: 관련 키워드 배열 (["#특가", "#국내산"])
+features: 주요 특징 배열 (["유기농 인증"])
+pickupInfo: 픽업/배송 안내 문구
+pickupDate: "내일 오후 2시", "5월 10일 오전" 등 -> YYYY-MM-DDTHH:mm:ss.sssZ 형식으로 변환. "지금부터"는 게시물 작성 시간. 불명확하면 null.
+pickupType: 픽업/배송 방식 ("도착", "수령", "픽업", "배송")
+stockQuantity: 명확한 재고 수량 숫자. 없거나 불명확하면 null.
+※ 출력 형식: multipleProducts 값에 따라 아래 형식 중 하나로만 응답하세요. (절대 다른 텍스트 추가 금지)
+여러 상품: {"multipleProducts": true, "products": [ { "itemNumber": 1, "title": "[날짜] 상품1", "basePrice": ..., "priceOptions": [...], ... }, ... ]}
+단일 상품: {"multipleProducts": false, "title": "[날짜] 상품명", "basePrice": ..., "priceOptions": [...], ... }
+`.trim();
+
+  const userContent = `
+다음 텍스트에서 상품 정보를 위 규칙과 형식에 맞춰 JSON으로 추출해주세요:
+텍스트:
+\`\`\`
+${content}
+\`\`\`
+게시물 작성 시간: ${postTime ? safeParseDate(postTime).toISOString() : '알 수 없음'}
+게시물 키 (참고용): ${postKey}
+`.trim();
+
+  // Gemini API 요청 본문 형식 (모델 및 API 버전 확인 필요)
+  const requestBody = {
+    contents: [{
+      parts: [{ text: `${systemInstructions}\n\n${userContent}` }]
+    }],
+    // generationConfig은 모델 생성 시 설정했으므로 여기서는 생략 가능 (필요시 추가)
+    // generationConfig: { responseMimeType: "application/json", temperature: 0.3 },
+  };
+
+  // --- 재시도 로직 포함 API 호출 ---
+  const MAX_RETRIES = 2;
+  const RETRY_DELAY_MS = 1000;
+  let retries = 0;
+
+  while (retries <= MAX_RETRIES) {
+    try {
+      console.log(`[AI Analysis] Calling AI API (Attempt ${retries + 1})...`);
+      const response = await fetch(aiEndpoint, {
+          method: 'POST',
+          headers: {
+              'Content-Type': 'application/json',
+              // 'x-goog-api-key': aiApiKey // Gemini Key는 URL에 포함됨 (다른 API는 헤더 사용)
+          },
+          body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+          throw new Error(`AI API HTTP error: ${response.status} ${response.statusText} - ${await response.text()}`);
+      }
+
+      const result = await response.json();
+
+      // Gemini 응답 구조에서 텍스트(JSON) 추출 (실제 응답 확인 필요)
+      const responseText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!responseText) {
+          console.error("Invalid AI response structure:", result);
+          throw new Error("AI 응답에서 유효한 텍스트(JSON)를 찾을 수 없습니다.");
+      }
+
+      console.log("[AI Analysis] Raw AI response text received.");
+      // console.debug("Raw AI Response:\n", responseText); // 필요시 로깅
+
+      // JSON 파싱
+      let parsedResult;
+      try {
+           parsedResult = JSON.parse(responseText);
+      } catch (parseError) {
+           console.error("AI response JSON parsing error:", parseError);
+           console.error("Content that failed parsing:", responseText);
+           throw new Error(`AI 응답 JSON 파싱 실패: ${parseError.message}`);
+      }
+
+      console.log("[AI Analysis] AI response parsed successfully.");
+
+      // --- AI 결과 후처리 및 검증 ---
+      let finalResult: AiAnalysisResult | null = null; // null 가능성
+
+      if (parsedResult.multipleProducts === true && Array.isArray(parsedResult.products) && parsedResult.products.length > 0) {
+           // 여러 상품 처리 (병합 로직 포함)
+           const mergedProduct = detectAndMergeQuantityBasedProducts(parsedResult.products);
+           if (mergedProduct) {
+                const processedMerged = processProduct(mergedProduct, postTime);
+                finalResult = { multipleProducts: false, products: [processedMerged] };
+           } else if (parsedResult.products.length === 1) { // multiple:true 인데 상품 1개
+                const processedSingle = processProduct({ ...parsedResult.products[0] }, postTime);
+                finalResult = { multipleProducts: false, products: [processedSingle] };
+           } else { // 실제 여러 상품
+                const processedProducts = parsedResult.products.map((p: any) => processProduct({ /*...*/ ...p }, postTime));
+                finalResult = { multipleProducts: true, products: processedProducts };
+           }
+      } else if (parsedResult.multipleProducts === false && parsedResult.title) {
+           // 단일 상품 처리
+           const processedSingle = processProduct(parsedResult, postTime);
+           finalResult = { multipleProducts: false, products: [processedSingle] };
+      } else {
+           // 유효한 상품 정보 없는 경우
+           console.warn("AI result format is valid JSON but lacks expected product data:", parsedResult);
+           // 유효한 상품 정보 없으면 null 반환 결정 가능
+           // return null; // 여기서 null 반환 결정
+      }
+
+       // --- 최종 결과 유효성 검사 ---
+      // products 배열이 있고, 최소 하나의 유효한 상품(예: title 존재)이 있는지 확인
+      if (finalResult && finalResult.products && finalResult.products.length > 0 && finalResult.products.some(p => p.title && !p.title.includes("AI 분석 필요") && !p.title.includes("정보 없음"))) {
+           console.log("[AI Analysis] Processing successful, valid product(s) found.");
+           finalResult.products.forEach((p, idx) => { // productId 생성 추가
+               if (!p.productId) p.productId = generateProductUniqueIdForItem("tempUser", "tempBand", postKey, p.itemNumber ?? (idx + 1)); // userId, bandNumber는 save 시 재설정될 수 있음
+           });
+           return finalResult; // 유효한 결과 반환
+      } else {
+           console.warn("[AI Analysis] Processing finished, but no valid products extracted. Returning null.");
+           return null; // <<<--- 유효 상품 없으면 null 반환
+      }
+      // --- 최종 결과 유효성 검사 끝 ---
+
+    } catch (error) {
+        console.error(`AI API call error (Attempt ${retries + 1}):`, error.message);
+        retries++;
+        if (retries > MAX_RETRIES) {
+            console.error("AI API call failed after max retries. Returning null.");
+            return null; // <<<--- 최대 재시도 초과 시 null 반환
+        }
+        console.log(`Retrying AI call in ${RETRY_DELAY_MS / 1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+    }
+  } // end while loop
+
+  // 루프 종료 후 (오류 발생 시 위에서 null 반환됨)
+  console.warn("AI analysis loop finished unexpectedly. Returning null.");
+  return null; // <<<--- 예기치 않은 종료 시 null 반환
+}
+
+// 기본 상품 정보를 반환하는 함수
+function getDefaultProduct(reason = "정보 없음"): AiAnalysisResult {
+  const defaultDate = new Date().toISOString();
+  const defaultProdData: AiProductInfo = {
+    title: `[AI 분석 필요] ${reason}`,
+    basePrice: 0,
+    priceOptions: [{ quantity: 1, price: 0, description: "정보 없음" }],
+    quantity: 1,
+    quantityText: "1개",
+    category: "미분류",
+    status: "정보 필요",
+    tags: [],
+    features: [],
+    pickupInfo: "",
+    pickupDate: null,
+    pickupType: "",
+    stockQuantity: null,
+    itemNumber: 1,
+  };
+  
+  return {
+    multipleProducts: false,
+    products: [defaultProdData]
+  };
+}
+
+function safeParseDate(dateString: string | number | null | Date): Date {
+  try {
+    if (dateString instanceof Date) return dateString;
+    if (typeof dateString === 'number') return new Date(dateString);
+    if (typeof dateString === 'string') {
+      // 표준 ISO 날짜 형식 시도
+      const d = new Date(dateString);
+      if (!isNaN(d.getTime())) return d;
+      
+      // 한국어 날짜 형식 파싱 로직 (예: "2023년 12월 25일", "오늘", "내일")
+      if (dateString.includes('오늘')) {
+        return new Date();
+      } else if (dateString.includes('내일')) {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        return tomorrow;
+      } else if (dateString.includes('어제')) {
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        return yesterday;
+      } else if (dateString.match(/\d+월\s*\d+일/)) {
+        // "5월 10일" 형식 처리
+        const matches = dateString.match(/(\d+)월\s*(\d+)일/);
+        if (matches && matches.length >= 3) {
+          const month = parseInt(matches[1]) - 1; // 0-based 월
+          const day = parseInt(matches[2]);
+          const today = new Date();
+          const result = new Date(today.getFullYear(), month, day);
+          
+          // 날짜가 과거인 경우 다음 해로 설정
+          if (result < today && (today.getMonth() - month > 1 || (today.getMonth() === 11 && month === 0))) {
+            result.setFullYear(today.getFullYear() + 1);
+          }
+          return result;
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Date parsing error:", error);
+  }
+  
+  // 기본값: 현재 날짜
+  return new Date();
+}
+
+function extractPickupDate(text: string | null, postTime: string | number | Date | null = null): { date: string | null; type: string | null; original: string | null } {
+  if (!text) return { date: null, type: null, original: null };
+  
+  let extractedDate: Date | null = null;
+  let extractedType: string | null = null;
+  const today = postTime ? safeParseDate(postTime) : new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  
+  const originalText = text;
+  text = text.toLowerCase().replace(/\s+/g, ' ').trim();
+  
+  // 픽업/배송 타입 키워드 검색
+  const pickupKeywords = ['픽업', '수령', '방문', '찾아가기', '받아가기'];
+  const deliveryKeywords = ['배송', '배달', '도착', '보내드림', '전달'];
+  
+  for (const keyword of pickupKeywords) {
+    if (text.includes(keyword)) {
+      extractedType = '픽업';
+      break;
+    }
+  }
+  
+  if (!extractedType) {
+    for (const keyword of deliveryKeywords) {
+      if (text.includes(keyword)) {
+        extractedType = '배송';
+        break;
+      }
+    }
+  }
+  
+  // 기본 픽업/배송 타입 (찾지 못했을 경우)
+  if (!extractedType) {
+    extractedType = '수령'; // 기본값
+  }
+  
+  // 날짜 추출 로직
+  if (text.includes('오늘')) {
+    extractedDate = new Date(today);
+  } else if (text.includes('내일')) {
+    extractedDate = tomorrow;
+  } else if (text.includes('모레') || text.includes('모래')) {
+    const dayAfterTomorrow = new Date(today);
+    dayAfterTomorrow.setDate(today.getDate() + 2);
+    extractedDate = dayAfterTomorrow;
+  } else if (text.match(/(\d+)월\s*(\d+)일/)) {
+    // "5월 10일" 형식 처리
+    const matches = text.match(/(\d+)월\s*(\d+)일/);
+    if (matches && matches.length >= 3) {
+      const month = parseInt(matches[1]) - 1; // 0-indexed 월
+      const day = parseInt(matches[2]);
+      extractedDate = new Date(today.getFullYear(), month, day);
+      
+      // 날짜가 과거인 경우 다음 해로 설정
+      if (extractedDate < today) {
+        extractedDate.setFullYear(today.getFullYear() + 1);
+      }
+    }
+  } else if (text.match(/다음\s*(주|달)/)) {
+    // 다음 주/달 처리
+    if (text.includes('다음 주') || text.includes('다음주')) {
+      extractedDate = new Date(today);
+      extractedDate.setDate(today.getDate() + 7);
+    } else if (text.includes('다음 달') || text.includes('다음달')) {
+      extractedDate = new Date(today);
+      extractedDate.setMonth(today.getMonth() + 1);
+      extractedDate.setDate(1); // 다음 달 1일로 설정
+    }
+  }
+  
+  // 시간 정보 추출
+  let hour = 12; // 기본값 정오
+  let minute = 0;
+  
+  if (extractedDate) {
+    // 오전/오후 및 시간 추출
+    const timeMatch = text.match(/(\d+)시\s*(\d+)?분?/);
+    const amPmMatch = text.match(/(오전|오후|아침|저녁|밤|낮)/);
+    
+    if (timeMatch) {
+      hour = parseInt(timeMatch[1]);
+      if (timeMatch[2]) minute = parseInt(timeMatch[2]);
+      
+      // 오전/오후 조정
+      if (amPmMatch) {
+        const amPm = amPmMatch[1];
+        if ((amPm === '오후' || amPm === '저녁' || amPm === '밤') && hour < 12) {
+          hour += 12;
+        } else if ((amPm === '오전' || amPm === '아침') && hour === 12) {
+          hour = 0;
+        }
+      } else if (hour < 8) {
+        // 시간만 명시된 경우 상황에 따라 추측 (예: 2시 -> 14시로 가정)
+        hour += 12;
+      }
+      
+      extractedDate.setHours(hour, minute, 0, 0);
+    } else {
+      // 시간이 명시되지 않은 경우 기본 시간 설정
+      extractedDate.setHours(hour, 0, 0, 0);
+    }
+  } else {
+    // 날짜 정보가 없는 경우 기본값으로 내일 정오 설정
+    extractedDate = tomorrow;
+    extractedDate.setHours(hour, 0, 0, 0);
+  }
+  
+  return {
+    date: extractedDate ? extractedDate.toISOString() : null,
+    type: extractedType,
+    original: originalText
+  };
+}
+
+function processProduct(productInfo: any, postTime: string | number | Date | null): AiProductInfo {
+  if (!productInfo) return getDefaultProduct("정보 없음").products[0];
+  
+  // 픽업 정보 추출 및 설정
+  const pickupDetails = extractPickupDate(productInfo.pickupInfo || productInfo.pickupDate, postTime);
+  productInfo.pickupDate = pickupDetails.date;
+  productInfo.pickupType = productInfo.pickupType || pickupDetails.type;
+  
+  // 필요하지 않은 속성 제거
+  if (productInfo.multipleProducts !== undefined) {
+    delete productInfo.multipleProducts;
+  }
+  
+  // 가격 옵션 검증 및 정리
+  if (!productInfo.priceOptions || !Array.isArray(productInfo.priceOptions)) {
+    productInfo.priceOptions = [];
+  }
+  
+  // 최소 하나의 가격 옵션이 있는지 확인
+  if (productInfo.priceOptions.length === 0 && typeof productInfo.basePrice === 'number' && productInfo.basePrice > 0) {
+    productInfo.priceOptions = [{
+      quantity: 1,
+      price: productInfo.basePrice,
+      description: productInfo.quantityText || "기본옵션"
+    }];
+  }
+  
+  // basePrice가 없거나 0이면서 priceOptions가 있는 경우 자동 설정
+  if ((!productInfo.basePrice || productInfo.basePrice === 0) && 
+      productInfo.priceOptions && productInfo.priceOptions.length > 0) {
+    const firstOption = productInfo.priceOptions[0];
+    productInfo.basePrice = firstOption.price;
+  }
+  
+  // 기본 상품 상태 검사 및 설정
+  if (!productInfo.status) {
+    productInfo.status = "판매중";
+  }
+  
+  // stockQuantity가 0인 경우 '품절'로 상태 변경
+  if (productInfo.stockQuantity === 0) {
+    productInfo.status = "품절";
+  }
+  
+  // 기본 필드 보장
+  if (!productInfo.tags) productInfo.tags = [];
+  if (!productInfo.features) productInfo.features = [];
+  if (!productInfo.category) productInfo.category = "기타";
+  if (!productInfo.quantity) productInfo.quantity = 1;
+  if (!productInfo.quantityText) productInfo.quantityText = "1개";
+  
+  return productInfo as AiProductInfo;
+}
+
+function detectAndMergeQuantityBasedProducts(products: any[]): AiProductInfo | null {
+  if (!products || !Array.isArray(products) || products.length <= 1) {
+    return null; // 병합할 필요가 없음
+  }
+  
+  // 동일한 상품명을 가진 제품들 중 itemNumber/번호가 다른 제품을 식별
+  // 예: "[5월1일] 사과" 제품이 1번, 2번, 3번으로 나뉘어 있을 수 있음
+  
+  // 제목에서 날짜 부분 제거 후 공백 제거하여 비교용 제목 생성
+  const normalizedTitles = products.map(p => {
+    const title = p.title || '';
+    return title.replace(/\[\d+월\d+일\]|\[\d+\/\d+\]/, '').trim(); // 날짜 패턴 제거
+  });
+  
+  // 제목이 동일한 제품 그룹 식별
+  const titleGroups: { [key: string]: number[] } = {};
+  normalizedTitles.forEach((title, index) => {
+    if (!titleGroups[title]) {
+      titleGroups[title] = [];
+    }
+    titleGroups[title].push(index);
+  });
+  
+  // 동일 제목을 가진 그룹 중 가장 큰 그룹 찾기
+  let largestGroupTitle = '';
+  let largestGroupSize = 0;
+  
+  for (const [title, indices] of Object.entries(titleGroups)) {
+    if (indices.length > largestGroupSize) {
+      largestGroupTitle = title;
+      largestGroupSize = indices.length;
+    }
+  }
+  
+  // 동일 제품이 없으면 null 반환
+  if (largestGroupSize <= 1) {
+    return null;
+  }
+  
+  // 동일 제품으로 판단된 제품들의 인덱스
+  const sameProductIndices = titleGroups[largestGroupTitle];
+  
+  // 병합 대상 제품들
+  const productsToMerge = sameProductIndices.map(idx => products[idx]);
+  
+  // 병합할 첫 번째 제품을 기반으로 함
+  const mergedProduct = { ...productsToMerge[0] };
+  
+  // 가격 옵션 병합 준비
+  let allPriceOptions: any[] = [];
+  productsToMerge.forEach(p => {
+    if (p.priceOptions && Array.isArray(p.priceOptions)) {
+      // 각 가격 옵션에 해당 상품의 itemNumber 정보 추가
+      const enhancedOptions = p.priceOptions.map((opt: any) => ({
+        ...opt,
+        itemNumber: p.itemNumber || 1,
+        originalDescription: opt.description || ""
+      }));
+      allPriceOptions = [...allPriceOptions, ...enhancedOptions];
+    }
+  });
+  
+  // 중복 제거 및 정렬
+  const uniqueOptions = Array.from(new Set(allPriceOptions.map(opt => 
+    `${opt.quantity}-${opt.price}`
+  ))).map(key => {
+    const [quantity, price] = key.split('-').map(Number);
+    const matchingOpts = allPriceOptions.filter(opt => 
+      opt.quantity === quantity && opt.price === price
+    );
+    // 같은 quantity-price 조합에 대해 첫 번째 설명 사용
+    return {
+      quantity,
+      price,
+      description: matchingOpts[0].originalDescription || `${quantity}개 ${price}원`
+    };
+  });
+  
+  // quantity 오름차순으로 정렬
+  uniqueOptions.sort((a, b) => a.quantity - b.quantity);
+  
+  // 최종 병합 제품 구성
+  mergedProduct.priceOptions = uniqueOptions;
+  
+  // basePrice 설정: 가장 낮은 quantity의 가격 사용
+  if (uniqueOptions.length > 0) {
+    const lowestQuantityOption = uniqueOptions.sort((a, b) => a.quantity - b.quantity)[0];
+    mergedProduct.basePrice = lowestQuantityOption.price;
+  }
+  
+  // itemNumber는 첫 번째 상품의 것을 사용
+  mergedProduct.itemNumber = productsToMerge[0].itemNumber || 1;
+  
+  // 재고 정보가 있다면 합산
+  const validStockQuantities = productsToMerge
+    .map(p => p.stockQuantity)
+    .filter(q => typeof q === 'number');
+  
+  if (validStockQuantities.length > 0) {
+    mergedProduct.stockQuantity = validStockQuantities.reduce((sum, q) => sum + q, 0);
+  }
+  
+  return mergedProduct as AiProductInfo;
+}
+
+// --- AI 관련 함수 끝 ---
+
+// --- Band 유틸리티 함수 ---
+function contentHasPriceIndicator(content: string | null | undefined): boolean {
+  if (!content) return false;
+  
+  // 줄바꿈을 공백으로 변환하여, 줄바꿈으로 인해 패턴 매칭이 실패하는 경우 방지
+  const normalizedContent = content.replace(/\n/g, ' ');
+  
+  // 가격 패턴: 
+  // 1. 숫자 + 원/만원
+  // 2. 숫자 + , + 숫자 + 원/만원
+  // 3. 화폐 기호 + 숫자
+  const pricePatterns = [
+    /\d{1,3}(,\d{3})*원/,                              // 10,000원
+    /\d{1,3}(,\d{3})*만원/,                            // 1,000만원
+    /\d{1,3}(,\d{3})*만\s?원/,                         // 1,000만 원
+    /\d{1,2}만\s?원/,                                  // 2만원, 10만 원
+    /\d{1,3}(,\d{3})*\s?원/,                           // 10000 원
+    /\d{1,2}\s?만\s?원/,                               // 5 만원, 5 만 원
+    /원\s?=?\s?\d{1,3}(,\d{3})*/,                      // 원=10,000
+    /가격\s?:?\s?\d{1,3}(,\d{3})*/,                    // 가격: 10,000
+    /\d{1,3}(,\d{3})*원\s?[→▶→⇒\-=]+\s?\d{1,3}(,\d{3})*원/,  // 15,000원 → 12,000원
+    /[\₩\\]\s?\d{1,3}(,\d{3})*/,                       // ₩10,000 또는 \10,000
+    /\d{1,3}(,\d{3})*\s?[\₩\\]/                        // 10,000₩
+  ];
+  
+  // 패턴 중 하나라도 매칭되면 true 반환
+  for (const pattern of pricePatterns) {
+    if (pattern.test(normalizedContent)) {
+      return true;
+    }
+  }
+  
+  // 추가: 숫자 + 천/천원 패턴 (2천원, 2천 등)
+  if (/\d{1,2}천원?/.test(normalizedContent)) {
+    return true;
+  }
+  
+  // 추가: 판매 관련 키워드
+  const salesKeywords = [
+    "판매", "판매합니다", "팝니다", "드립니다", "드려요", "특가", "할인", "세일", 
+    "공구", "공동구매", "예약", "주문", "선주문", "선착순", "갖고가세요", "가져가세요"
+  ];
+  
+  for (const keyword of salesKeywords) {
+    if (normalizedContent.includes(keyword)) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+function extractNumberedProducts(content: string | null | undefined): { itemNumber: number; title: string; price: number; description: string }[] {
+  if (!content) return [];
+  
+  // 줄별로 분리
+  const lines = content.split('\n');
+  const products = [];
+  
+  // 번호 지정 상품 패턴
+  // 1. '1번. 상품명 10,000원'
+  // 2. '1. 상품명 10,000원'
+  // 3. ①상품명 10,000원
+  const numberPatterns = [
+    /^\s*(\d+)[번호]\.\s*(.*?)(?:\s*[\:：]\s*|\s+)(\d{1,3}(?:,\d{3})*)\s*원/i,   // 1번. 상품명: 10,000원
+    /^\s*(\d+)\.\s*(.*?)(?:\s*[\:：]\s*|\s+)(\d{1,3}(?:,\d{3})*)\s*원/i,         // 1. 상품명: 10,000원
+    /^\s*[①②③④⑤⑥⑦⑧⑨⑩]\s*(.*?)(?:\s*[\:：]\s*|\s+)(\d{1,3}(?:,\d{3})*)\s*원/i,  // ①상품명: 10,000원
+    /^\s*(\d+)[번호][\.:]?\s*(.*?)\s*(\d{1,3}(?:,\d{3})*)\s*원/i,                 // 1번. 상품명 10,000원
+    /^\s*(\d+)[\.:]\s*(.*?)\s*(\d{1,3}(?:,\d{3})*)\s*원/i,                        // 1. 상품명 10,000원
+    /^\s*[①②③④⑤⑥⑦⑧⑨⑩]\s*(.*?)\s*(\d{1,3}(?:,\d{3})*)\s*원/i                     // ①상품명 10,000원
+  ];
+  
+  // 특수문자 번호를 숫자로 변환하는 맵
+  const specialNumMap: { [key: string]: number } = {
+    '①': 1, '②': 2, '③': 3, '④': 4, '⑤': 5,
+    '⑥': 6, '⑦': 7, '⑧': 8, '⑨': 9, '⑩': 10
+  };
+  
+  for (const line of lines) {
+    let found = false;
+    
+    // 패턴 1, 2: 숫자 + 번호/. + 상품명 + 가격
+    for (const pattern of numberPatterns.slice(0, 2)) {
+      const match = line.match(pattern);
+      if (match) {
+        const itemNumber = parseInt(match[1]);
+        const title = match[2].trim();
+        const price = parseInt(match[3].replace(/,/g, ''));
+        
+        products.push({
+          itemNumber,
+          title,
+          price,
+          description: `${itemNumber}번 상품`
+        });
+        
+        found = true;
+        break;
+      }
+    }
+    
+    // 패턴 3: 특수문자 번호
+    if (!found) {
+      const match = line.match(numberPatterns[2]);
+      if (match) {
+        const specialNum = line.charAt(0);
+        const itemNumber = specialNumMap[specialNum] || 1;
+        const title = match[1].trim();
+        const price = parseInt(match[2].replace(/,/g, ''));
+        
+        products.push({
+          itemNumber,
+          title,
+          price,
+          description: `${itemNumber}번 상품`
+        });
+        
+        found = true;
+      }
+    }
+    
+    // 패턴 4, 5: 숫자 + 번호/. + 상품명 + 가격 (콜론 없는 버전)
+    if (!found) {
+      for (const pattern of numberPatterns.slice(3, 5)) {
+        const match = line.match(pattern);
+        if (match) {
+          const itemNumber = parseInt(match[1]);
+          const title = match[2].trim();
+          const price = parseInt(match[3].replace(/,/g, ''));
+          
+          products.push({
+            itemNumber,
+            title,
+            price,
+            description: `${itemNumber}번 상품`
+          });
+          
+          found = true;
+          break;
+        }
+      }
+    }
+    
+    // 패턴 6: 특수문자 번호 (콜론 없는 버전)
+    if (!found) {
+      const match = line.match(numberPatterns[5]);
+      if (match) {
+        const specialNum = line.charAt(0);
+        const itemNumber = specialNumMap[specialNum] || 1;
+        const title = match[1].trim();
+        const price = parseInt(match[2].replace(/,/g, ''));
+        
+        products.push({
+          itemNumber,
+          title,
+          price,
+          description: `${itemNumber}번 상품`
+        });
+      }
+    }
+  }
+  
+  return products;
+}
+
+function extractEnhancedOrderFromComment(commentText: string | null | undefined): { itemNumber: number | null; quantity: number; isAmbiguous: boolean }[] {
+  const o = [];
+  if (!commentText || commentText.toLowerCase().includes("마감") || commentText.toLowerCase().includes("취소")) return o;
+  const pT = commentText.replace(/\s+/g, ' ').trim();
+  const er = /(\d+)\s*번(?:[^\d\n]*?)(\d+)/g;
+  let em = false;
+  let m;
+  while ((m = er.exec(pT)) !== null) {
+    const i = parseInt(m[1]);
+    const q = parseInt(m[2]);
+    if (!isNaN(i) && i > 0 && !isNaN(q) && q > 0) {
+      o.push({ itemNumber: i, quantity: q, isAmbiguous: false });
+      em = true;
+    }
+  }
+  if (!pT.includes("번") || !em) {
+    const nr = /(\d+)/g;
+    while ((m = nr.exec(pT)) !== null) {
+      const q = parseInt(m[1]);
+      if (!isNaN(q) && q > 0 && !em) o.push({ itemNumber: 1, quantity: q, isAmbiguous: true });
+    }
+  }
+  return o;
+}
+
+function generateProductUniqueIdForItem(userId: string, bandNumber: string, originalPostId: string, itemNumber: number): string {
+  return `prod_${bandNumber}_${originalPostId}_item${itemNumber}`;
+}
+
+function generateOrderUniqueId(bandNumber: string, postId: string, commentKey: string, itemNumber: number | string): string {
+  return `order_${bandNumber}_${postId}_${commentKey}_item${itemNumber}`;
+}
+
+function generateCustomerUniqueId(userId: string, authorUserNo: string): string {
+  return `cust_${userId}_${authorUserNo}`;
+}
+
+function calculateOptimalPrice(orderQuantity: number, priceOptions: { quantity: number; price: number }[], fallbackUnitPrice = 0): number {
+  if (typeof orderQuantity !== 'number' || orderQuantity <= 0) return 0;
+  const validOpts = (Array.isArray(priceOptions) ? priceOptions : []).filter(o => typeof o.quantity === 'number' && o.quantity > 0 && typeof o.price === 'number' && o.price >= 0);
+  if (validOpts.length === 0) return Math.round(fallbackUnitPrice * orderQuantity);
+  validOpts.sort((a, b) => b.quantity - a.quantity);
+  let rem = orderQuantity;
+  let cost = 0;
+  for (const opt of validOpts) {
+    if (rem >= opt.quantity) {
+      const n = Math.floor(rem / opt.quantity);
+      cost += n * opt.price;
+      rem -= n * opt.quantity;
+    }
+  }
+  if (rem > 0) {
+    let unitP = fallbackUnitPrice;
+    const singleOpt = validOpts.find(o => o.quantity === 1);
+    if (singleOpt) unitP = singleOpt.price;
+    else {
+      const sOpt = validOpts[validOpts.length - 1];
+      if (sOpt) unitP = sOpt.price / sOpt.quantity;
+    }
+    cost += rem * unitP;
+  }
+  return Math.round(cost);
+}
+// --- Band 유틸리티 함수 끝 ---
+
+
+// --- 외부 서비스 호출 구현 ---
+// ⚠️ TODO: 실제 Band API 엔드포인트 및 인증 방식으로 수정 필요
+const BAND_POSTS_API_URL = "https://openapi.band.us/v2/band/posts"; // 예시 URL
+const COMMENTS_API_URL = "https://openapi.band.us/v2.1/band/post/comments"; // 예시 URL
+
+async function fetchBandPosts(userId: string, limit: number, supabase: SupabaseClient): Promise<any[]> {
+  console.log(`Fetching Band posts for user ${userId}, limit ${limit}`);
+  let bandAccessToken: string | null = null;
+  let bandKey: string | null = null; // API 스펙에 따라 필요 여부 결정
+
+  try { // 사용자 토큰 및 키 조회
+    const { data, error } = await supabase.from("users").select("band_access_token, band_key").eq("user_id", userId).single();
+    if (error || !data?.band_access_token) throw new Error(`Band access token not found or DB error for user ${userId}: ${error?.message}`);
+    bandAccessToken = data.band_access_token;
+    bandKey = data.band_key; // band_key 컬럼 존재 및 필요 여부 확인
+  } catch (e) {
+    console.error("Error fetching Band credentials:", e.message);
+    throw e; // 에러 발생 시 함수 중단
+  }
+
+  let allPosts: any[] = [];
+  let nextParams: Record<string, string> = {};
+  let hasMore = true;
+  const apiPageLimit = 20; // Band API 페이지당 제한 (확인 필요)
+
+  while (hasMore && allPosts.length < limit) {
+    const currentLimit = Math.min(apiPageLimit, limit - allPosts.length); // 이번 페이지에서 가져올 개수
+    const apiUrl = new URL(BAND_POSTS_API_URL);
+    apiUrl.searchParams.set("access_token", bandAccessToken);
+    if (bandKey) apiUrl.searchParams.set("band_key", bandKey); // bandKey가 필요하다면 추가
+    apiUrl.searchParams.set("limit", currentLimit.toString());
+    Object.entries(nextParams).forEach(([key, value]) => apiUrl.searchParams.set(key, value));
+
+    try {
+      console.log(`Calling Band API: ${apiUrl.toString()}`);
+      const response = await fetch(apiUrl.toString(), { method: 'GET', headers: { 'Accept': 'application/json' } });
+      if (!response.ok) throw new Error(`Band API error: ${response.statusText} - ${await response.text()}`);
+
+      const result = await response.json();
+      if (result.result_code !== 1 || !result.result_data) throw new Error(`Band API logical error: ${result.result_code} - ${JSON.stringify(result.result_data)}`);
+
+      const data = result.result_data;
+      const items = data.items || [];
+
+      const processedPosts = items.map((post: any) => ({
+        postKey: post.post_key, bandKey: post.band_key || bandKey,
+        author: post.author ? { name: post.author.name, userNo: post.author.user_key, profileImageUrl: post.author.profile_image_url } : null, // userNo 추가
+        content: post.content, createdAt: post.created_at, // timestamp ms 가정
+        commentCount: post.comment_count ?? 0,
+        latestComments: post.latest_comments?.map((c: any) => ({ createdAt: c.created_at })) || [], // 필요한 정보만
+        photos: post.photos?.map((p: any) => p.url) || [],
+      }));
+      allPosts = allPosts.concat(processedPosts);
+
+      // 다음 페이지 처리
+      if (data.paging && data.paging.next_params && allPosts.length < limit) {
+        nextParams = data.paging.next_params;
+        hasMore = true;
+        await new Promise(resolve => setTimeout(resolve, 300)); // Rate limit 방지
+      } else {
+        hasMore = false;
+      }
+
+    } catch (error) {
+      console.error("Error during Band posts fetch:", error.message);
+      // 페이지 조회 실패 시 다음 페이지 시도 중단 또는 재시도 로직 추가 가능
+      hasMore = false; // 일단 중단
+      // throw error; // 필요 시 에러 전파
+    }
+  }
+  console.log(`Total ${allPosts.length} posts fetched.`);
+  return allPosts.slice(0, limit); // 최종 limit 적용
+}
+
+async function fetchBandComments(userId: string, postKey: string, bandKey: string, supabase: SupabaseClient): Promise<{ comments: any[], latestTimestamp: number | null }> {
+  console.log(`Fetching comments for post ${postKey}, band ${bandKey}`);
+  let bandAccessToken: string | null = null;
+  try { // 토큰 조회
+    const { data, error } = await supabase.from("users").select("band_access_token").eq("user_id", userId).single();
+    if (error || !data?.band_access_token) throw new Error(`Band token not found for user ${userId}: ${error?.message}`);
+    bandAccessToken = data.band_access_token;
+  } catch (e) { console.error("Error fetching token for comments:", e.message); throw e; }
+
+  let allComments: any[] = [];
+  let nextParams: Record<string, string> = {};
+  let hasMore = true;
+  let latestTs: number | null = null;
+  const apiPageLimit = 50;
+
+  while (hasMore) {
+    const apiUrl = new URL(COMMENTS_API_URL);
+    apiUrl.searchParams.set("access_token", bandAccessToken);
+    apiUrl.searchParams.set("band_key", bandKey);
+    apiUrl.searchParams.set("post_key", postKey);
+    apiUrl.searchParams.set("limit", apiPageLimit.toString());
+    Object.entries(nextParams).forEach(([key, value]) => apiUrl.searchParams.set(key, value));
+
+    try {
+      const response = await fetch(apiUrl.toString(), { method: 'GET', headers: { 'Accept': 'application/json' } });
+      if (!response.ok) throw new Error(`Band API comments error: ${response.statusText} - ${await response.text()}`);
+      const result = await response.json();
+      if (result.result_code !== 1 || !result.result_data) throw new Error(`Band API comments logical error: ${result.result_code}`);
+
+      const data = result.result_data;
+      const items = data.items || [];
+
+      const processed = items.map((c: any) => {
+        const ts = c.created_at; // timestamp ms 가정
+        if (ts && (latestTs === null || ts > latestTs)) latestTs = ts;
+        return {
+          commentKey: c.comment_key, // comment_key -> commentKey 변경
+          postKey: postKey, bandKey: bandKey,
+          author: c.author ? { name: c.author.name, userNo: c.author.user_key, profileImageUrl: c.author.profile_image_url } : null,
+          content: c.content, createdAt: ts, // createdAt 이름 사용
+        };
+      });
+      allComments = allComments.concat(processed);
+
+      if (data.paging && data.paging.next_params) {
+        nextParams = data.paging.next_params; hasMore = true;
+        await new Promise(resolve => setTimeout(resolve, 200)); // Rate limit
+      } else { hasMore = false; }
+
+    } catch (error) {
+      console.error(`Error fetching comments for post ${postKey}:`, error.message);
+      hasMore = false; // 오류 시 중단
+    }
+  }
+  console.log(`Fetched ${allComments.length} comments for post ${postKey}. Latest TS: ${latestTs}`);
+  return { comments: allComments, latestTimestamp: latestTs };
+}
+// --- 외부 서비스 호출 구현 끝 ---
+
+
+// --- DB 저장 헬퍼 ---
+async function savePostAndProducts(
+  supabase: SupabaseClient,
+  userId: string,
+  post: any,
+  aiAnalysisResult: AiAnalysisResult | null,
+  bandNumber: string,
+  aiExtractionStatus: string = "not_attempted" // 추가: AI 추출 상태 매개변수
+): Promise<string | null> {
+  if (!userId || !post || !post.postKey) {
+    console.error("Invalid inputs for savePostAndProducts");
+    return null;
+  }
+
+  // AI 분석 결과가 없으면 상품 없는 일반 게시물로 처리
+  const isProductPost = !!(
+    aiAnalysisResult &&
+    Array.isArray(aiAnalysisResult.products) &&
+    aiAnalysisResult.products.length > 0 &&
+    aiAnalysisResult.products[0] &&
+    aiAnalysisResult.products[0].productId
+  );
+
+  const postId = userId + "_post_" + post.postKey;
+  const dateObject = new Date(post.createdAt);
+  
+  try {
+    // 1. posts 테이블에 게시물 정보 Upsert
+    const postDataToUpsert = {
+      post_id: postId,
+      user_id: userId,
+      band_number: bandNumber,
+      content: post.content || "",
+      author_name: post.author?.name || "",
+      comment_count: post.commentCount || 0,
+      status: "활성",
+      posted_at: dateObject.toISOString(),
+      is_product: isProductPost || aiExtractionStatus === "failed", // 상품 가능성이 있지만 추출 실패한 경우도 is_product=true
+      updated_at: new Date().toISOString(),
+      post_key: post.postKey,
+      band_key: post.bandKey,
+      ai_extraction_status: aiExtractionStatus, // AI 추출 상태 저장 (추가됨)
+    };
+
+    const { data: upsertedPostData, error: postUpsertError } = await supabase
+      .from("posts")
+      .upsert(postDataToUpsert, {
+        onConflict: "post_id",
+        ignoreDuplicates: false,
+      })
+      .select("post_id")
+      .single();
+
+    if (postUpsertError) {
+      console.error(`Post ${post.postKey} Supabase 저장 오류:`, postUpsertError);
+      return null;
+    }
+    
+    if (!upsertedPostData || !upsertedPostData.post_id) {
+      console.error(`Failed to get post ID after upsert for ${post.postKey}`);
+      return null;
+    }
+
+    console.log(`Post ${post.postKey} upserted in Supabase (ID: ${upsertedPostData.post_id}, AI 추출 상태: ${aiExtractionStatus}).`);
+
+    // 2. products 테이블에 상품 정보 Upsert (성공적인 AI 분석 결과가 있을 경우에만)
+    if (upsertedPostData.post_id && isProductPost && aiAnalysisResult?.products && aiExtractionStatus === "success") {
+      for (const product of aiAnalysisResult.products) {
+        try {
+          const productId = product.productId;
+          if (!productId) {
+            console.log(`Post ${post.postKey}: 상품에 productId가 없어 저장을 건너뜁니다.`);
+            continue;
+          }
+
+          const productDataToUpsert = {
+            product_id: productId,
+            post_id: upsertedPostData.post_id,
+            user_id: userId,
+            band_number: bandNumber,
+            post_number: post.postKey,
+            item_number: product.itemNumber || 1,
+            title: product.title || "",
+            content: post.content || "",
+            base_price: product.basePrice || 0,
+            original_price: product.originalPrice || product.basePrice || 0,
+            price_options: product.priceOptions || [],
+            quantity: product.quantity || 1,
+            quantity_text: product.quantityText || "1개",
+            category: product.category || "기타",
+            tags: product.tags || [],
+            features: product.features || [],
+            status: product.status || "판매중",
+            pickup_info: product.pickupInfo || "",
+            pickup_date: product.pickupDate
+              ? new Date(product.pickupDate).toISOString()
+              : null,
+            pickup_type: product.pickupType || "",
+            stock_quantity: product.stockQuantity || null,
+            barcode: "", // 바코드 빈 값
+            updated_at: new Date().toISOString(),
+            posted_at: dateObject.toISOString(),
+          };
+
+          const { error: productUpsertError } = await supabase
+            .from("products")
+            .upsert(productDataToUpsert, {
+              onConflict: "product_id",
+              ignoreDuplicates: false,
+            });
+
+          if (productUpsertError) {
+            console.error(`Product ${productId} (Post ${post.postKey}) Supabase 저장 오류:`, productUpsertError);
+            continue;
+          }
+          
+          console.log(`Product ${productId} (Post ${post.postKey}) upserted in Supabase.`);
+        } catch (dbError) {
+          console.error(`Product (Post ${post.postKey}, Item ${product.itemNumber}) Supabase 저장 오류:`, dbError);
+          // 개별 상품 저장 실패는 로깅만 하고 계속 진행
+        }
+      }
+    }
+
+    return upsertedPostData.post_id; // 성공 시 게시물 ID 반환
+  } catch (error) {
+    console.error(`savePostAndProducts 함수 오류 (Post ${post.postKey}):`, error);
+    return null;
+  }
+}
+
+// 댓글 데이터로부터 주문 정보를 생성하는 함수
+async function generateOrderData(
+  supabase: SupabaseClient,
+  userId: string,
+  comments: any[],
+  postKey: string
+): Promise<{ orders: any[], customers: Map<string, any> }> {
+  const orders: any[] = [];
+  const customers = new Map<string, any>();
+  
+  if (!comments || comments.length === 0) {
+    return { orders, customers };
+  }
+
+  try {
+    // 게시물 관련 상품 정보 조회
+    const { data: products, error: productsError } = await supabase
+      .from("products")
+      .select("*")
+      .eq("post_number", postKey)
+      .eq("user_id", userId);
+
+    if (productsError) {
+      console.error(`Products fetch error for post ${postKey}:`, productsError);
+      return { orders, customers };
+    }
+
+    if (!products || products.length === 0) {
+      console.log(`No products found for post ${postKey}`);
+      return { orders, customers };
+    }
+
+    // 댓글 처리
+    for (const comment of comments) {
+      if (!comment.author || !comment.content || !comment.commentKey) {
+        continue;
+      }
+
+      // 댓글에서 주문 정보 추출
+      const extractedOrders = extractEnhancedOrderFromComment(comment.content);
+      if (extractedOrders.length === 0) {
+        continue;
+      }
+
+      const authorUserNo = comment.author.userNo;
+      const commentKey = comment.commentKey;
+      const bandKey = comment.bandKey || "";
+      const commentDate = new Date(comment.createdAt || Date.now());
+
+      // 고객 정보 생성 또는 업데이트
+      const customerId = generateCustomerUniqueId(userId, authorUserNo);
+      if (!customers.has(customerId)) {
+        customers.set(customerId, {
+          customer_id: customerId,
+          user_id: userId,
+          band_number: bandKey,
+          author_user_no: authorUserNo,
+          name: comment.author.name || "익명",
+          profile_image_url: comment.author.profileImageUrl || "",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+
+      // 각 주문 항목에 대해 정보 생성
+      for (const orderItem of extractedOrders) {
+        const itemNumber = orderItem.itemNumber || 1;
+        const quantity = orderItem.quantity || 1;
+        
+        // 해당 상품 찾기
+        const product = products.find(p => p.item_number === itemNumber);
+        if (!product) {
+          console.log(`Product with item_number ${itemNumber} not found for post ${postKey}`);
+          continue;
+        }
+
+        // 주문 ID 생성
+        const orderId = generateOrderUniqueId(bandKey, postKey, commentKey, itemNumber);
+        
+        // 가격 계산
+        const priceOptions = product.price_options || [];
+        const totalPrice = calculateOptimalPrice(quantity, priceOptions, product.base_price || 0);
+
+        // 주문 정보 생성
+        const orderData = {
+          order_id: orderId,
+          customer_id: customerId,
+          user_id: userId,
+          band_number: bandKey,
+          post_number: postKey,
+          comment_key: commentKey,
+          product_id: product.product_id,
+          item_number: itemNumber,
+          quantity: quantity,
+          price: totalPrice,
+          status: "신규",
+          comment_text: comment.content,
+          ordered_at: commentDate.toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          is_ambiguous: orderItem.isAmbiguous || false,
+        };
+
+        orders.push(orderData);
+      }
+    }
+
+    return { orders, customers };
+  } catch (error) {
+    console.error(`generateOrderData error for post ${postKey}:`, error);
+    return { orders, customers };
+  }
+}
+
+// --- DB 저장 헬퍼 (savePostAndProducts - 위 유틸리티 섹션에서 정의됨) ---
+
+// 환경 변수로부터 URL 생성
+const BAND_API_URL = "https://openapi.band.us/v2/band/posts";
+const COMMENTS_API_URL = "https://openapi.band.us/v2/band/post/comments";
+
+// ========================================================================
+// === 메인 함수 로직 시작 ===
+// ========================================================================
+
+Deno.serve(async (req: Request) => {
+  // OPTIONS 처리
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeadersGet, status: 204 });
+  // GET 외 거부
+  if (req.method !== 'GET') return new Response(JSON.stringify({ success: false, message: "허용되지 않는 메소드 (GET)" }), { status: 405, headers: responseHeaders });
+
+  let supabase: SupabaseClient;
+  try {
+    // Supabase 클라이언트 초기화
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceKey) throw new Error("Missing Supabase URL or Service Role Key");
+    supabase = createClient(supabaseUrl, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    console.log("Supabase client initialized.");
+  } catch (error) {
+    return new Response(JSON.stringify({ success: false, message: error.message }), { status: 500, headers: responseHeaders });
+  }
+
+  try {
+    // URL 파라미터 추출
+    const url = new URL(req.url);
+    const params = url.searchParams;
+    const userId = params.get("userId");
+    if (!userId) return new Response(JSON.stringify({ success: false, message: "쿼리 파라미터 'userId'가 필요합니다." }), { status: 400, headers: responseHeaders });
+
+    const requestedLimit = parseInt(params.get("limit") || "100", 10);
+    const processingLimit = Math.min(requestedLimit > 0 ? requestedLimit : 100, 200);
+    const processWithAI = params.get("processAI")?.toLowerCase() !== 'false';
+
+    console.log(`band-get-posts called (No Auth): userId=${userId}, limit=${processingLimit}, processAI=${processWithAI}`);
+
+    // === 메인 로직 ===
+
+    // 1. Band API 게시물 가져오기
+    console.log(`[Step 1] Fetching posts from Band API...`);
+    const postsFromApi = await fetchBandPosts(userId, processingLimit, supabase); // Supabase client 전달
+    console.log(`[Step 1] Fetched ${postsFromApi.length} posts.`);
+    if (!Array.isArray(postsFromApi)) throw new Error("Failed to fetch posts or invalid format.");
+
+    let postsWithAnalysis: any[] = [];
+    let postsToUpdateCommentInfo: any[] = [];
+
+    // 2. DB 기존 게시물 조회
+    console.log(`[Step 2] Fetching existing post info from DB...`);
+    const dbPostsMap = new Map<string, any>();
+    if (postsFromApi.length > 0) {
+      try {
+        const postKeys = postsFromApi.map(p => p.postKey).filter(Boolean);
+        if (postKeys.length > 0) {
+          const { data: dbPosts, error: dbError } = await supabase
+            .from("posts")
+            .select("post_key, comment_count, last_checked_comment_at, is_product")
+            .eq("user_id", userId).in("post_key", postKeys);
+          if (dbError) throw dbError;
+          dbPosts?.forEach((dbPost: any) => {
+            dbPostsMap.set(dbPost.post_key, { /* ... 데이터 저장 ... */ });
+          });
+          console.log(`[Step 2] Found ${dbPostsMap.size} existing posts.`);
+        } else { console.log("[Step 2] No valid post keys from API."); }
+    } catch (error) { console.error(`[Step 2] DB post fetch error: ${error.message}`); }
+
+    // 4. 게시물 순회 및 처리
+    console.log(`[Step 4] Processing ${postsFromApi.length} API posts...`);
+    const processingPromises = postsFromApi.map(async (apiPost) => {
+      if (!apiPost || !apiPost.postKey || !apiPost.bandKey || !apiPost.author) {
+        console.warn("Skipping invalid post data:", apiPost);
+        return null; // 유효하지 않으면 null 반환하여 나중에 필터링
+      }
+      const postKey = apiPost.postKey;
+      const bandKey = apiPost.bandKey;
+      const dbPostData = dbPostsMap.get(postKey);
+      const isNewPost = !dbPostData;
+
+      let aiAnalysisResult: AiAnalysisResult | null = null;
+      let savedPostId: string | null = null;
+      let processCommentsAndOrders = false;
+      let postProcessingError: string | null = null; // 게시물별 오류 저장
+      let aiExtractionStatus = "not_attempted"; // AI 추출 상태 초기값
+
+      console.log(`  -> Processing Post ${postKey} (${isNewPost ? "New" : "Existing"})`);
+
+      try { // 개별 게시물 처리 try-catch
+        if (isNewPost) {
+          // === 신규 게시물 처리 ===
+          const mightBeProduct = contentHasPriceIndicator(apiPost.content);
+          
+          if (mightBeProduct && processWithAI) {
+            try {
+              const postTime = apiPost.createdAt;
+              aiAnalysisResult = await extractProductInfoAI(apiPost.content, postTime, postKey);
+              
+              // AI 분석 결과 검증 - 유효한 상품 정보가 있는지 확인
+              const hasValidProducts = !!(
+                aiAnalysisResult && 
+                aiAnalysisResult.products && 
+                aiAnalysisResult.products.length > 0 &&
+                aiAnalysisResult.products.some(p => 
+                  p.title && 
+                  !p.title.includes("AI 분석 필요") && 
+                  !p.title.includes("정보 없음") &&
+                  p.basePrice > 0
+                )
+              );
+              
+              if (hasValidProducts) {
+                // 유효한 상품 정보가 있는 경우 - 성공 처리
+                aiExtractionStatus = "success";
+                aiAnalysisResult.products = aiAnalysisResult.products.map(p => 
+                  processProduct({ ...p }, postTime)
+                );
+                aiAnalysisResult.products.forEach((p, idx) => { 
+                  if (!p.productId) {
+                    p.productId = generateProductUniqueIdForItem(userId, bandKey, postKey, p.itemNumber ?? (idx + 1));
+                  }
+                });
+                processCommentsAndOrders = true;
+              } else {
+                // 유효한 상품 정보가 없는 경우 - 실패 처리
+                console.log(`게시물 ${postKey}: AI로 상품 정보 추출 실패`);
+                aiExtractionStatus = "failed";
+                // 상품 정보는 없지만 게시물 정보는 저장하기 위해 빈 상품 정보 설정
+                aiAnalysisResult = getDefaultProduct("AI 추출 실패");
+              }
+            } catch (aiError) {
+              // AI 호출 자체가 실패한 경우
+              console.error(`게시물 ${postKey}: AI 분석 중 오류 발생`, aiError);
+              aiExtractionStatus = "error";
+              aiAnalysisResult = getDefaultProduct(`AI 오류: ${aiError.message}`);
+            }
+          } else {
+            // 상품 게시물이 아닌 경우
+            aiExtractionStatus = mightBeProduct ? "not_attempted" : "not_product";
+            aiAnalysisResult = getDefaultProduct(mightBeProduct ? "AI 비활성화" : "상품 아님");
+          }
+
+          // DB 저장 - 모든 게시물을 저장하되 AI 추출 상태를 함께 저장
+          savedPostId = await savePostAndProducts(supabase, userId, apiPost, aiAnalysisResult, bandKey, aiExtractionStatus);
+          if (!savedPostId) throw new Error("Post save failed"); // 저장 실패 시 오류 발생
+
+          // 댓글 처리 및 주문 생성 - 성공적으로 상품 추출된 경우에만
+          if (processCommentsAndOrders && (apiPost.commentCount ?? 0) > 0 && aiExtractionStatus === "success") {
+            let newComments: any[] = [];
+            try {
+              const { comments } = await fetchBandComments(userId, postKey, bandKey, supabase);
+              newComments = comments.map(c => ({ ...c, post_key: postKey, band_key: bandKey, commentKey: c.commentKey, createdAt: c.createdAt, author: c.author }));
+            } catch (commentError) { console.error(`  Comment fetch error for new post ${postKey}: ${commentError.message}`); }
+
+            if (newComments.length > 0) {
+              try {
+                const { orders, customers } = await generateOrderData(supabase, userId, newComments, postKey);
+                // 주문/고객 저장
+                if (orders.length > 0) {
+                  const { error } = await supabase.from("orders").upsert(orders, { onConflict: "order_id" });
+                  if (error) console.error(`    Order save error (post ${postKey}): ${error.message}`); else console.log(`    Saved ${orders.length} orders.`);
+                }
+                const customersArray = Array.from(customers.values());
+                if (customersArray.length > 0) {
+                  const { error } = await supabase.from("customers").upsert(customersArray, { onConflict: "customer_id" });
+                  if (error) console.error(`    Customer save error (post ${postKey}): ${error.message}`); else console.log(`    Saved ${customersArray.length} customers.`);
+                }
+              } catch (genError) { console.error(`  Order generation error for new post ${postKey}: ${genError.message}`); }
+            }
+          }
+        } else { // === 기존 게시물 처리 ===
+          savedPostId = `${userId}_post_${postKey}`;
+          
+          // 이미 처리된 일반 게시물(is_product=false)은 스킵
+          if (dbPostData.is_product === false && dbPostData.ai_extraction_status !== "failed") { 
+            return { ...apiPost, aiAnalysisResult: null, dbPostId: savedPostId }; 
+          }
+          
+          // 이전에 AI 추출 실패한 게시물은 재시도
+          const needsAiRetry = dbPostData.is_product === true && 
+                               (dbPostData.ai_extraction_status === "failed" || 
+                                dbPostData.ai_extraction_status === "error");
+          
+          if (needsAiRetry && processWithAI) {
+            console.log(`재시도: 게시물 ${postKey}의 상품 정보 추출 (이전 상태: ${dbPostData.ai_extraction_status})`);
+            try {
+              const postTime = apiPost.createdAt;
+              aiAnalysisResult = await extractProductInfoAI(apiPost.content, postTime, postKey);
+              
+              const hasValidProducts = !!(
+                aiAnalysisResult && 
+                aiAnalysisResult.products && 
+                aiAnalysisResult.products.length > 0 &&
+                aiAnalysisResult.products.some(p => 
+                  p.title && 
+                  !p.title.includes("AI 분석 필요") && 
+                  !p.title.includes("정보 없음") &&
+                  p.basePrice > 0
+                )
+              );
+              
+              if (hasValidProducts) {
+                aiExtractionStatus = "success";
+                aiAnalysisResult.products = aiAnalysisResult.products.map(p => 
+                  processProduct({ ...p }, postTime)
+                );
+                aiAnalysisResult.products.forEach((p, idx) => { 
+                  if (!p.productId) {
+                    p.productId = generateProductUniqueIdForItem(userId, bandKey, postKey, p.itemNumber ?? (idx + 1));
+                  }
+                });
+                
+                // 재시도 성공 시 DB 업데이트
+                savedPostId = await savePostAndProducts(supabase, userId, apiPost, aiAnalysisResult, bandKey, aiExtractionStatus);
+                if (!savedPostId) throw new Error("Post retry save failed");
+                
+                // 성공적으로 상품 추출 후 댓글 처리
+                if ((apiPost.commentCount ?? 0) > 0) {
+                  // (여기에 댓글 처리 로직)
+                }
+              } else {
+                // 재시도해도 실패한 경우
+                console.log(`재시도 실패: 게시물 ${postKey}의 상품 정보 추출`);
+                aiExtractionStatus = "failed";
+                // DB 상태 업데이트 (여전히 실패 상태)
+                await savePostAndProducts(supabase, userId, apiPost, null, bandKey, aiExtractionStatus);
+              }
+            } catch (retryError) {
+              console.error(`재시도 오류: 게시물 ${postKey}의 상품 정보 추출`, retryError);
+              aiExtractionStatus = "error";
+              await savePostAndProducts(supabase, userId, apiPost, null, bandKey, aiExtractionStatus);
+            }
+          }
+
+          const needsCommentUpdate = (apiPost.commentCount || 0) > (dbPostData.comment_count || 0);
+          if (needsCommentUpdate && aiExtractionStatus === "success") {
+            let latestTimestamp: number | null = null;
+            let newComments: any[] = [];
+            try {
+              const { comments: fullComments, latestTimestamp: ts } = await fetchBandComments(userId, postKey, bandKey, supabase);
+              latestTimestamp = ts;
+              const lastCheckedTs = dbPostData.last_checked_comment_at || 0;
+              newComments = fullComments.filter(c => c.createdAt > lastCheckedTs)
+                .map(c => ({ ...c, post_key: postKey, band_key: bandKey, commentKey: c.commentKey, createdAt: c.createdAt, author: c.author }));
+
+              if (newComments.length > 0) {
+                try {
+                  const { orders, customers } = await generateOrderData(supabase, userId, newComments, postKey);
+                  if (orders.length > 0) { /* ... 주문 저장 ... */ }
+                  const customersArray = Array.from(customers.values());
+                  if (customersArray.length > 0) { /* ... 고객 저장 ... */ }
+                } catch (genError) { console.error(`  New comment order generation error for post ${postKey}: ${genError.message}`); }
+              }
+            } catch (commentError) { console.error(`  Error fetching/processing comments for post ${postKey}: ${commentError.message}`); }
+
+            // 업데이트 정보 추가
+            const newLastChecked = latestTimestamp ? new Date(latestTimestamp).toISOString() : new Date().toISOString();
+            postsToUpdateCommentInfo.push({ post_id: savedPostId, comment_count: apiPost.commentCount ?? 0, last_checked_comment_at: newLastChecked });
+          }
+        }
+        
+        // 성공적으로 처리된 게시물 정보 반환
+        return { 
+          ...apiPost, 
+          aiAnalysisResult, 
+          dbPostId: savedPostId,
+          aiExtractionStatus // 추가: 클라이언트에도 AI 추출 상태 반환
+        };
+
+      } catch (error) {
+        console.error(`Error processing post ${postKey}: ${error.message}`, error.stack);
+        // 오류 발생 시에도 정보 반환 (에러 포함)
+        return { 
+          postKey: apiPost.postKey, 
+          bandKey: apiPost.bandKey, 
+          processingError: error.message,
+          aiExtractionStatus: aiExtractionStatus || "error" 
+        };
+      }
+    }); // End map
+
+    // 모든 게시물 처리 Promise 완료 기다리기
+    const processedResults = await Promise.all(processingPromises);
+
+    // null (유효하지 않은 데이터) 및 성공/실패 결과 분리 가능
+    postsWithAnalysis = processedResults.filter(result => result !== null);
+    console.log(`[Step 4] Finished processing ${postsWithAnalysis.length} posts.`);
+
+    // 5. 댓글 정보 일괄 업데이트
+    if (postsToUpdateCommentInfo.length > 0) {
+      console.log(`[Step 5] Batch updating comment info for ${postsToUpdateCommentInfo.length} posts...`);
+      try {
+        const { error: updateError } = await supabase.from("posts").upsert(postsToUpdateCommentInfo, { onConflict: "post_id" });
+        if (updateError) throw updateError;
+        console.log("[Step 5] Comment info batch update successful.");
+      } catch (error) { console.error(`[Step 5] Batch comment info update error: ${error.message}`); }
+    } else { console.log("[Step 5] No posts require comment info update."); }
+
+    // 6. 최종 결과 반환
+    console.log(`[Step 6] Processing complete. Returning ${postsWithAnalysis.length} post results.`);
+    return new Response(JSON.stringify({ success: true, data: postsWithAnalysis }), { status: 200, headers: responseHeaders });
+
+  } catch (error) {
+    // 함수 전체의 최상위 오류 처리
+    console.error("Unhandled error in band-get-posts (No Auth):", error);
+    return new Response(JSON.stringify({ success: false, message: "밴드 게시물 처리 중 심각한 오류 발생", error: error.message }), { status: 500, headers: responseHeaders });
+  }
+});
