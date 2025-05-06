@@ -32,11 +32,11 @@ Deno.serve(async (req: Request) => {
     // URL에서 productId 추출
     const url = new URL(req.url);
     const productId = url.searchParams.get("productId");
-const userId = url.searchParams.get("userId"); // 추가
-if (!productId || !userId) {
-  // userId 검증 추가
-  return new Response(/* ... 400 ... */);
-}
+    const userId = url.searchParams.get("userId"); // 추가
+    if (!productId || !userId) {
+      // userId 검증 추가
+      return new Response(/* ... 400 ... */);
+    }
 
     // === 요청 본문에서 userId 받기 (권한 확인 제거!) ===
     // 원래는 여기서 권한 확인해야 함
@@ -52,7 +52,6 @@ if (!productId || !userId) {
       .from("products")
       .delete()
       .eq("product_id", productId);
-      .eq("user_id", userId) // 사용자 확인 제거!
 
     if (deleteError) {
       console.error(

@@ -141,7 +141,6 @@ Deno.serve(async (req: Request) => {
       updateData.canceled_at = null;
     } else if (status === "주문취소") {
       updateData.canceled_at = now;
-      updateData.cancel_reason = cancelReason || "취소됨";
       updateData.completed_at = null;
       updateData.paid_at = null;
     } else if (status === "결제완료") {

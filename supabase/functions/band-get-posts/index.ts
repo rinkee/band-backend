@@ -586,10 +586,6 @@ function detectAndMergeQuantityBasedProducts(products) {
       largestGroupSize = indices.length;
     }
   }
-  // 동일 제품이 없으면 null 반환
-  if (largestGroupSize <= 1) {
-    return null;
-  }
   // 동일 제품으로 판단된 제품들의 인덱스
   const sameProductIndices = titleGroups[largestGroupTitle];
   // 병합 대상 제품들
@@ -654,6 +650,7 @@ function detectAndMergeQuantityBasedProducts(products) {
 }
 // --- AI 관련 함수 끝 ---
 // --- Band 유틸리티 함수 ---
+// --- 👇 [수정 3] 변수 초기화 위치 및 기본값 설정 👇 ---
 function contentHasPriceIndicator(content) {
   if (!content) return false;
   // 1. 키워드 확인
@@ -1125,6 +1122,12 @@ async function savePostAndProducts(
       post_key: post.postKey,
       ai_extraction_status: aiExtractionStatus,
     };
+
+    console.log(
+      `Upserting post (postKey=${post.postKey}): `,
+      JSON.stringify(postDataToUpsert)
+    );
+
     const { data: upsertedPostData, error: postUpsertError } = await supabase
       .from("posts")
       .upsert(postDataToUpsert, {
@@ -1163,9 +1166,8 @@ async function savePostAndProducts(
             );
             continue;
           }
-
           // --- tags, features 값을 text[] 형식으로 변환 ---
-          let tagsForDb: string[];
+          let tagsForDb;
           if (Array.isArray(product.tags)) {
             // 이미 배열이면, 각 요소가 문자열인지 확인하고 문자열 배열로 만듦
             tagsForDb = product.tags.map((tag) => String(tag));
@@ -1182,8 +1184,7 @@ async function savePostAndProducts(
             // 그 외의 경우 빈 배열
             tagsForDb = [];
           }
-
-          let featuresForDb: string[]; // features도 동일하게 처리
+          let featuresForDb; // features도 동일하게 처리
           if (Array.isArray(product.features)) {
             featuresForDb = product.features.map((f) => String(f));
           } else if (
@@ -1198,7 +1199,6 @@ async function savePostAndProducts(
             featuresForDb = [];
           }
           // --------------------------------------------
-
           const productDataToUpsert = {
             product_id: productId,
             post_id: upsertedPostData.post_id,
@@ -1226,16 +1226,22 @@ async function savePostAndProducts(
             updated_at: new Date().toISOString(),
             posted_at: dateObject.toISOString(),
           };
-          const { error: productUpsertError } = await supabase
+
+          console.log(
+            `Upserting product (productId=${productDataToUpsert.product_id}): `,
+            JSON.stringify(productDataToUpsert)
+          );
+
+          const { error } = await supabase
             .from("products")
             .upsert(productDataToUpsert, {
               onConflict: "product_id",
               ignoreDuplicates: false,
             });
-          if (productUpsertError) {
+          if (error) {
             console.error(
               `Product ${productId} (Post ${post.postKey}) Supabase 저장 오류:`,
-              productUpsertError
+              error
             );
             continue;
           }
@@ -1260,7 +1266,6 @@ async function savePostAndProducts(
     return null;
   }
 }
-
 /**
  * 댓글 데이터로부터 주문 정보를 생성하는 함수 (수정됨)
  * @param supabase Supabase 클라이언트
@@ -1271,18 +1276,17 @@ async function savePostAndProducts(
  * @param bandNumber 밴드 번호
  * @param productMap 상품 정보 Map (key: itemNumber, value: productData) - <<< 추가된 파라미터
  * @returns 생성된 주문과 고객 정보
- */
-async function generateOrderData(
-  supabase: SupabaseClient, // 타입 추가
-  userId: string,
-  comments: any[],
-  postKey: string,
-  bandKey: string,
-  bandNumber: string,
-  productMap: Map<number, any> // <<< productMap 파라미터 추가
-): Promise<{ orders: any[]; customers: Map<string, any> }> {
-  const orders: any[] = [];
-  const customers = new Map<string, any>();
+ */ async function generateOrderData(
+  supabase,
+  userId,
+  comments,
+  postKey,
+  bandKey,
+  bandNumber,
+  productMap
+) {
+  const orders = [];
+  const customers = new Map();
   const processingSummary = {
     // 처리 요약 정보 (선택적)
     totalCommentsProcessed: comments.length,
@@ -1293,7 +1297,6 @@ async function generateOrderData(
     skippedMissingInfo: 0,
     errors: [],
   };
-
   if (!comments || comments.length === 0) {
     console.log(`[주문 생성] 게시물 ${postKey}에 처리할 댓글이 없습니다`);
     return {
@@ -1301,7 +1304,6 @@ async function generateOrderData(
       customers,
     };
   }
-
   // --- 1. productMap 유효성 검사 (이제 파라미터로 받음) ---
   if (!productMap || productMap.size === 0) {
     console.log(
@@ -1349,7 +1351,6 @@ async function generateOrderData(
       };
     }
     // 상품 정보를 item_number를 키로 하는 Map으로 변환 (매칭 용이성)
-
     productsData.forEach((p) => {
       if (p.item_number !== null && typeof p.item_number === "number") {
         productMap.set(p.item_number, p);
@@ -1448,23 +1449,16 @@ async function generateOrderData(
           );
           isProcessedAsOrder = true; // 일단 주문으로 처리 시도
         } else {
-          // 추출 실패 시: 내용에 숫자가 포함되어 있으면 기본 주문 생성 시도
-          if (/\d/.test(commentContent)) {
-            console.log(
-              `[주문 생성] No specific order extracted for comment ${commentKey}, but contains digits. Creating default order.`
-            );
-            representativeItem = {
-              itemNumber: 1,
-              quantity: 1,
-              isAmbiguous: false,
-            };
-            isProcessedAsOrder = true;
-          } else {
-            console.log(
-              `[주문 생성] Skipping comment ${commentKey} as no order info extracted and no digits found.`
-            );
-            continue;
-          }
+          // 추출 실패 시: 기본 주문 생성 (아이템 1, 수량 1)
+          console.log(
+            `[주문 생성] No specific order extracted for comment ${commentKey}. Creating default order (item 1, quantity 1).`
+          );
+          representativeItem = {
+            itemNumber: 1,
+            quantity: 1,
+            isAmbiguous: true,
+          };
+          isProcessedAsOrder = true;
         }
         // --- 3.5. 주문으로 처리 결정 시 ---
         if (isProcessedAsOrder && representativeItem) {
@@ -1695,7 +1689,6 @@ async function generateOrderData(
     };
   }
 }
-
 // 헬퍼 함수: DB에서 특정 게시물의 상품 정보 가져오기
 async function fetchProductMapForPost(supabase, userId, postKey) {
   console.log(`[fetchProductMap] Start for post ${postKey}`);
@@ -1706,7 +1699,6 @@ async function fetchProductMapForPost(supabase, userId, postKey) {
       .select("product_id, base_price, price_options, item_number, title") // 필요한 컬럼만 select
       .eq("user_id", userId)
       .eq("post_key", postKey);
-
     if (error) {
       console.error(
         `[fetchProductMap] DB Error for post ${postKey}: ${error.message}`
@@ -1718,7 +1710,6 @@ async function fetchProductMapForPost(supabase, userId, postKey) {
         products?.length ?? 0
       } products for post ${postKey}`
     );
-
     if (products && products.length > 0) {
       products.forEach((p) => {
         const itemNumKey =
@@ -1863,7 +1854,6 @@ Deno.serve(async (req) => {
                 : 0,
               // <<< 변경 시작: is_product 정보 저장 >>>
               is_product: dbPost.is_product,
-              // <<< 변경 끝 >>>
             });
           });
           console.log(
@@ -1877,6 +1867,8 @@ Deno.serve(async (req) => {
       }
       // 4. 게시물 순회 및 처리
       console.log(`[4단계] ${posts.length}개의 API 게시물 처리 중...`);
+      // 실제 주문 수를 확인하고 업데이트하기 위한 배열
+      const postsToUpdateCommentInfo = [];
       const processingPromises = posts.map(async (apiPost) => {
         if (
           !apiPost ||
@@ -1895,7 +1887,6 @@ Deno.serve(async (req) => {
         let processCommentsAndOrders = false;
         let postProcessingError = null; // 게시물별 오류 저장
         let aiExtractionStatus = "not_attempted"; // AI 추출 상태 초기값
-
         // console.log(
         //   `  -> 게시물 ${postKey} 처리 중 (${isNewPost ? "신규" : "기존"})`
         // );
@@ -1904,6 +1895,13 @@ Deno.serve(async (req) => {
         //     apiPost.commentCount ?? 0
         //   }개`
         // );
+        // --- 👇 [수정 1] 변수 초기화 위치 및 기본값 설정 👇 ---
+        let finalCommentCountForUpdate =
+          apiPost.commentCount ?? (dbPostData?.comment_count || 0); // 기본값: API 값 또는 DB 값
+        let latestCommentTimestampForUpdate = null; // 업데이트할 마지막 확인 시간 (초기 null)
+        // last_checked_comment_at의 경우, 성공 시에만 값을 할당하므로 초기값은 null이 더 적합합니다.
+        let successfullyProcessedNewComments = false; // 새 댓글 처리 성공 여부 플래그
+        // --- 👆 [수정 1] 변수 초기화 위치 및 기본값 설정 👆 ---
         try {
           // 개별 게시물 처리 try-catch
           if (isNewPost) {
@@ -2001,6 +1999,30 @@ Deno.serve(async (req) => {
               bandKey,
               aiExtractionStatus
             );
+            // --- 👇 [수정 2 - 신규 게시물] 업데이트 목록 추가 시점 변경 👇 ---
+            // 신규 게시물 처리가 모두 끝난 후, 계산된 값으로 업데이트 목록에 추가
+            if (savedPostId) {
+              // 게시물 저장이 성공했을 경우에만
+              const updateInfo = {
+                post_id: savedPostId,
+                comment_count: finalCommentCountForUpdate,
+              };
+              // 새 댓글 처리 성공 시 (또는 처리할 새 댓글 없었을 시) + 유효한 타임스탬프 있을 시
+              if (
+                successfullyProcessedNewComments &&
+                latestCommentTimestampForUpdate
+              ) {
+                updateInfo.last_checked_comment_at =
+                  latestCommentTimestampForUpdate;
+              }
+              postsToUpdateCommentInfo.push(updateInfo);
+              console.log(
+                `    - [신규] 댓글 정보 업데이트 예정 (post_id: ${savedPostId}, count: ${
+                  updateInfo.comment_count
+                }, checked_at: ${updateInfo.last_checked_comment_at ?? "없음"})`
+              );
+            }
+            // --- 👆 [수정 2 - 신규 게시물] 업데이트 목록 추가 시점 변경 👆 ---
             if (!savedPostId) throw new Error("Post save failed"); // 저장 실패 시 오류 발생
             // 댓글 처리 및 주문 생성 - 성공적으로 상품 추출된 경우에만
             if (
@@ -2031,13 +2053,22 @@ Deno.serve(async (req) => {
               }
               if (newComments.length > 0) {
                 try {
+                  const productMapForNewPost = new Map();
+                  if (aiAnalysisResult && aiAnalysisResult.products) {
+                    aiAnalysisResult.products.forEach((p) => {
+                      if (p.itemNumber != null && p.productId) {
+                        productMapForNewPost.set(p.itemNumber, p); // AI 결과로 productMap 구성
+                      }
+                    });
+                  }
                   const { orders, customers } = await generateOrderData(
                     supabase,
                     userId,
                     newComments,
                     postKey,
                     bandKey,
-                    bandNumber
+                    bandNumber,
+                    productMapForNewPost
                   );
                   // 주문/고객 저장
                   if (orders.length > 0) {
@@ -2190,212 +2221,88 @@ Deno.serve(async (req) => {
             if (needsCommentUpdate) {
               if (dbPostData?.is_product === false) {
                 console.log(
-                  `    - 게시물 ${postKey}: DB에 '상품 아님'으로 표시되어 댓글 처리를 건너뜁니다.`
+                  `    - 게시물 ${postKey}: '상품 아님' 표시, 댓글 처리 스킵`
                 );
               } else {
-                // 상품 게시물인 경우 댓글 처리 진행
-                console.log(
-                  `  댓글 업데이트 필요: Post ${postKey} (DB: ${
-                    dbPostData?.comment_count ?? 0
-                  }, API: ${apiPost.commentCount ?? 0})`
-                );
-                let latestTimestamp: number | null = null;
-                let commentsToProcess: any[] = [];
-                let postProcessingError: string | null = null; // 오류 추적 변수 추가
-                let postProcessingSuccessful = false;
-
                 try {
-                  const { comments: fullComments, latestTimestamp: ts } =
+                  // 1) 댓글 전부 fetch
+                  const { comments: fullComments, latestTimestamp } =
                     await fetchBandComments(userId, postKey, bandKey, supabase);
-                  latestTimestamp = ts;
-                  const lastCheckedTs = dbPostData?.last_checked_comment_at
-                    ? new Date(dbPostData.last_checked_comment_at).getTime()
-                    : 0;
-                  console.log(
-                    `    - 마지막 확인 시간: ${
-                      lastCheckedTs
-                        ? new Date(lastCheckedTs).toISOString()
-                        : "없음"
-                    }`
-                  );
 
-                  commentsToProcess = fullComments
-                    .filter((c) => {
-                      const commentTimestampMs = c.createdAt;
-                      if (
-                        typeof commentTimestampMs !== "number" ||
-                        isNaN(commentTimestampMs)
-                      ) {
-                        console.warn(
-                          `    - 댓글 ID ${c.commentKey}: Invalid or missing timestamp (${commentTimestampMs}). Skipping.`
-                        );
-                        return false;
-                      }
-                      return commentTimestampMs > lastCheckedTs;
-                    })
+                  // 2) 마지막 체크 이후 댓글만 필터
+                  const lastCheckedTs = dbPostData.last_checked_comment_at || 0;
+                  const newComments = fullComments
+                    .filter((c) => c.createdAt > lastCheckedTs)
                     .map((c) => ({
                       ...c,
                       post_key: postKey,
                       band_key: bandKey,
-                    })); // 필요한 정보만 매핑
+                    }));
 
-                  if (commentsToProcess.length > 0) {
-                    console.log(
-                      `    새로운 댓글 ${commentsToProcess.length}개 발견하여 주문 처리 시작 (Post ${postKey})`
+                  // 3) 상품 정보 Map 정의
+                  const productMap = await fetchProductMapForPost(
+                    supabase,
+                    userId,
+                    postKey
+                  );
+
+                  // 4) 신규 댓글이 있으면 주문/고객 생성
+                  if (newComments.length > 0) {
+                    const { orders, customers } = await generateOrderData(
+                      supabase,
+                      userId,
+                      newComments,
+                      postKey,
+                      bandKey,
+                      bandNumber,
+                      productMap
                     );
-                    try {
-                      // DB에서 상품 정보 조회
-                      let productMap = new Map();
-                      try {
-                        console.log(
-                          `      - 주문 처리를 위해 게시물 ${postKey}의 상품 정보를 DB에서 조회합니다...`
-                        );
-                        productMap = await fetchProductMapForPost(
-                          supabase,
-                          userId,
-                          postKey
-                        );
-                        console.log(
-                          `[Existing Post ${postKey}] Fetched Product Map from DB:`,
-                          productMap
-                        ); // 내용 확인
-                      } catch (fetchError) {
-                        console.error(
-                          `      - 게시물 ${postKey} 상품 정보 DB 조회 중 오류: ${fetchError.message}`
-                        );
-                        // 상품 조회 오류 발생 시에도 계속 진행할지 결정 (여기서는 일단 진행)
-                      }
-
-                      if (productMap.size > 0) {
-                        // --- 👇 generateOrderData 호출 (인자 확인 및 전달) 👇 ---
-                        const { orders, customers } = await generateOrderData(
-                          supabase,
-                          userId,
-                          commentsToProcess,
-                          postKey,
-                          bandKey, // 올바른 값 전달 확인
-                          bandNumber, // 올바른 값 전달 확인
-                          productMap // productMap 전달 (generateOrderData 수정 필요 시)
-                        );
-
-                        // --- 5. 생성된 주문/고객 정보 저장 ---
-                        let orderSaveSuccess = true;
-                        let customerSaveSuccess = true;
-
-                        // --- 👇👇👇 주문/고객 저장 로직 추가! 👇👇👇 ---
-                        if (orders.length > 0) {
-                          console.log(
-                            `[Existing Post ${postKey}] Saving ${orders.length} new orders...`
-                          );
-                          const { error: orderError } = await supabase
-                            .from("orders")
-                            .upsert(orders, { onConflict: "order_id" });
-                          if (orderError) {
-                            console.error(
-                              `    Order save error (existing post ${postKey}): ${orderError.message}`
-                            );
-                            orderSaveSuccess = false; // 저장 실패 플래그
-                          } else {
-                            console.log(`    Saved ${orders.length} orders.`);
-                          }
-                        }
-                        const customersArray = Array.from(customers.values());
-                        if (customersArray.length > 0) {
-                          console.log(
-                            `[Existing Post ${postKey}] Saving ${customersArray.length} new/updated customers...`
-                          );
-                          const { error: customerError } = await supabase
-                            .from("customers")
-                            .upsert(customersArray, {
-                              onConflict: "customer_id",
-                            });
-                          if (customerError) {
-                            console.error(
-                              `    Customer save error (existing post ${postKey}): ${customerError.message}`
-                            );
-                            customerSaveSuccess = false; // 저장 실패 플래그
-                          } else {
-                            console.log(
-                              `    Saved ${customersArray.length} customers.`
-                            );
-                          }
-                        }
-                        // --- 👆👆👆 주문/고객 저장 로직 추가 완료 👆👆👆 ---
-
-                        // --- 6. 주문/고객 저장 성공 시에만 성공 플래그 설정 ---
-                        if (orderSaveSuccess && customerSaveSuccess) {
-                          postProcessingSuccessful = true;
-                        } else {
-                          // 주문 또는 고객 저장 실패 시 에러 발생시켜 catch 블록으로 이동 (선택적)
-                          throw new Error(
-                            "Failed to save generated orders or customers."
-                          );
-                        }
-                      } else {
-                        console.log(
-                          `      - DB에서 상품 정보를 찾을 수 없어 신규 댓글 주문 처리를 건너<0xEB><0x9B><0x84>니다.`
-                        );
-                      }
-                    } catch (genError) {
-                      console.error(
-                        `    - 새 댓글 주문 생성 오류 (Post ${postKey}): ${genError.message}`
-                      );
-                      postProcessingError = `주문 생성 오류: ${genError.message}`; // 오류 기록
+                    // 주문 저장
+                    if (orders.length) {
+                      const { error: oErr } = await supabase
+                        .from("orders")
+                        .upsert(orders, { onConflict: "order_id" });
+                      if (oErr) console.error("Order save error:", oErr);
                     }
+                    // 고객 저장
+                    const custArr = Array.from(customers.values());
+                    if (custArr.length) {
+                      const { error: cErr } = await supabase
+                        .from("customers")
+                        .upsert(custArr, { onConflict: "customer_id" });
+                      if (cErr) console.error("Customer save error:", cErr);
+                    }
+
+                    console.log(
+                      `    - ${newComments.length}개의 신규 댓글 주문/고객 처리 완료 (Post ${postKey})`
+                    );
                   } else {
                     console.log(
-                      `    - 게시물 ${postKey}: 댓글 수는 변경되었으나 DB 확인 시간 이후의 새로운 댓글은 없음.`
+                      `    - 게시물 ${postKey}: 마지막 체크 이후 신규 댓글 없음`
                     );
                   }
 
-                  if (postProcessingSuccessful) {
-                    const newLastChecked = latestTimestamp
-                      ? new Date(latestTimestamp).toISOString()
-                      : new Date().toISOString();
-                    postsToUpdateCommentInfo.push({
-                      post_id: savedPostId,
-                      comment_count: apiPost.commentCount ?? 0,
-                      last_checked_comment_at: newLastChecked,
-                    });
-                    console.log(
-                      `    - 댓글 정보 업데이트 예정 (count: ${
-                        apiPost.commentCount ?? 0
-                      }, checked_at: ${newLastChecked})`
-                    );
-                  } else {
-                    console.log(
-                      `    - 게시물 ${postKey}의 신규 댓글 처리 실패. posts 테이블 업데이트 건너<0xEB><0x9B><0x84>.`
-                    );
-                  }
-                } catch (commentError) {
-                  // 댓글 가져오기/처리 중 오류
-                  console.error(
-                    `  Error fetching/processing comments for post ${postKey}: ${commentError.message}`
-                  );
-                  postProcessingError = `댓글 처리 오류: ${commentError.message}`;
-                  // 오류 발생 시에도 댓글 수는 업데이트 시도
-                  // postsToUpdateCommentInfo.push({
-                  //   post_id: savedPostId,
-                  //   comment_count: apiPost.commentCount ?? 0,
-                  //   // 오류 시에는 last_checked_comment_at는 업데이트하지 않거나, 필요하다면 현재 시간으로 설정
-                  //   // last_checked_comment_at: new Date().toISOString()
-                  // });
+                  // 4) 댓글 수 + last_checked_comment_at 무조건 업데이트
+                  const newCount = fullComments.length;
+                  const newChecked = latestTimestamp
+                    ? new Date(latestTimestamp).toISOString()
+                    : new Date().toISOString();
+                  postsToUpdateCommentInfo.push({
+                    post_id: savedPostId,
+                    comment_count: newCount,
+                    last_checked_comment_at: newChecked,
+                  });
                   console.log(
-                    `    - 댓글 처리 오류 발생. 댓글 수 업데이트만 예정 (count: ${
-                      apiPost.commentCount ?? 0
-                    })`
+                    `    - [업데이트] post_id=${savedPostId} 댓글 수=${newCount}, checked_at=${newChecked}`
                   );
+                } catch (err) {
+                  console.error(
+                    `    - 댓글 처리 오류 (post ${postKey}): ${err.message}. 재시도 예정.`
+                  );
+                  // 실패 시 업데이트 건너뛰어 재시도 보장
                 }
-              } // end of else (is_product check)
-            } else if (!isNewPost) {
-              // 'else if' 추가: 기존 게시물인데 업데이트 필요 없을 때 로그
-              // 기존 게시물이지만 댓글 업데이트 필요 없는 경우 로그
-              // console.log(
-              //   `  - 게시물 ${postKey}: 댓글 업데이트 필요 없음 (DB: ${
-              //     dbPostData?.comment_count ?? 0
-              //   }, API: ${apiPost.commentCount ?? 0})`
-              // );
-            } // end of if (needsCommentUpdate)
+              }
+            }
           }
           // 성공적으로 처리된 게시물 정보 반환
           return {
@@ -2431,32 +2338,46 @@ Deno.serve(async (req) => {
           `[5단계] ${postsToUpdateCommentInfo.length}개의 게시물에 대한 댓글 정보를 일괄 업데이트하는 중...`
         );
         try {
+          // --- 👇 [수정 5] DB 업데이트 로직 (upsert -> update) 👇 ---
           const updatePromises = postsToUpdateCommentInfo.map(
             async (updateInfo) => {
-              // 업데이트할 필드만 포함하는 객체 생성
-              const fieldsToUpdate: {
-                comment_count: number;
-                last_checked_comment_at?: string;
-              } = {
-                post_id: updateInfo.post_id,
+              // 업데이트할 필드 객체 동적 생성
+              const fieldsToUpdate = {
                 comment_count: updateInfo.comment_count,
-                last_checked_comment_at: updateInfo.last_checked_comment_at,
               };
+              // last_checked_comment_at 필드가 있을 때만 추가
+              if (updateInfo.last_checked_comment_at) {
+                fieldsToUpdate.last_checked_comment_at =
+                  updateInfo.last_checked_comment_at;
+              }
+              // update().eq() 사용
               const { error } = await supabase
                 .from("posts")
-                .upsert(fieldsToUpdate, {
-                  onConflict: "post_id",
-                });
-              if (error) throw error;
+                .update(fieldsToUpdate)
+                .eq("post_id", updateInfo.post_id); // post_id로 특정 레코드 지정
+              if (error) {
+                console.error(
+                  `Post ${updateInfo.post_id} 댓글 정보 업데이트 오류:`,
+                  error
+                );
+              } else {
+                console.log(
+                  `  - Post ${updateInfo.post_id} 업데이트 성공:`,
+                  fieldsToUpdate
+                );
+              }
             }
           );
           await Promise.all(updatePromises);
-          console.log("[5단계] 댓글 정보 일괄 업데이트가 성공했습니다.");
-        } catch (error) {
+          console.log("[5단계] 댓글 정보 일괄 업데이트 시도 완료.");
+          // --- 👆 [수정 5] DB 업데이트 로직 (upsert -> update) 👆 ---
+        } catch (updateError) {
           console.error(
-            `[5단계] 댓글 정보 일괄 업데이트 오류: ${error.message}`
+            `[5단계] 댓글 정보 일괄 업데이트 중 예외 발생: ${updateError.message}`
           );
         }
+      } else {
+        console.log("[5단계] 댓글 정보 업데이트가 필요한 게시물이 없습니다.");
       }
     } else {
       console.log("[5단계] 댓글 정보 업데이트가 필요한 게시물이 없습니다.");
