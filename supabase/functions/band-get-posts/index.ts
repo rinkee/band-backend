@@ -9,7 +9,7 @@ async function extractProductInfoAI(content, postTime = null, postKey) {
   // ⚠️ 실제 환경 변수 이름으로 변경하세요 (예: GEMINI_API_KEY)
   const aiApiKey = Deno.env.get("GOOGLE_API_KEY");
   // ⚠️ Gemini API 엔드포인트 확인 필요 (예시)
-  const aiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${aiApiKey}`; // 모델명 확인 및 엔드포인트 확인
+  const aiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${aiApiKey}`; // 모델명 확인 및 엔드포인트 확인
   const parsedPostTime = postTime
     ? safeParseDate(postTime).toLocaleDateString("ko-KR", {
         month: "long",
@@ -43,7 +43,7 @@ basePrice로 설정된 가격 정보(가장 기본 단위 옵션)도 priceOption
 텍스트에 유효한 판매 가격이 단 하나만 명시된 경우, 해당 가격 정보를 포함하는 옵션 객체 하나만 이 배열에 넣으세요. (예: [{ "quantity": 1, "price": 8900, "description": "1봉지(6알)" }])
 🔥중요: 위 1번 규칙에 따라 '원가', '정상가', '참고용 가격'으로 판단된 금액은 이 배열에 절대 포함시키지 마십시오.
 단일 상품 vs. 여러 상품:
-🔥게시물에 명확히 다른 상품(예: 사과, 배)이나 동일 품목이라도 종류/색상(빨간 파프리카, 노란 파프리카)이 다른 상품이 여러 개 있으면 multipleProducts를 true로 설정하고, 각 상품 정보를 products 배열에 담으세요. 특히 '1번', '2번' 또는 '1️⃣', '2️⃣' 와 같이 번호가 매겨진 목록 형태는 여러 상품일 가능성이 매우 높으므로 주의 깊게 분석하세요.
+🔥게시물에 명확히 다른 상품(예: 사과, 배)이나 동일 품목이라도 종류/색상(빨간 파프리카, 노란 파프리카)이 다른 상품이 여러 개 있으면 반드시 multipleProducts를 true로 설정하고, 각 상품 정보를 products 배열에 담으세요. 특히 '1번', '2번' 또는 '1️⃣', '2️⃣', '3️⃣' 와 같이 번호가 매겨진 목록 형태나 서로 다른 상품명이 줄바꿈으로 구분된 경우는 무조건 여러 상품으로 처리하세요.
 동일 상품에 대한 수량/단위별 가격 차이는 여러 상품이 아니라, 단일 상품의 priceOptions로 처리해야 합니다. 이 경우 multipleProducts는 false입니다.
 기타 필드:
 title: 상품의 핵심 명칭만 간결하게 추출합니다. (수량/단위 정보는 반드시 제외)
@@ -216,30 +216,25 @@ ${content}
         Array.isArray(parsedResult.products) &&
         parsedResult.products.length > 0
       ) {
-        // 여러 상품 처리 (병합 로직 포함)
-        const mergedProduct = detectAndMergeQuantityBasedProducts(
-          parsedResult.products
+        // 숫자 이모지나 명확한 번호가 있는지 확인 (이모지 1️⃣, 2️⃣, 3️⃣ 등이 있을 경우)
+        const hasNumberEmojis = parsedResult.products.some(p => 
+          p.title && (p.title.includes('1️⃣') || p.title.includes('2️⃣') || p.title.includes('3️⃣'))
         );
-        if (mergedProduct) {
-          const processedMerged = processProduct(mergedProduct, postTime);
-          finalResult = {
-            multipleProducts: false,
-            products: [processedMerged],
-          };
-        } else if (parsedResult.products.length === 1) {
-          // multiple:true 인데 상품 1개
-          const processedSingle = processProduct(
-            {
-              ...parsedResult.products[0],
-            },
-            postTime
-          );
-          finalResult = {
-            multipleProducts: false,
-            products: [processedSingle],
-          };
-        } else {
-          // 실제 여러 상품
+        
+        // 상품 이름이 모두 다른지 확인
+        const productNames = parsedResult.products.map(p => {
+          // 상품 이름에서 날짜와 숫자 제거
+          const title = p.title || "";
+          return title.replace(/\[\d+월\d+일\]|\[\d+\/\d+\]/, "").trim().replace(/^\d+[.:\s]/, "");
+        });
+        
+        // 중복 제거 후 이름이 다른 경우 = 실제 여러 상품
+        const uniqueNames = new Set(productNames);
+        const hasDifferentNames = uniqueNames.size > 1;
+        
+        // 실제로 다른 제품이 있거나, 숫자 이모지가 포함된 경우 - 여러 상품으로 처리
+        if (hasDifferentNames || hasNumberEmojis || parsedResult.products.length >= 3) {
+          // 실제 여러 상품으로 처리
           const processedProducts = parsedResult.products.map((p) =>
             processProduct(
               {
@@ -252,6 +247,45 @@ ${content}
             multipleProducts: true,
             products: processedProducts,
           };
+        } else {
+          // 병합이 필요한 경우 (유사한 상품들일 때만)
+          const mergedProduct = detectAndMergeQuantityBasedProducts(
+            parsedResult.products
+          );
+          
+          if (mergedProduct) {
+            const processedMerged = processProduct(mergedProduct, postTime);
+            finalResult = {
+              multipleProducts: false,
+              products: [processedMerged],
+            };
+          } else if (parsedResult.products.length === 1) {
+            // multiple:true 인데 상품 1개
+            const processedSingle = processProduct(
+              {
+                ...parsedResult.products[0],
+              },
+              postTime
+            );
+            finalResult = {
+              multipleProducts: false,
+              products: [processedSingle],
+            };
+          } else {
+            // 병합 실패했으나 여러 상품으로 판단됨
+            const processedProducts = parsedResult.products.map((p) =>
+              processProduct(
+                {
+                  ...p,
+                },
+                postTime
+              )
+            );
+            finalResult = {
+              multipleProducts: true,
+              products: processedProducts,
+            };
+          }
         }
       } else if (
         parsedResult.multipleProducts === false &&
@@ -1204,6 +1238,7 @@ async function savePostAndProducts(
       post_key: post.postKey,
       ai_extraction_status: aiExtractionStatus,
       products_data: aiAnalysisResult ? JSON.stringify(aiAnalysisResult) : null,
+      multiple_products: aiAnalysisResult?.multipleProducts || false, // 이 줄을 추가
     };
 
     console.log(
@@ -1237,8 +1272,7 @@ async function savePostAndProducts(
     if (
       upsertedPostData.post_id &&
       isProductPost &&
-      aiAnalysisResult?.products &&
-      aiExtractionStatus === "success"
+      aiAnalysisResult?.products
     ) {
       for (const product of aiAnalysisResult.products) {
         try {
@@ -1308,6 +1342,7 @@ async function savePostAndProducts(
             barcode: "",
             updated_at: new Date().toISOString(),
             posted_at: dateObject.toISOString(),
+            products_data: JSON.stringify(aiAnalysisResult),
           };
 
           console.log(
