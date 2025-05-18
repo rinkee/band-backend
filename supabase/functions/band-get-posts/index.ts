@@ -65,7 +65,7 @@ status: 판매 상태 (예: "판매중", "품절", "예약중", "마감" 등). �
 tags: 상품 관련 키워드 배열 (예: ["#특가", "#국내산", "#당일배송"])
 features: 상품의 주요 특징 배열 (예: ["유기농 인증", "무료 배송"])
 pickupInfo: 픽업/배송 관련 안내 문구 (예: "내일 오후 2시 일괄 배송")
-pickupDate: "내일", "5월 10일", "다음주 화요일", "지금부터" ,"2시 이후" ,"3시 부터" 등의 정보를 게시물 작성 시간 기준으로 해석하여 YYYY-MM-DD 또는 YYYY-MM-DDTHH:mm:ss.sssZ 형식으로 설정. "지금부터"는 게시물 작성 시간(또는 현재 시간)으로 해석 가능.
+pickupDate: "내일", "5월 10일", "다음주 화요일", "지금부터" ,"2시 이후" ,"3시 부터" 등의 정보를 게시물 작성 시간${postTime} 기준으로 해석하여 YYYY-MM-DD 또는 YYYY-MM-DDTHH:mm:ss.sssZ 형식으로 설정. "지금부터"는 게시물 작성 시간(또는 현재 시간)으로 해석 가능. 픽업일자는 무조건 게시물 작성 시간보다 이전일 수 없습니다.
 pickupType: 픽업/배송 방식 (예: "도착", "수령", "픽업", "배송", "전달")
 🔥stockQuantity: 재고 수량을 나타내는 숫자입니다. "5개 남음", "3세트 한정" 등 명확한 숫자가 있으면 해당 숫자를 추출하세요. "1통 여유", "1개 가능" 등 특정 단위와 함께 남은 수량이 언급되면 해당 숫자(여기서는 1)를 추출합니다. "한정 수량", "재고 문의", "여유분" 등 구체적인 숫자가 없거나 불명확하면 null을 반환하세요.
 ※ 출력 형식:
@@ -650,39 +650,121 @@ function detectAndMergeQuantityBasedProducts(products) {
 }
 // --- AI 관련 함수 끝 ---
 // --- Band 유틸리티 함수 ---
-// --- 👇 [수정 3] 변수 초기화 위치 및 기본값 설정 👇 ---
+
 function contentHasPriceIndicator(content) {
   if (!content) return false;
-  // 1. 키워드 확인
-  const keywordRegex = /수령|픽업|도착|예약|주문|특가|정상가|할인가|가격|원|₩/;
-  const hasKeyword = keywordRegex.test(content);
-  // logger.debug(`[Price Indicator Step 1] hasKeyword: ${hasKeyword} for content starting with: ${content.substring(0, 30)}`);
-  if (!hasKeyword) {
-    return false;
-  }
-  // 2. 세 자리 이상의 숫자 확인 (점, 쉼표, 아무 구분자 없어도 됨)
-  // 예: 100, 1000, 10000, 000, 29.000, 27,900 등 모두 포함
-  const numberRegex = /\d{3,}/g; // 세 자리 이상 숫자
-  const numbersFound = content.match(numberRegex);
-  // logger.debug(`[Price Indicator Step 2] numbersFound: ${JSON.stringify(numbersFound)} for content starting with: ${content.substring(0, 30)}`);
-  if (!numbersFound) {
-    return false;
-  }
-  // 3. 찾은 숫자 중 100 이상인 숫자가 있는지 확인
-  let foundPriceLikeNumber = false;
-  for (const numStr of numbersFound) {
-    const num = parseInt(numStr.replace(/,/g, ""), 10);
-    const isPriceLike = !isNaN(num) && num >= 100;
-    // logger.debug(`[Price Indicator Step 3] Checking number '${numStr}' -> parsed: ${num}, isPriceLike: ${isPriceLike}`);
-    if (isPriceLike) {
-      foundPriceLikeNumber = true;
+
+  const lowerContent = content.toLowerCase();
+
+  // 1. 판매 관련 핵심 키워드 확인 (기존과 동일하게 유지 또는 필요시 확장)
+  const salesKeywords = [
+    "주문",
+    "예약",
+    "판매",
+    "가격",
+    "공구",
+    "특가",
+    "할인", // '할인가', '정상가' 등도 포함 가능
+    "만원",
+    "천원",
+    "원",
+    "₩", // 통화 관련 키워드
+    // 필요에 따라 추가적인 판매 유도 키워드 (예: "팝니다", "드려요" 등)
+  ];
+  let hasSalesKeyword = false;
+  for (const keyword of salesKeywords) {
+    if (lowerContent.includes(keyword.toLowerCase())) {
+      hasSalesKeyword = true;
       break;
     }
   }
-  const hasPriceLikeNumber = foundPriceLikeNumber;
-  // logger.debug(`[Price Indicator Step 4] Final result: hasKeyword=${hasKeyword}, hasPriceLikeNumber=${hasPriceLikeNumber}`);
-  return hasKeyword && hasPriceLikeNumber;
+
+  if (!hasSalesKeyword) {
+    // console.log("[Debug] 판매 관련 키워드 없음");
+    return false;
+  }
+
+  // 2. 가격으로 해석될 수 있는 숫자 패턴 찾기 및 검증
+  //    패턴: (숫자)[구분자](숫자3자리)[구분자](숫자3자리)... 또는 (숫자 연속)
+  //    구분자: 쉼표(,), 점(.), 작은따옴표(')
+  //    최소 100 이상의 값을 찾아야 함. "000"으로 끝나는 것도 고려 (예: "10.000")
+
+  // 정규식 설명:
+  // \b: 단어 경계 (숫자 앞뒤로 다른 문자가 붙어있는 것을 방지. 예: "상품10000개")
+  // (\d{1,3}): 1~3자리 숫자로 시작 (첫 번째 숫자 그룹)
+  // (?:['.,]\d{3})*: 선택적 그룹 (?: ... )
+  //   ['.,]: 쉼표, 점, 작은따옴표 중 하나
+  //   \d{3}: 정확히 3자리 숫자
+  //   이 그룹이 0번 이상 반복 (*). 즉, "1,000", "1.000.000", "1'000" 등을 커버
+  // |\d{3,}: 또는 (\b 없이) 세 자리 이상 연속된 숫자 (예: "10000", "500") - "000"도 여기에 해당
+  const priceNumberRegex = /\b(?:\d{1,3}(?:['.,]\d{3})*|\d{3,})\b|\d{3,}/g;
+  // 단어 경계(\b)를 사용하면 "10000원"의 "10000"은 잘 잡지만, "10.000원"의 "10.000"은 ".000" 부분 때문에 \b가 애매해질 수 있음.
+  // 좀 더 관대한 정규식: 구분자 포함하여 숫자로 보이는 부분을 모두 추출
+  const flexiblePriceNumberRegex = /(\d[\d',.]*\d|\d{3,})/g;
+
+  const potentialPriceStrings = content.match(flexiblePriceNumberRegex);
+  // console.log("[Debug] 찾은 숫자 문자열 후보:", potentialPriceStrings);
+
+  if (!potentialPriceStrings) {
+    // console.log("[Debug] 가격 숫자 후보 없음");
+    return false;
+  }
+
+  let foundSignificantPrice = false;
+  for (const priceStr of potentialPriceStrings) {
+    // 숫자 외 문자(쉼표, 점, 작은따옴표 등) 모두 제거
+    const cleanedNumStr = priceStr.replace(/['.,]/g, "");
+
+    // "000"으로만 구성된 경우 (예: ".000" 에서 "000"만 남은 경우)는 유효한 가격으로 보지 않음.
+    // 하지만 "10000" 에서 뒤의 "000"을 의미하는게 아니므로, 전체 숫자를 봐야함.
+    // cleanedNumStr 자체가 유효한 숫자인지, 그리고 100 이상인지 확인
+    if (/^\d+$/.test(cleanedNumStr)) {
+      // 순수 숫자로만 이루어져 있는지 확인
+      const num = parseInt(cleanedNumStr, 10);
+      // console.log(`[Debug] 문자열: "${priceStr}" -> 정리: "${cleanedNumStr}" -> 숫자: ${num}`);
+      if (!isNaN(num) && num >= 100) {
+        // 추가 조건: 해당 숫자가 "원" 또는 "₩"과 가깝게 위치하거나,
+        // 특정 가격 패턴 (예: "10,000원", "가격: 15000")에 부합하는지 확인하면 더 정확해짐.
+        // 여기서는 일단 100 이상이고 판매 키워드가 있으면 상품으로 간주 (단순화 유지)
+
+        // 해당 숫자 주변의 텍스트를 조금 더 확인하여 문맥을 파악 (선택적 강화)
+        // 예: "10,000원" -> "원"이 바로 뒤에 오는지
+        // 예: "가격 10000" -> "가격"이 근처에 있는지
+        // 현재는 hasSalesKeyword 에서 "원", "₩", "가격"을 이미 체크했으므로,
+        // 100 이상의 숫자가 발견되면 가격일 가능성이 높다고 판단.
+
+        foundSignificantPrice = true;
+        break;
+      }
+    }
+  }
+
+  if (!foundSignificantPrice) {
+    console.log("[Debug] 100 이상의 유의미한 가격 숫자 없음");
+    return false;
+  }
+
+  // (선택적) 도착/수령 안내 게시물 패턴 제외 로직
+  // 이전에 논의된 isLikelyArrivalNotice와 유사한 로직을 여기에 추가하거나,
+  // 또는 별도의 함수로 호출하여 그 결과를 반영할 수 있습니다.
+  // 예시: (매우 간단한 버전)
+  const arrivalListPattern =
+    /^\s*(?:\d+\.|[①-⑩])\s*.*?[\-👉:]*\s*(?:도착|수령|입고|완료)\s*$/gm;
+  const arrivalMatches = content.match(arrivalListPattern);
+  // 만약 도착 목록 패턴이 2개 이상이고, 명확한 'xxxx원' 또는 'xx만원' 같은 직접적인 가격표현이 없다면 도착안내로 간주
+  if (
+    arrivalMatches &&
+    arrivalMatches.length >= 2 &&
+    !lowerContent.match(/\d{1,3}(?:,\d{3})*\s*원|\d+\s*만원|\d+\s*₩/)
+  ) {
+    console.log("[Debug] 도착 안내 목록 패턴 발견, 상품 아님으로 판단");
+    return false;
+  }
+
+  console.log("[Debug] 최종 판단: 상품 게시물");
+  return true; // 판매 키워드 O, 100 이상의 가격 숫자 O, (선택적으로) 도착 안내 패턴 아님
 }
+
 function extractNumberedProducts(content) {
   if (!content) return [];
   // 줄별로 분리
@@ -1121,6 +1203,7 @@ async function savePostAndProducts(
       updated_at: new Date().toISOString(),
       post_key: post.postKey,
       ai_extraction_status: aiExtractionStatus,
+      products_data: aiAnalysisResult ? JSON.stringify(aiAnalysisResult) : null,
     };
 
     console.log(
@@ -1890,11 +1973,11 @@ Deno.serve(async (req) => {
         // console.log(
         //   `  -> 게시물 ${postKey} 처리 중 (${isNewPost ? "신규" : "기존"})`
         // );
-        // console.log(
-        //   `  -> 기존 댓글 ${dbPostData?.comment_count ?? 0}개 api 댓글 ${
-        //     apiPost.commentCount ?? 0
-        //   }개`
-        // );
+        console.log(
+          `  -> 기존 댓글 ${dbPostData?.comment_count ?? 0}개 api 댓글 ${
+            apiPost.commentCount ?? 0
+          }개`
+        );
         // --- 👇 [수정 1] 변수 초기화 위치 및 기본값 설정 👇 ---
         let finalCommentCountForUpdate =
           apiPost.commentCount ?? (dbPostData?.comment_count || 0); // 기본값: API 값 또는 DB 값
@@ -2076,6 +2159,7 @@ Deno.serve(async (req) => {
                       .from("orders")
                       .upsert(orders, {
                         onConflict: "order_id",
+                        ignoreDuplicates: true,
                       });
                     if (error)
                       console.error(
@@ -2261,7 +2345,10 @@ Deno.serve(async (req) => {
                     if (orders.length) {
                       const { error: oErr } = await supabase
                         .from("orders")
-                        .upsert(orders, { onConflict: "order_id" });
+                        .upsert(orders, {
+                          onConflict: "order_id",
+                          ignoreDuplicates: true,
+                        });
                       if (oErr) console.error("Order save error:", oErr);
                     }
                     // 고객 저장

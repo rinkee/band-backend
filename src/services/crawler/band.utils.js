@@ -778,6 +778,119 @@ function contentHasPriceIndicator(content) {
   return hasKeyword && hasPriceLikeNumber;
 }
 
+function contentHasPriceIndicator2(content) {
+  if (!content) return false;
+
+  const lowerContent = content.toLowerCase();
+
+  // 1. 판매 관련 핵심 키워드 확인 (기존과 동일하게 유지 또는 필요시 확장)
+  const salesKeywords = [
+    "주문",
+    "예약",
+    "판매",
+    "가격",
+    "공구",
+    "특가",
+    "할인", // '할인가', '정상가' 등도 포함 가능
+    "만원",
+    "천원",
+    "원",
+    "₩", // 통화 관련 키워드
+    // 필요에 따라 추가적인 판매 유도 키워드 (예: "팝니다", "드려요" 등)
+  ];
+  let hasSalesKeyword = false;
+  for (const keyword of salesKeywords) {
+    if (lowerContent.includes(keyword.toLowerCase())) {
+      hasSalesKeyword = true;
+      break;
+    }
+  }
+
+  if (!hasSalesKeyword) {
+    // console.log("[Debug] 판매 관련 키워드 없음");
+    return false;
+  }
+
+  // 2. 가격으로 해석될 수 있는 숫자 패턴 찾기 및 검증
+  //    패턴: (숫자)[구분자](숫자3자리)[구분자](숫자3자리)... 또는 (숫자 연속)
+  //    구분자: 쉼표(,), 점(.), 작은따옴표(')
+  //    최소 100 이상의 값을 찾아야 함. "000"으로 끝나는 것도 고려 (예: "10.000")
+
+  // 정규식 설명:
+  // \b: 단어 경계 (숫자 앞뒤로 다른 문자가 붙어있는 것을 방지. 예: "상품10000개")
+  // (\d{1,3}): 1~3자리 숫자로 시작 (첫 번째 숫자 그룹)
+  // (?:['.,]\d{3})*: 선택적 그룹 (?: ... )
+  //   ['.,]: 쉼표, 점, 작은따옴표 중 하나
+  //   \d{3}: 정확히 3자리 숫자
+  //   이 그룹이 0번 이상 반복 (*). 즉, "1,000", "1.000.000", "1'000" 등을 커버
+  // |\d{3,}: 또는 (\b 없이) 세 자리 이상 연속된 숫자 (예: "10000", "500") - "000"도 여기에 해당
+  const priceNumberRegex = /\b(?:\d{1,3}(?:['.,]\d{3})*|\d{3,})\b|\d{3,}/g;
+  // 단어 경계(\b)를 사용하면 "10000원"의 "10000"은 잘 잡지만, "10.000원"의 "10.000"은 ".000" 부분 때문에 \b가 애매해질 수 있음.
+  // 좀 더 관대한 정규식: 구분자 포함하여 숫자로 보이는 부분을 모두 추출
+  const flexiblePriceNumberRegex = /(\d[\d',.]*\d|\d{3,})/g;
+
+  const potentialPriceStrings = content.match(flexiblePriceNumberRegex);
+  // console.log("[Debug] 찾은 숫자 문자열 후보:", potentialPriceStrings);
+
+  if (!potentialPriceStrings) {
+    // console.log("[Debug] 가격 숫자 후보 없음");
+    return false;
+  }
+
+  let foundSignificantPrice = false;
+  for (const priceStr of potentialPriceStrings) {
+    // 숫자 외 문자(쉼표, 점, 작은따옴표 등) 모두 제거
+    const cleanedNumStr = priceStr.replace(/['.,]/g, "");
+
+    // "000"으로만 구성된 경우 (예: ".000" 에서 "000"만 남은 경우)는 유효한 가격으로 보지 않음.
+    // 하지만 "10000" 에서 뒤의 "000"을 의미하는게 아니므로, 전체 숫자를 봐야함.
+    // cleanedNumStr 자체가 유효한 숫자인지, 그리고 100 이상인지 확인
+    if (/^\d+$/.test(cleanedNumStr)) {
+      // 순수 숫자로만 이루어져 있는지 확인
+      const num = parseInt(cleanedNumStr, 10);
+      // console.log(`[Debug] 문자열: "${priceStr}" -> 정리: "${cleanedNumStr}" -> 숫자: ${num}`);
+      if (!isNaN(num) && num >= 100) {
+        // 추가 조건: 해당 숫자가 "원" 또는 "₩"과 가깝게 위치하거나,
+        // 특정 가격 패턴 (예: "10,000원", "가격: 15000")에 부합하는지 확인하면 더 정확해짐.
+        // 여기서는 일단 100 이상이고 판매 키워드가 있으면 상품으로 간주 (단순화 유지)
+
+        // 해당 숫자 주변의 텍스트를 조금 더 확인하여 문맥을 파악 (선택적 강화)
+        // 예: "10,000원" -> "원"이 바로 뒤에 오는지
+        // 예: "가격 10000" -> "가격"이 근처에 있는지
+        // 현재는 hasSalesKeyword 에서 "원", "₩", "가격"을 이미 체크했으므로,
+        // 100 이상의 숫자가 발견되면 가격일 가능성이 높다고 판단.
+
+        foundSignificantPrice = true;
+        break;
+      }
+    }
+  }
+
+  if (!foundSignificantPrice) {
+    // console.log("[Debug] 100 이상의 유의미한 가격 숫자 없음");
+    return false;
+  }
+
+  // (선택적) 도착/수령 안내 게시물 패턴 제외 로직
+  // 이전에 논의된 isLikelyArrivalNotice와 유사한 로직을 여기에 추가하거나,
+  // 또는 별도의 함수로 호출하여 그 결과를 반영할 수 있습니다.
+  // 예시: (매우 간단한 버전)
+  const arrivalListPattern =
+    /^\s*(?:\d+\.|[①-⑩])\s*.*?[\-👉:]*\s*(?:도착|수령|입고|완료)\s*$/gm;
+  const arrivalMatches = content.match(arrivalListPattern);
+  // 만약 도착 목록 패턴이 2개 이상이고, 명확한 'xxxx원' 또는 'xx만원' 같은 직접적인 가격표현이 없다면 도착안내로 간주
+  if (
+    arrivalMatches &&
+    arrivalMatches.length >= 2 &&
+    !lowerContent.match(/\d{1,3}(?:,\d{3})*\s*원|\d+\s*만원|\d+\s*₩/)
+  ) {
+    // console.log("[Debug] 도착 안내 목록 패턴 발견, 상품 아님으로 판단");
+    return false;
+  }
+
+  // console.log("[Debug] 최종 판단: 상품 게시물");
+  return true; // 판매 키워드 O, 100 이상의 가격 숫자 O, (선택적으로) 도착 안내 패턴 아님
+}
 /**
  * 댓글 내용에서 주문 정보를 추출합니다.
  * - "번"이라는 단어가 있으면 "1번 3개요", "1번 상품 3개요" 같은 형식에서 앞의 숫자는 itemNumber, 뒤의 숫자는 quantity로 처리합니다.
@@ -908,6 +1021,18 @@ const testComments = [
   "4번 상품은 10개 부탁드립니다", // <<<--- 처리 기대
   "1번 200ml짜리 3개", // <<<--- 처리 기대
 ];
+
+const testContent = [
+  "주말특가...쏩니다\n\n하우스 고당도 흑수박\n\n흑수박 경매받았습니다🍉\n\n주말특가로준비합니다\n당도 아주좋아요\n\n🍉7키로 이상  👉👉👉30,000원\n1통👉👉👉 23,900원 \n\n\n5월10일(토요일)오후2시수령\n예약은댓글로주세요",
+];
+
+testContent.forEach((content) => {
+  console.log(`\n--- 테스트 내용: "${content}" ---`);
+  console.log(`contentHasPriceIndicator: ${contentHasPriceIndicator(content)}`);
+  console.log(
+    `contentHasPriceIndicator2: ${contentHasPriceIndicator2(content)}`
+  );
+});
 
 // testComments.forEach((comment) => {
 //   console.log(`\n--- 테스트 댓글: "${comment}" ---`);

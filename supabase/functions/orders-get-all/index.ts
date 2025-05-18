@@ -78,6 +78,7 @@ Deno.serve(async (req: Request) => {
     const searchFilter = params.get("search");
     const startDateFilter = params.get("startDate");
     const endDateFilter = params.get("endDate");
+    const exactCustomerNameFilter = params.get("exactCustomerName"); // <<< 정확한 고객명 파라미터 받기
 
     // 페이지네이션 및 정렬 파라미터
     const page = parseInt(params.get("page") || "1", 10);
@@ -92,6 +93,7 @@ Deno.serve(async (req: Request) => {
       subStatusFilter,
       searchFilter,
       startDateFilter,
+      exactCustomerNameFilter,
       endDateFilter,
       page,
       limit,
@@ -164,6 +166,32 @@ Deno.serve(async (req: Request) => {
         );
       }
     }
+
+    // --- 👇 4. 검색 조건 (정확한 고객명 필터 우선 적용) 👇 ---
+    if (exactCustomerNameFilter && exactCustomerNameFilter !== "undefined") {
+      // 4.1. 정확한 고객명 필터가 있으면, 그것만 적용 (eq 사용)
+      console.log(`Applying EXACT customer filter: ${exactCustomerNameFilter}`);
+      query = query.eq("customer_name", exactCustomerNameFilter);
+    } else if (searchFilter && searchFilter !== "undefined") {
+      // 4.2. 정확한 고객명 필터가 *없고* 일반 검색어가 있으면, ILIKE 사용 (이스케이프 처리 포함)
+      const escapedSearch = searchFilter
+        .replace(/\\/g, "\\\\") // 백슬래시 먼저
+        .replace(/%/g, "\\%") // 퍼센트
+        .replace(/_/g, "\\_") // 언더스코어
+        // --- 👇 괄호 이스케이프 추가 👇 ---
+        .replace(/\(/g, "\\(") // 여는 괄호
+        .replace(/\)/g, "\\)"); // 닫는 괄호
+      // --- 👆 괄호 이스케이프 추가 끝 👆 ---
+
+      const searchTerm = `%${escapedSearch}%`;
+      console.log(`Applying GENERAL search with escaped term: ${searchTerm}`);
+      // orders_with_products 뷰의 컬럼명 확인 필요
+      query = query.or(
+        `customer_name.ilike.${searchTerm},product_title.ilike.${searchTerm},product_barcode.ilike.${searchTerm},comment.ilike.${searchTerm}` // <<< comment 컬럼 추가 (예시)
+      );
+      // 다른 검색 대상 컬럼이 있다면 여기에 추가 (예: ,order_id.ilike.${searchTerm})
+    }
+    // --- 👆 검색 조건 끝 👆 ---
 
     // --- 정렬 및 페이지네이션 ---
     query = query
