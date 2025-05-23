@@ -20,8 +20,38 @@ async function getRecentOrdersInternal(
     `Fetching recent orders internally for user ${userId} with limit ${limit}`
   );
   try {
-    const { data, error } = await supabase
-      .from("orders") // orders 테이블 사용 가정 (또는 필요한 정보가 있는 뷰)
+    // 1. 제외고객 목록 가져오기
+    let excludedCustomers: string[] = [];
+    try {
+      const { data: userData, error: userError } = await supabase
+        .from("users")
+        .select("excluded_customers")
+        .eq("user_id", userId)
+        .single();
+
+      if (userError) {
+        console.error(
+          `[getRecentOrdersInternal] Failed to fetch excluded customers for user ${userId}: ${userError.message}`
+        );
+      } else if (
+        userData?.excluded_customers &&
+        Array.isArray(userData.excluded_customers)
+      ) {
+        excludedCustomers = userData.excluded_customers;
+        console.log(
+          `[getRecentOrdersInternal] Loaded ${excludedCustomers.length} excluded customers for filtering`
+        );
+      }
+    } catch (e) {
+      console.error(
+        `[getRecentOrdersInternal] Error fetching excluded customers: ${e.message}`
+      );
+      // 제외고객 목록 조회 실패 시에도 최근 주문은 계속 조회 (필터링 없이)
+    }
+
+    // 2. 최근 주문 조회 (필터링 적용)
+    let query = supabase
+      .from("orders")
       .select(
         `
         order_id,
@@ -30,23 +60,43 @@ async function getRecentOrdersInternal(
         ordered_at,
         created_at,
         status,
-        product_title,  -- 'orders_with_products' 뷰 또는 JOIN 필요 시
-        sub_status      -- 필요 시 추가
+        sub_status
       `
-      ) // product_title 등이 필요하면 JOIN 또는 뷰 필요
+      )
       .eq("user_id", userId)
       .order("ordered_at", { ascending: false })
       .limit(limit);
 
+    // 제외고객 필터링 적용
+    if (excludedCustomers.length > 0) {
+      // Supabase 'in' 필터는 값들을 괄호로 묶고 쉼표로 구분된 문자열을 기대합니다.
+      // 예: ('customer1','customer2','customer3')
+      // 각 고객 이름에 작은따옴표가 필요할 수 있으나, Supabase JS 라이브러리가 이를 처리해 줄 가능성이 높습니다.
+      // 먼저 따옴표 없이 시도하고, 문제가 지속되면 각 항목을 "'" + item + "'" 형태로 감싸는 것을 고려합니다.
+      const filterValues = `(${excludedCustomers
+        .map((name) => `${name.replace(/'/g, "''")}`)
+        .join(",")})`; // 고객 이름 내 작은따옴표 이스케이프 처리
+      query = query.not("customer_name", "in", filterValues);
+      console.log(
+        `[getRecentOrdersInternal] Filtering out ${excludedCustomers.length} excluded customers from recent orders with filter: customer_name.not.in.${filterValues}`
+      );
+    }
+    const { data, error } = await query;
+
     if (error) {
-      console.error("Internal error fetching recent orders:", error);
-      // 통계 조회 실패 시 최근 주문 없어도 괜찮으므로 오류 throw 대신 빈 배열 반환
+      console.error(
+        "[getRecentOrdersInternal] Internal error fetching recent orders:",
+        error
+      );
       return [];
     }
     return data || [];
   } catch (err) {
-    console.error("Exception in getRecentOrdersInternal:", err);
-    return []; // 예외 발생 시에도 빈 배열 반환
+    console.error(
+      "[getRecentOrdersInternal] Exception in getRecentOrdersInternal:",
+      err
+    );
+    return [];
   }
 }
 // --- 최근 주문 조회 함수 끝 ---
@@ -108,6 +158,35 @@ Deno.serve(async (req: Request) => {
     }
     // ==========================================
 
+    // 1. 제외고객 목록 가져오기 (RPC 호출용)
+    let excludedCustomersForRpc: string[] = [];
+    try {
+      const { data: userData, error: userError } = await supabase
+        .from("users")
+        .select("excluded_customers")
+        .eq("user_id", userId)
+        .single();
+
+      if (userError) {
+        console.error(
+          `[MainHandler] Failed to fetch excluded customers for user ${userId} for RPC: ${userError.message}`
+        );
+      } else if (
+        userData?.excluded_customers &&
+        Array.isArray(userData.excluded_customers)
+      ) {
+        excludedCustomersForRpc = userData.excluded_customers;
+        console.log(
+          `[MainHandler] Loaded ${excludedCustomersForRpc.length} excluded customers for RPC filtering`
+        );
+      }
+    } catch (e) {
+      console.error(
+        `[MainHandler] Error fetching excluded customers for RPC: ${e.message}`
+      );
+      // 오류 발생 시 빈 배열로 계속 진행 (RPC에서 필터링 안 함)
+    }
+
     // 필터 파라미터
     const dateRange = params.get("dateRange") || "7days";
     const queryStartDate = params.get("startDate");
@@ -164,6 +243,8 @@ Deno.serve(async (req: Request) => {
           ? null
           : null, // 'none'은 null로
       p_search_term: search ? `%${search}%` : null,
+      p_excluded_customer_names:
+        excludedCustomersForRpc.length > 0 ? excludedCustomersForRpc : null, // 제외고객 목록 추가
     };
     console.log("Calling RPC with params:", rpcParams);
 
@@ -192,7 +273,6 @@ Deno.serve(async (req: Request) => {
       type: "order",
       orderId: order.order_id,
       customerName: order.customer_name || "알 수 없음",
-      productName: order.product_title || "상품 정보 없음", // DB 조회 시 포함 필요
       amount: order.total_amount || 0,
       timestamp: order.ordered_at || order.created_at,
       status: order.status,

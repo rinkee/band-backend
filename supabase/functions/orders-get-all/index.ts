@@ -107,6 +107,31 @@ Deno.serve(async (req: Request) => {
       .select("*", { count: "exact" })
       .eq("user_id", userId); // 사용자 본인 주문만 조회
 
+    // 제외고객 목록 가져오기 (항상 적용)
+    let excludedCustomers: string[] = [];
+    try {
+      const { data: userData, error: userError } = await supabase
+        .from("users")
+        .select("excluded_customers")
+        .eq("id", userId)
+        .single();
+
+      if (userError) {
+        console.error(
+          `Failed to fetch excluded customers for user ${userId}: ${userError.message}`
+        );
+      } else if (
+        userData?.excluded_customers &&
+        Array.isArray(userData.excluded_customers)
+      ) {
+        excludedCustomers = userData.excluded_customers;
+        console.log(
+          `Loaded ${excludedCustomers.length} excluded customers for filtering`
+        );
+      }
+    } catch (e) {
+      console.error(`Error fetching excluded customers: ${e.message}`);
+    }
     // --- 필터링 ---
     if (
       statusFilter &&
@@ -192,6 +217,14 @@ Deno.serve(async (req: Request) => {
       // 다른 검색 대상 컬럼이 있다면 여기에 추가 (예: ,order_id.ilike.${searchTerm})
     }
     // --- 👆 검색 조건 끝 👆 ---
+
+    // 제외고객 필터링 적용 (항상)
+    if (excludedCustomers.length > 0) {
+      query = query.not("customer_name", "in", excludedCustomers);
+      console.log(
+        `Filtering out ${excludedCustomers.length} excluded customers`
+      );
+    }
 
     // --- 정렬 및 페이지네이션 ---
     query = query
