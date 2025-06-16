@@ -217,23 +217,34 @@ ${content}
         parsedResult.products.length > 0
       ) {
         // 숫자 이모지나 명확한 번호가 있는지 확인 (이모지 1️⃣, 2️⃣, 3️⃣ 등이 있을 경우)
-        const hasNumberEmojis = parsedResult.products.some(p => 
-          p.title && (p.title.includes('1️⃣') || p.title.includes('2️⃣') || p.title.includes('3️⃣'))
+        const hasNumberEmojis = parsedResult.products.some(
+          (p) =>
+            p.title &&
+            (p.title.includes("1️⃣") ||
+              p.title.includes("2️⃣") ||
+              p.title.includes("3️⃣"))
         );
-        
+
         // 상품 이름이 모두 다른지 확인
-        const productNames = parsedResult.products.map(p => {
+        const productNames = parsedResult.products.map((p) => {
           // 상품 이름에서 날짜와 숫자 제거
           const title = p.title || "";
-          return title.replace(/\[\d+월\d+일\]|\[\d+\/\d+\]/, "").trim().replace(/^\d+[.:\s]/, "");
+          return title
+            .replace(/\[\d+월\d+일\]|\[\d+\/\d+\]/, "")
+            .trim()
+            .replace(/^\d+[.:\s]/, "");
         });
-        
+
         // 중복 제거 후 이름이 다른 경우 = 실제 여러 상품
         const uniqueNames = new Set(productNames);
         const hasDifferentNames = uniqueNames.size > 1;
-        
+
         // 실제로 다른 제품이 있거나, 숫자 이모지가 포함된 경우 - 여러 상품으로 처리
-        if (hasDifferentNames || hasNumberEmojis || parsedResult.products.length >= 3) {
+        if (
+          hasDifferentNames ||
+          hasNumberEmojis ||
+          parsedResult.products.length >= 3
+        ) {
           // 실제 여러 상품으로 처리
           const processedProducts = parsedResult.products.map((p) =>
             processProduct(
@@ -252,7 +263,7 @@ ${content}
           const mergedProduct = detectAndMergeQuantityBasedProducts(
             parsedResult.products
           );
-          
+
           if (mergedProduct) {
             const processedMerged = processProduct(mergedProduct, postTime);
             finalResult = {
@@ -702,6 +713,7 @@ function contentHasPriceIndicator(content) {
     "만원",
     "천원",
     "원",
+    "냥",
     "₩", // 통화 관련 키워드
     // 필요에 따라 추가적인 판매 유도 키워드 (예: "팝니다", "드려요" 등)
   ];

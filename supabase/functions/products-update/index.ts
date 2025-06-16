@@ -2,7 +2,11 @@
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 // === CORS 헤더 가져오기 ===
-import { corsHeadersGet, corsHeadersPutPatch, createJsonResponseHeaders } from "../_shared/cors.ts"; // 경로 확인!
+import {
+  corsHeadersGet,
+  corsHeadersPutPatch,
+  createJsonResponseHeaders,
+} from "../_shared/cors.ts"; // 경로 확인!
 
 // === 응답 헤더 생성 (JSON 용) ===
 const responseHeaders = createJsonResponseHeaders(corsHeadersPutPatch); // PUT/PATCH 요청용 헤더 사용
@@ -87,10 +91,13 @@ Deno.serve(async (req: Request) => {
       price: "base_price", // 'price'도 'base_price'로 매핑
       status: "status",
       barcode: "barcode",
+      option_barcode_1: "option_barcode_1",
+      option_barcode_2: "option_barcode_2",
+      option_barcode_3: "option_barcode_3",
       memo: "memo",
       pickup_info: "pickup_info",
       pickup_date: "pickup_date",
-      quantity: "quantity", 
+      quantity: "quantity",
       stock: "quantity", // 'stock'도 'quantity'로 매핑
       category: "category",
       imageUrl: "image_url",
@@ -116,7 +123,9 @@ Deno.serve(async (req: Request) => {
             try {
               value = new Date(value).toISOString();
             } catch (dateParseError) {
-              console.error(`유효하지 않은 pickup_date 형식: ${value}. null로 설정합니다.`);
+              console.error(
+                `유효하지 않은 pickup_date 형식: ${value}. null로 설정합니다.`
+              );
               value = null;
             }
           }
@@ -127,7 +136,9 @@ Deno.serve(async (req: Request) => {
           if (value !== null && value !== undefined) {
             value = Number(value);
             if (isNaN(value)) {
-              console.warn(`경고: ${backendField}에 유효하지 않은 숫자 값: ${updateData[frontendField]}`);
+              console.warn(
+                `경고: ${backendField}에 유효하지 않은 숫자 값: ${updateData[frontendField]}`
+              );
               return; // 해당 필드는 건너뜁니다
             }
           }
@@ -135,7 +146,9 @@ Deno.serve(async (req: Request) => {
 
         fieldsToUpdate[backendField] = value;
         console.log(
-          `상품 ID ${productId}의 ${backendField}를 업데이트합니다: ${JSON.stringify(value)}`
+          `상품 ID ${productId}의 ${backendField}를 업데이트합니다: ${JSON.stringify(
+            value
+          )}`
         );
       }
     });
@@ -199,7 +212,7 @@ Deno.serve(async (req: Request) => {
         `Supabase update error for product ${productId}:`,
         updateError
       );
-      
+
       // PostgreSQL 날짜/시간 포맷 에러 처리
       if (updateError.code === "22007") {
         return new Response(
@@ -211,7 +224,7 @@ Deno.serve(async (req: Request) => {
           { status: 400, headers: responseHeaders }
         );
       }
-      
+
       if (
         updateError.code === "PGRST116" ||
         updateError.details?.includes("0 rows")
@@ -224,7 +237,7 @@ Deno.serve(async (req: Request) => {
           { status: 404, headers: responseHeaders }
         );
       }
-      
+
       throw updateError;
     }
 

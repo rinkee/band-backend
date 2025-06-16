@@ -100,8 +100,10 @@ Deno.serve(async (req: Request) => {
     }
     if (searchFilter && searchFilter !== "undefined") {
       const searchTerm = `%${searchFilter}%`;
-      // title, barcode 컬럼 확인
-      query = query.or(`title.ilike.${searchTerm},barcode.ilike.${searchTerm}`);
+      // title, barcode, option_barcode 컬럼들 검색
+      query = query.or(
+        `title.ilike.${searchTerm},barcode.ilike.${searchTerm},option_barcode_1.ilike.${searchTerm},option_barcode_2.ilike.${searchTerm},option_barcode_3.ilike.${searchTerm}`
+      );
     }
 
     // --- 정렬 및 페이지네이션 ---
