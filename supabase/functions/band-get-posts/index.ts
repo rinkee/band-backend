@@ -65,7 +65,7 @@ status: 판매 상태 (예: "판매중", "품절", "예약중", "마감" 등). �
 tags: 상품 관련 키워드 배열 (예: ["#특가", "#국내산", "#당일배송"])
 features: 상품의 주요 특징 배열 (예: ["유기농 인증", "무료 배송"])
 pickupInfo: 픽업/배송 관련 안내 문구 (예: "내일 오후 2시 일괄 배송")
-pickupDate: "내일", "5월 10일", "다음주 화요일", "지금부터" ,"2시 이후" ,"3시 부터" 등의 정보를 게시물 작성 시간${postTime} 기준으로 해석하여 YYYY-MM-DD 또는 YYYY-MM-DDTHH:mm:ss.sssZ 형식으로 설정. "지금부터"는 게시물 작성 시간(또는 현재 시간)으로 해석 가능. 픽업일자는 무조건 게시물 작성 시간보다 이전일 수 없습니다.
+pickupDate: "내일", "5월 10일", "다음주 화요일", "지금부터" ,"2시 이후" ,"3시 부터" 등의 정보를 게시물 작성 시간${postTime} 기준으로 해석하여 YYYY-MM-DD 또는 YYYY-MM-DDTHH:mm:ss.sssZ 형식으로 설정. "지금부터"는 게시물 작성 시간(또는 현재 시간)으로 해석 가능.  **픽업/배송 기간이 명시된 경우, 가장 늦은 날짜를 기준으로 YYYY-MM-DDTHH:mm:ss.sssZ 형식으로 설정합니다. 예를 들어, "6월 1일부터 6월 2일까지" 픽업 가능하다면, "2024-06-02T00:00:00.000Z"로 설정합니다.**
 pickupType: 픽업/배송 방식 (예: "도착", "수령", "픽업", "배송", "전달")
 🔥stockQuantity: 재고 수량을 나타내는 숫자입니다. "5개 남음", "3세트 한정" 등 명확한 숫자가 있으면 해당 숫자를 추출하세요. "1통 여유", "1개 가능" 등 특정 단위와 함께 남은 수량이 언급되면 해당 숫자(여기서는 1)를 추출합니다. "한정 수량", "재고 문의", "여유분" 등 구체적인 숫자가 없거나 불명확하면 null을 반환하세요.
 ※ 출력 형식:
@@ -1987,6 +1987,10 @@ Deno.serve(async (req) => {
     const url = new URL(req.url);
     const params = url.searchParams;
     const userId = params.get("userId");
+
+    // 🧪 테스트 모드 파라미터 추가
+    const testMode = params.get("testMode")?.toLowerCase() === "true";
+
     if (!userId)
       return new Response(
         JSON.stringify({
@@ -1998,6 +2002,13 @@ Deno.serve(async (req) => {
           headers: responseHeaders,
         }
       );
+
+    // 🧪 테스트 모드 로깅
+    if (testMode) {
+      console.log(
+        `🧪 테스트 모드 실행: userId=${userId} - 데이터베이스에 저장하지 않음`
+      );
+    }
     // 사용자 설정에서 post_fetch_limit 조회
     const { data: userSettings, error: userSettingsError } = await supabase
       .from("users")
@@ -2010,9 +2021,11 @@ Deno.serve(async (req) => {
       params.get("limit") || defaultLimit.toString(),
       10
     );
+    // 🧪 테스트 모드에서는 처리량 제한 (최대 5개)
+    const maxLimit = testMode ? 5 : Math.max(defaultLimit, 1000);
     const processingLimit = Math.min(
       requestedLimit > 0 ? requestedLimit : defaultLimit,
-      Math.max(defaultLimit, 1000) // 사용자 설정값과 1000 중 큰 값을 최대 제한으로 설정
+      maxLimit
     );
 
     if (userSettingsError) {
@@ -2028,7 +2041,7 @@ Deno.serve(async (req) => {
     }
     const processWithAI = params.get("processAI")?.toLowerCase() !== "false";
     console.log(
-      `band-get-posts 호출됨 (인증 없음): userId=${userId}, limit=${processingLimit}, processAI=${processWithAI}`
+      `band-get-posts 호출됨 (인증 없음): userId=${userId}, limit=${processingLimit}, processAI=${processWithAI}, testMode=${testMode}`
     );
     // === 메인 로직 ===
     // 1. Band API 게시물 가져오기
@@ -2167,15 +2180,22 @@ Deno.serve(async (req) => {
                   // 유효한 상품 정보가 없는 경우 - 실패 처리
                   console.log(`게시물 ${postKey}: AI로 상품 정보 추출 실패`);
                   aiExtractionStatus = "failed";
-                  // DB 상태 업데이트 (여전히 실패 상태)
-                  await savePostAndProducts(
-                    supabase,
-                    userId,
-                    apiPost,
-                    null,
-                    bandKey,
-                    aiExtractionStatus
-                  );
+
+                  // 🧪 테스트 모드에서는 DB 저장 건너뛰기
+                  if (!testMode) {
+                    await savePostAndProducts(
+                      supabase,
+                      userId,
+                      apiPost,
+                      null,
+                      bandKey,
+                      aiExtractionStatus
+                    );
+                  } else {
+                    console.log(
+                      `🧪 테스트 모드: 게시물 ${postKey} 실패 상태 저장 건너뛰기`
+                    );
+                  }
                 }
               } catch (aiError) {
                 // AI 호출 자체가 실패한 경우
@@ -2184,14 +2204,22 @@ Deno.serve(async (req) => {
                   aiError
                 );
                 aiExtractionStatus = "error";
-                await savePostAndProducts(
-                  supabase,
-                  userId,
-                  apiPost,
-                  null,
-                  bandKey,
-                  aiExtractionStatus
-                );
+
+                // 🧪 테스트 모드에서는 DB 저장 건너뛰기
+                if (!testMode) {
+                  await savePostAndProducts(
+                    supabase,
+                    userId,
+                    apiPost,
+                    null,
+                    bandKey,
+                    aiExtractionStatus
+                  );
+                } else {
+                  console.log(
+                    `🧪 테스트 모드: 게시물 ${postKey} 오류 상태 저장 건너뛰기`
+                  );
+                }
               }
             } else {
               // 상품 게시물이 아닌 경우
@@ -2202,15 +2230,21 @@ Deno.serve(async (req) => {
                 mightBeProduct ? "AI 비활성화" : "상품 아님"
               );
             }
-            // DB 저장 - 모든 게시물을 저장하되 AI 추출 상태를 함께 저장
-            savedPostId = await savePostAndProducts(
-              supabase,
-              userId,
-              apiPost,
-              aiAnalysisResult,
-              bandKey,
-              aiExtractionStatus
-            );
+            // 🧪 테스트 모드에서는 DB 저장 건너뛰기
+            if (!testMode) {
+              savedPostId = await savePostAndProducts(
+                supabase,
+                userId,
+                apiPost,
+                aiAnalysisResult,
+                bandKey,
+                aiExtractionStatus
+              );
+            } else {
+              // 테스트 모드: 임시 ID 생성
+              savedPostId = `test_${postKey}`;
+              console.log(`🧪 테스트 모드: 게시물 ${postKey} 임시 ID 사용`);
+            }
             // --- 👇 [수정 2 - 신규 게시물] 업데이트 목록 추가 시점 변경 👇 ---
             // 신규 게시물 처리가 모두 끝난 후, 계산된 값으로 업데이트 목록에 추가
             if (savedPostId) {
@@ -2282,35 +2316,46 @@ Deno.serve(async (req) => {
                     bandNumber,
                     productMapForNewPost
                   );
-                  // 주문/고객 저장
-                  if (orders.length > 0) {
-                    const { error } = await supabase
-                      .from("orders")
-                      .upsert(orders, {
-                        onConflict: "order_id",
-                        ignoreDuplicates: true,
-                      });
-                    if (error)
-                      console.error(
-                        `    Order save error (post ${postKey}): ${error.message}`
-                      );
-                    else console.log(`    Saved ${orders.length} orders.`);
-                  }
-                  const customersArray = Array.from(customers.values());
-                  if (customersArray.length > 0) {
-                    const { error } = await supabase
-                      .from("customers")
-                      .upsert(customersArray, {
-                        onConflict: "customer_id",
-                      });
-                    if (error)
-                      console.error(
-                        `    Customer save error (post ${postKey}): ${error.message}`
-                      );
-                    else
-                      console.log(
-                        `    Saved ${customersArray.length} customers.`
-                      );
+                  // 🧪 테스트 모드에서는 주문/고객 저장 건너뛰기
+                  if (!testMode) {
+                    // 주문 저장
+                    if (orders.length > 0) {
+                      const { error } = await supabase
+                        .from("orders")
+                        .upsert(orders, {
+                          onConflict: "order_id",
+                          ignoreDuplicates: true,
+                        });
+                      if (error)
+                        console.error(
+                          `    Order save error (post ${postKey}): ${error.message}`
+                        );
+                      else console.log(`    Saved ${orders.length} orders.`);
+                    }
+
+                    // 고객 저장
+                    const customersArray = Array.from(customers.values());
+                    if (customersArray.length > 0) {
+                      const { error } = await supabase
+                        .from("customers")
+                        .upsert(customersArray, {
+                          onConflict: "customer_id",
+                        });
+                      if (error)
+                        console.error(
+                          `    Customer save error (post ${postKey}): ${error.message}`
+                        );
+                      else
+                        console.log(
+                          `    Saved ${customersArray.length} customers.`
+                        );
+                    }
+                  } else {
+                    console.log(
+                      `🧪 테스트 모드: ${orders.length}개 주문, ${
+                        Array.from(customers.values()).length
+                      }개 고객 저장 건너뛰기`
+                    );
                   }
                 } catch (genError) {
                   console.error(
@@ -2470,23 +2515,32 @@ Deno.serve(async (req) => {
                       bandNumber,
                       productMap
                     );
-                    // 주문 저장
-                    if (orders.length) {
-                      const { error: oErr } = await supabase
-                        .from("orders")
-                        .upsert(orders, {
-                          onConflict: "order_id",
-                          ignoreDuplicates: true,
-                        });
-                      if (oErr) console.error("Order save error:", oErr);
-                    }
-                    // 고객 저장
-                    const custArr = Array.from(customers.values());
-                    if (custArr.length) {
-                      const { error: cErr } = await supabase
-                        .from("customers")
-                        .upsert(custArr, { onConflict: "customer_id" });
-                      if (cErr) console.error("Customer save error:", cErr);
+                    // 🧪 테스트 모드에서는 주문/고객 저장 건너뛰기
+                    if (!testMode) {
+                      // 주문 저장
+                      if (orders.length) {
+                        const { error: oErr } = await supabase
+                          .from("orders")
+                          .upsert(orders, {
+                            onConflict: "order_id",
+                            ignoreDuplicates: true,
+                          });
+                        if (oErr) console.error("Order save error:", oErr);
+                      }
+                      // 고객 저장
+                      const custArr = Array.from(customers.values());
+                      if (custArr.length) {
+                        const { error: cErr } = await supabase
+                          .from("customers")
+                          .upsert(custArr, { onConflict: "customer_id" });
+                        if (cErr) console.error("Customer save error:", cErr);
+                      }
+                    } else {
+                      console.log(
+                        `🧪 테스트 모드: ${orders.length}개 주문, ${
+                          Array.from(customers.values()).length
+                        }개 고객 저장 건너뛰기`
+                      );
                     }
 
                     console.log(
@@ -2598,28 +2652,32 @@ Deno.serve(async (req) => {
     } else {
       console.log("[5단계] 댓글 정보 업데이트가 필요한 게시물이 없습니다.");
     }
-    // 6. 사용자의 last_crawl_at 업데이트
-    try {
-      const currentTimestamp = new Date().toISOString();
-      const { error: userUpdateError } = await supabase
-        .from("users")
-        .update({
-          last_crawl_at: currentTimestamp,
-        })
-        .eq("user_id", userId);
-      if (userUpdateError) {
+    // 🧪 테스트 모드에서는 사용자 last_crawl_at 업데이트 건너뛰기
+    if (!testMode) {
+      try {
+        const currentTimestamp = new Date().toISOString();
+        const { error: userUpdateError } = await supabase
+          .from("users")
+          .update({
+            last_crawl_at: currentTimestamp,
+          })
+          .eq("user_id", userId);
+        if (userUpdateError) {
+          console.error(
+            `[6단계] 사용자 last_crawl_at 업데이트 오류: ${userUpdateError.message}`
+          );
+        } else {
+          console.log(
+            `[6단계] 사용자 ${userId}의 last_crawl_at을 ${currentTimestamp}로 업데이트했습니다.`
+          );
+        }
+      } catch (error) {
         console.error(
-          `[6단계] 사용자 last_crawl_at 업데이트 오류: ${userUpdateError.message}`
-        );
-      } else {
-        console.log(
-          `[6단계] 사용자 ${userId}의 last_crawl_at을 ${currentTimestamp}로 업데이트했습니다.`
+          `[6단계] 사용자 last_crawl_at 업데이트 중 예외 발생: ${error.message}`
         );
       }
-    } catch (error) {
-      console.error(
-        `[6단계] 사용자 last_crawl_at 업데이트 중 예외 발생: ${error.message}`
-      );
+    } else {
+      console.log("🧪 테스트 모드: 사용자 last_crawl_at 업데이트 건너뛰기");
     }
     // 7. 최종 결과 반환
     console.log(
@@ -2628,7 +2686,11 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
+        testMode, // 🧪 테스트 모드 플래그 포함
         data: postsWithAnalysis,
+        message: testMode
+          ? `🧪 테스트 모드 완료 - ${postsWithAnalysis.length}개 게시물 분석 (저장 안함)`
+          : undefined,
       }),
       {
         status: 200,
