@@ -370,6 +370,7 @@ const patchProduct = async (req, res) => {
       pickup_info: "pickup_info",
       pickup_date: "pickup_date",
       quantity: "quantity",
+      barcode_options: "barcode_options",
     };
 
     Object.keys(updateData).forEach((frontendField) => {
