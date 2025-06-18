@@ -2022,7 +2022,7 @@ Deno.serve(async (req) => {
       10
     );
     // 🧪 테스트 모드에서는 처리량 제한 (최대 5개)
-    const maxLimit = testMode ? 5 : Math.max(defaultLimit, 1000);
+    const maxLimit = testMode ? 5 : Math.max(defaultLimit, 200);
     const processingLimit = Math.min(
       requestedLimit > 0 ? requestedLimit : defaultLimit,
       maxLimit
@@ -2683,20 +2683,55 @@ Deno.serve(async (req) => {
     console.log(
       `[7단계] 처리 완료. ${postsWithAnalysis.length}개의 게시물 결과를 반환합니다.`
     );
-    return new Response(
-      JSON.stringify({
-        success: true,
-        testMode, // 🧪 테스트 모드 플래그 포함
-        data: postsWithAnalysis,
-        message: testMode
-          ? `🧪 테스트 모드 완료 - ${postsWithAnalysis.length}개 게시물 분석 (저장 안함)`
-          : undefined,
-      }),
-      {
-        status: 200,
-        headers: responseHeaders,
-      }
-    );
+    // 🧪 테스트 모드에서 추가 정보 제공
+    const responseData = {
+      success: true,
+      testMode, // 🧪 테스트 모드 플래그 포함
+      data: postsWithAnalysis,
+      message: testMode
+        ? `🧪 테스트 모드 완료 - ${postsWithAnalysis.length}개 게시물 분석 (저장 안함)`
+        : undefined,
+    };
+
+    // 테스트 모드에서 댓글 파싱 분석 정보 추가
+    if (testMode) {
+      const testAnalysis = {
+        totalPosts: postsWithAnalysis.length,
+        postsWithComments: postsWithAnalysis.filter(
+          (p) => (p.commentCount || 0) > 0
+        ).length,
+        totalComments: postsWithAnalysis.reduce(
+          (sum, p) => sum + (p.commentCount || 0),
+          0
+        ),
+        postsWithProducts: postsWithAnalysis.filter(
+          (p) =>
+            p.aiAnalysisResult &&
+            p.aiAnalysisResult.products &&
+            p.aiAnalysisResult.products.length > 0
+        ).length,
+        commentDetails: postsWithAnalysis
+          .filter((p) => (p.commentCount || 0) > 0)
+          .map((p) => ({
+            postKey: p.postKey,
+            commentCount: p.commentCount,
+            hasProducts: !!(
+              p.aiAnalysisResult &&
+              p.aiAnalysisResult.products &&
+              p.aiAnalysisResult.products.length > 0
+            ),
+            productTitle:
+              p.aiAnalysisResult?.products?.[0]?.title || "상품정보 없음",
+            latestComments: p.latestComments || [],
+          })),
+      };
+      responseData.testAnalysis = testAnalysis;
+    }
+
+    return new Response(JSON.stringify(responseData), {
+      status: 200,
+      headers: responseHeaders,
+    });
   } catch (error) {
     // 함수 전체의 최상위 오류 처리
     console.error("Unhandled error in band-get-posts (No Auth):", error);
