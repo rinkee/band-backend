@@ -163,16 +163,40 @@ async function saveAiResultsToSupabase(
  */
 async function getBandPosts(req, res) {
   const userId = req.query.userId;
-  // 프론트엔드 요청 limit 사용 (기본값 100)
-  let requestedLimit = 100; // 기본값 설정
+  // 사용자 설정에서 post_fetch_limit 조회
+  let userLimit = 200; // 기본값
+  try {
+    const { data: userSettings, error: userError } = await supabase
+      .from("users")
+      .select("post_fetch_limit")
+      .eq("user_id", userId)
+      .single();
+
+    if (!userError && userSettings?.post_fetch_limit) {
+      userLimit = parseInt(userSettings.post_fetch_limit, 10);
+      console.log(`사용자 ${userId}의 게시물 제한 설정: ${userLimit}`);
+    } else {
+      console.log(
+        `사용자 ${userId}의 게시물 제한 설정이 없어 기본값 ${userLimit} 사용`
+      );
+    }
+  } catch (error) {
+    console.warn(
+      `사용자 설정 조회 실패: ${error.message}, 기본값 ${userLimit} 사용`
+    );
+  }
+
+  // 프론트엔드 요청 limit 사용 (사용자 설정값을 기본값으로)
+  let requestedLimit = userLimit; // 사용자 설정값을 기본값으로
   if (req.query.limit) {
     const parsedLimit = parseInt(req.query.limit, 10);
     if (!isNaN(parsedLimit) && parsedLimit > 0) {
       requestedLimit = parsedLimit; // 유효한 경우 요청값 사용
     }
   }
-  // 실제 처리할 게시물 수 제한 (예: 최대 200개로 내부 제한 설정 가능)
-  const processingLimit = Math.min(requestedLimit, 200); // API 요청 limit과 내부 처리 최대치 중 작은 값 사용
+
+  // 실제 처리할 게시물 수 제한 (사용자 설정값과 1000 중 작은 값)
+  const processingLimit = Math.min(requestedLimit, Math.max(userLimit, 1000));
 
   const processWithAI = req.query.processAI
     ? req.query.processAI === "true"

@@ -924,13 +924,25 @@ function extractEnhancedOrderFromComment(commentText) {
   )
     return o;
   const pT = commentText.replace(/\s+/g, " ").trim();
+
+  // 4자리 숫자는 개인정보(전화번호, 년도 등)로 판단하여 제외하는 함수
+  function isValidOrderNumber(num) {
+    return num >= 1 && num <= 999; // 1~999 사이의 숫자만 주문 관련 숫자로 인정
+  }
+
+  // "번" 패턴 먼저 검사 (예: "1번 2개", "3번 5개")
   const er = /(\d+)\s*번(?:[^\d\n]*?)(\d+)/g;
   let em = false;
   let m;
   while ((m = er.exec(pT)) !== null) {
     const i = parseInt(m[1]);
     const q = parseInt(m[2]);
-    if (!isNaN(i) && i > 0 && !isNaN(q) && q > 0) {
+    if (
+      !isNaN(i) &&
+      isValidOrderNumber(i) &&
+      !isNaN(q) &&
+      isValidOrderNumber(q)
+    ) {
       o.push({
         itemNumber: i,
         quantity: q,
@@ -939,18 +951,65 @@ function extractEnhancedOrderFromComment(commentText) {
       em = true;
     }
   }
+
+  // "번" 패턴이 없거나 매칭되지 않은 경우, 일반 숫자에서 주문 수량 추출
   if (!pT.includes("번") || !em) {
+    // 4자리 숫자와 개인정보 패턴을 제외한 숫자만 추출
     const nr = /(\d+)/g;
+    const foundNumbers = [];
+
     while ((m = nr.exec(pT)) !== null) {
-      const q = parseInt(m[1]);
-      if (!isNaN(q) && q > 0 && !em)
-        o.push({
-          itemNumber: 1,
-          quantity: q,
-          isAmbiguous: true,
+      const num = parseInt(m[1]);
+      if (!isNaN(num) && isValidOrderNumber(num)) {
+        foundNumbers.push(num);
+      }
+    }
+
+    // 개인정보 패턴 감지 및 제외
+    // 예: "김은희/1958/상무점/떡갈비 2개" -> 1958은 년도로 판단하여 제외, 2만 주문수량으로 인정
+    const personalInfoPatterns = [
+      /\/\d{4}\//, // /년도/ 패턴 (예: /1958/)
+      /\d{4}-\d{2}-\d{2}/, // 날짜 패턴
+      /\d{3}-\d{4}-\d{4}/, // 전화번호 패턴
+      /\d{4}\s*년/, // 년도 패턴 (예: 1958년)
+    ];
+
+    // 개인정보 패턴이 포함된 숫자들을 찾아서 제외
+    const excludeNumbers = new Set();
+    personalInfoPatterns.forEach((pattern) => {
+      const matches = pT.match(pattern);
+      if (matches) {
+        matches.forEach((match) => {
+          const nums = match.match(/\d+/g);
+          if (nums) {
+            nums.forEach((num) => {
+              const n = parseInt(num);
+              if (n >= 1000) {
+                // 4자리 이상 숫자는 제외
+                excludeNumbers.add(n);
+              }
+            });
+          }
         });
+      }
+    });
+
+    // 유효한 주문 수량만 추출 (개인정보로 판단된 숫자 제외)
+    const validQuantities = foundNumbers.filter(
+      (num) => !excludeNumbers.has(num)
+    );
+
+    // 가장 작은 유효한 숫자를 주문 수량으로 사용 (일반적으로 주문 수량은 작은 숫자)
+    if (validQuantities.length > 0 && !em) {
+      const quantity = Math.min(...validQuantities);
+      o.push({
+        itemNumber: 1,
+        quantity: quantity,
+        isAmbiguous: true,
+      });
     }
   }
+
   return o;
 }
 function generateProductUniqueIdForItem(
@@ -1939,11 +1998,34 @@ Deno.serve(async (req) => {
           headers: responseHeaders,
         }
       );
-    const requestedLimit = parseInt(params.get("limit") || "100", 10);
-    const processingLimit = Math.min(
-      requestedLimit > 0 ? requestedLimit : 100,
-      200
+    // 사용자 설정에서 post_fetch_limit 조회
+    const { data: userSettings, error: userSettingsError } = await supabase
+      .from("users")
+      .select("post_fetch_limit")
+      .eq("user_id", userId)
+      .single();
+
+    const defaultLimit = userSettings?.post_fetch_limit || 200; // 사용자 설정값 또는 기본값 200
+    const requestedLimit = parseInt(
+      params.get("limit") || defaultLimit.toString(),
+      10
     );
+    const processingLimit = Math.min(
+      requestedLimit > 0 ? requestedLimit : defaultLimit,
+      Math.max(defaultLimit, 1000) // 사용자 설정값과 1000 중 큰 값을 최대 제한으로 설정
+    );
+
+    if (userSettingsError) {
+      console.warn(
+        `사용자 설정 조회 실패: ${userSettingsError.message}, 기본값 200 사용`
+      );
+    } else {
+      console.log(
+        `사용자 ${userId}의 게시물 제한 설정: ${
+          userSettings?.post_fetch_limit || "미설정(기본값 200)"
+        }`
+      );
+    }
     const processWithAI = params.get("processAI")?.toLowerCase() !== "false";
     console.log(
       `band-get-posts 호출됨 (인증 없음): userId=${userId}, limit=${processingLimit}, processAI=${processWithAI}`
