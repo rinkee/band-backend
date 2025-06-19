@@ -59,6 +59,8 @@ Deno.serve(async (req: Request) => {
       naverId,
       naverPassword, // <<< 중요: 민감 정보 처리 주의!
       bandUrl,
+      bandAccessToken, // <<< 새로 추가된 필드
+      bandKey, // <<< 새로 추가된 필드
       storeName,
       storeAddress,
       ownerName,
@@ -94,10 +96,12 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 밴드 번호 추출
-    const bandNumberMatch = bandUrl.match(
-      /band\/(?:us\/band\/|com\/band\/)(\d+)/
-    );
+    // 밴드 번호 추출 - 다양한 형식 지원
+    // 지원 형식:
+    // - https://www.band.us/band/87139115
+    // - https://band.us/band/87139115
+    // - band.us/band/87139115
+    const bandNumberMatch = bandUrl.match(/band\.(?:us|com)\/band\/(\d+)/);
     const bandNumber = bandNumberMatch ? bandNumberMatch[1] : null;
 
     if (!bandNumber) {
@@ -170,6 +174,8 @@ Deno.serve(async (req: Request) => {
           phone_number: phoneNumber || null,
           band_url: bandUrl,
           band_number: bandNumber,
+          band_access_token: bandAccessToken || null, // <<< 새로 추가된 필드
+          band_key: bandKey || null, // <<< 새로 추가된 필드
           settings: {
             // 기본 설정값 (JSONB 타입 컬럼이어야 함)
             notificationEnabled: true,

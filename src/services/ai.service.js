@@ -784,7 +784,182 @@ function detectAndMergeQuantityBasedProducts(products) {
   return mergedProduct;
 }
 
+/**
+ * 댓글들에서 주문 정보를 배치로 추출하는 함수 (Gemini 버전)
+ * @param {Object} postInfo - 게시물 정보 { products: [], content: "", postTime: "" }
+ * @param {Array} comments - 댓글 배열 [{ content: "", author: "", timestamp: "", commentKey: "" }]
+ * @param {string} bandNumber - 밴드 번호
+ * @param {string} postId - 게시물 ID
+ * @returns {Promise<Array>} - 추출된 주문 정보 배열
+ */
+async function extractOrdersFromComments(
+  postInfo,
+  comments,
+  bandNumber,
+  postId
+) {
+  const MAX_RETRIES = 2;
+  const RETRY_DELAY_MS = 1000;
+  let retries = 0;
+
+  while (retries < MAX_RETRIES) {
+    try {
+      if (!comments || comments.length === 0) {
+        logger.warn("댓글이 없어서 AI 분석을 건너뜁니다.");
+        return [];
+      }
+
+      logger.info(`${comments.length}개 댓글에 대한 AI 배치 분석 시작`);
+
+      // 게시물 상품 정보 요약
+      const productsSummary = postInfo.products
+        .map((product, index) => {
+          return `${index + 1}번 상품: ${product.title} - 기본가격: ${
+            product.basePrice
+          }원, 옵션: ${product.priceOptions
+            .map((opt) => `${opt.quantity}개 ${opt.price}원`)
+            .join(", ")}`;
+        })
+        .join("\n");
+
+      // 댓글 정보 요약
+      const commentsSummary = comments
+        .map((comment, index) => {
+          return `댓글${index + 1}: "${comment.content}" (작성자: ${
+            comment.author
+          }, 시간: ${comment.timestamp})`;
+        })
+        .join("\n");
+
+      const systemInstructions = `
+당신은 댓글에서 주문 정보를 정확하게 추출하는 도우미입니다. 반드시 JSON 형식으로만 응답해야 하며, 그 외 텍스트는 절대 포함하지 마세요.
+
+※ 주문 정보 추출 핵심 규칙:
+
+1. **명확한 주문 의도 판별**: 다음과 같은 댓글은 주문으로 처리하세요.
+   - 구체적인 수량이 명시된 경우: "2개요", "3개 주문", "5개 부탁드려요"
+   - 상품 번호가 명시된 경우: "1번 2개", "2번 상품 1개"
+   - 명확한 주문 의도: "주문할게요", "예약해주세요", "신청합니다"
+
+2. **애매한 댓글 처리**: 다음과 같은 댓글은 주문이 아닌 것으로 처리하세요.
+   - 단순 문의: "가격이 어떻게 되나요?", "언제 받을 수 있나요?"
+   - 취소 요청: "취소요", "취소해주세요"
+   - 불분명한 의도: "한개요" (수량은 있지만 주문 의도가 불분명한 경우)
+   - 단순 반응: "좋아요", "감사합니다", "네"
+
+3. **상품 특정 규칙**:
+   - 여러 상품이 있는 경우: 댓글에서 "1번", "2번" 등 명시적으로 상품을 지정한 경우만 해당 상품으로 처리
+   - 상품 지정이 없는 경우: isAmbiguous: true로 설정하고 productItemNumber는 null
+   - 단일 상품인 경우: 자동으로 해당 상품으로 처리
+
+4. **수량 추출 규칙**:
+   - 명확한 숫자: "2개", "3개", "5개 주문" → 해당 숫자
+   - 단위가 붙은 숫자 제외: "300g", "2kg", "500ml" → 수량이 아님
+   - 수량 미명시 + 명확한 주문 의도: 1개로 처리
+   - 수량 미명시 + 불분명한 의도: 주문이 아님
+
+출력 형식:
+{
+  "orders": [
+    {
+      "commentKey": "댓글 고유키",
+      "commentContent": "원본 댓글 내용", 
+      "author": "작성자",
+      "isOrder": true/false,
+      "isAmbiguous": true/false,
+      "productItemNumber": 숫자 또는 null,
+      "quantity": 숫자 또는 null,
+      "reason": "판별 이유 설명"
+    }
+  ]
+}
+
+예시 응답:
+{
+  "orders": [
+    {
+      "commentKey": "comment_1",
+      "commentContent": "1번 2개 주문할게요",
+      "author": "김철수", 
+      "isOrder": true,
+      "isAmbiguous": false,
+      "productItemNumber": 1,
+      "quantity": 2,
+      "reason": "상품 번호와 수량이 명확하고 주문 의도가 확실함"
+    },
+    {
+      "commentKey": "comment_2", 
+      "commentContent": "한개요",
+      "author": "이영희",
+      "isOrder": false,
+      "isAmbiguous": true,
+      "productItemNumber": null,
+      "quantity": null,
+      "reason": "수량은 있지만 주문 의도가 불분명하고 상품 특정도 안됨"
+    }
+  ]
+}
+      `.trim();
+
+      const userContent = `
+다음 게시물과 댓글들을 분석하여 주문 정보를 추출해주세요:
+
+=== 게시물 정보 ===
+작성시간: ${postInfo.postTime}
+내용: ${postInfo.content}
+
+=== 상품 정보 ===
+${productsSummary}
+
+=== 댓글들 ===
+${commentsSummary}
+
+위 규칙에 따라 각 댓글을 분석하여 JSON 형식으로 응답해주세요.
+`.trim();
+
+      const prompt = `${systemInstructions}\n\n${userContent}`;
+
+      const response = await geminiModel.generateContent(prompt);
+      const responseText = await response.response.text();
+
+      logger.info("댓글 AI 분석 완료");
+      logger.debug("AI 댓글 분석 원본 응답:", responseText);
+
+      try {
+        const result = JSON.parse(responseText);
+
+        if (!result.orders || !Array.isArray(result.orders)) {
+          throw new Error("AI 응답에 orders 배열이 없습니다");
+        }
+
+        logger.info(`${result.orders.length}개 댓글 분석 결과 받음`);
+        return result.orders;
+      } catch (parseError) {
+        logger.error("댓글 AI 응답 JSON 파싱 실패:", parseError);
+        throw parseError;
+      }
+    } catch (error) {
+      retries++;
+      logger.error(
+        `댓글 AI 분석 실패 (시도 ${retries}/${MAX_RETRIES + 1}):`,
+        error
+      );
+
+      if (retries <= MAX_RETRIES) {
+        logger.info(`${RETRY_DELAY_MS}ms 후 재시도...`);
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+        continue;
+      }
+
+      // 최대 재시도 후 실패 시 빈 배열 반환
+      logger.error("댓글 AI 분석 최종 실패, 빈 배열 반환");
+      return [];
+    }
+  }
+}
+
 module.exports = {
   extractProductInfo,
   extractPickupDate,
+  extractOrdersFromComments,
 };

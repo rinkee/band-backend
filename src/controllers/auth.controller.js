@@ -179,6 +179,8 @@ const register = async (req, res) => {
       naverId,
       naverPassword,
       bandUrl,
+      bandAccessToken,
+      bandKey,
       storeName,
       storeAddress,
       ownerName,
@@ -247,6 +249,8 @@ const register = async (req, res) => {
           phone_number: phoneNumber || null,
           band_url: bandUrl,
           band_number: bandNumber,
+          band_access_token: bandAccessToken || null,
+          band_key: bandKey || null,
           settings: {
             notificationEnabled: true,
             autoConfirmOrders: false,
