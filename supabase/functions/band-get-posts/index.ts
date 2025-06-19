@@ -69,8 +69,11 @@ async function extractOrdersFromCommentsAI(
    - 단순 반응: "좋아요", "감사합니다", "네"
 
 3. **상품 특정 규칙**:
-   - 여러 상품이 있는 경우: 댓글에서 "1번", "2번" 등 명시적으로 상품을 지정한 경우만 해당 상품으로 처리
-   - 상품 지정이 없는 경우: isAmbiguous: true로 설정하고 productItemNumber는 null
+   - 상품 번호 명시: "1번", "2번" 등 명시적으로 상품을 지정한 경우 해당 상품으로 처리
+   - 상품명 키워드 매칭: 댓글에 상품명의 핵심 키워드가 포함된 경우 해당 상품으로 처리
+     * 예: "참외 3개" → "성주꿀참외" 상품으로 매칭
+     * 예: "망고 1개" → "애플망고" 상품으로 매칭
+   - 상품 지정이 애매한 경우: isAmbiguous: true로 설정하고 가장 가능성 높은 상품 추천
    - 단일 상품인 경우: 자동으로 해당 상품으로 처리
 
 4. **수량 추출 규칙**:
@@ -1785,24 +1788,27 @@ async function savePostAndProducts(
     let aiOrderResults = [];
     let useAIResults = false;
 
-    // AI 적용 시나리오 판별
-    const shouldUseAI =
-      isMultipleProductsPost ||
-      comments.some((comment) => {
-        const content = comment.content?.toLowerCase() || "";
-        // 애매한 댓글 패턴 감지
-        return (
-          content.includes("한개요") ||
-          content.includes("취소요") ||
-          (content.includes("개") && !content.includes("번")) ||
-          content === "네" ||
-          content === "좋아요"
-        );
-      });
+    // AI 적용 시나리오 판별 - 현재는 모든 댓글에 AI 적용
+    const shouldUseAI = comments.length > 0; // 댓글이 있으면 무조건 AI 적용
+
+    // 나중에 최적화할 때 사용할 조건들 (주석 처리)
+    // const shouldUseAI =
+    //   isMultipleProductsPost ||
+    //   comments.some((comment) => {
+    //     const content = comment.content?.toLowerCase() || "";
+    //     // 애매한 댓글 패턴 감지
+    //     return (
+    //       content.includes("한개요") ||
+    //       content.includes("취소요") ||
+    //       (content.includes("개") && !content.includes("번")) ||
+    //       content === "네" ||
+    //       content === "좋아요"
+    //     );
+    //   });
 
     if (shouldUseAI) {
       try {
-        console.log(`[주문 생성] AI 분석 조건 만족, AI 댓글 분석 시도 중...`);
+        console.log(`[주문 생성] 모든 댓글에 AI 분석 적용 중...`);
 
         // 게시물 정보 준비
         const postInfo = {
@@ -1839,7 +1845,7 @@ async function savePostAndProducts(
         );
       }
     } else {
-      console.log(`[주문 생성] AI 분석 조건 불만족, 기존 규칙 기반 로직 사용`);
+      console.log(`[주문 생성] 댓글이 없어 AI 분석을 건너뜁니다.`);
     }
 
     // --- 4. 댓글 순회 및 처리 ---

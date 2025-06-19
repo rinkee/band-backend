@@ -61,6 +61,12 @@ const testComments = [
     timestamp: "2024-06-18T10:18:00.000Z",
     commentKey: "comment_6",
   },
+  {
+    content: "망고도 1개 주문할게요",
+    author: "홍길동",
+    timestamp: "2024-06-18T10:20:00.000Z",
+    commentKey: "comment_7",
+  },
 ];
 
 async function testAICommentAnalysis() {
