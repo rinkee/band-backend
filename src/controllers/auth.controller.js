@@ -376,6 +376,8 @@ const login = async (req, res) => {
         bandUrl: userData.band_url,
         bandNumber: userData.band_number,
         naverId: userData.naver_id,
+        band_access_token: userData.band_access_token, // BAND 액세스 토큰 추가
+        band_key: userData.band_key, // BAND 키도 추가
         isActive: userData.is_active,
         excludedCustomers: userData.excluded_customers,
         subscription: userData.subscription,

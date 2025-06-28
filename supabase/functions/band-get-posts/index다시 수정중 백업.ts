@@ -6,53 +6,6 @@ import { corsHeadersGet, createJsonResponseHeaders } from "../_shared/cors.ts"; 
 const responseHeaders = createJsonResponseHeaders(corsHeadersGet);
 
 const AI_MODEL = "gemini-2.5-flash-lite-preview-06-17";
-
-// JSON 직렬화 안전 함수 (순환 참조 방지)
-function safeJsonStringify(obj, space = null) {
-  try {
-    if (obj === null || obj === undefined) {
-      return null;
-    }
-
-    const cache = new Set();
-    const cleanObj = JSON.parse(
-      JSON.stringify(obj, (key, value) => {
-        if (typeof value === "object" && value !== null) {
-          if (cache.has(value)) {
-            return "[Circular Reference]";
-          }
-          cache.add(value);
-        }
-        // undefined 값 제거
-        if (value === undefined) {
-          return null;
-        }
-        // NaN, Infinity 처리
-        if (typeof value === "number") {
-          if (isNaN(value) || !isFinite(value)) {
-            return null;
-          }
-        }
-        return value;
-      })
-    );
-
-    const result = JSON.stringify(cleanObj, null, space);
-
-    // 결과 검증 - 다시 파싱해서 유효한 JSON인지 확인
-    JSON.parse(result);
-
-    return result;
-  } catch (error) {
-    console.error("JSON stringify error:", error, "Original object:", obj);
-    // 매우 간단한 fallback JSON 반환
-    return JSON.stringify({
-      error: "JSON serialization failed",
-      message: error.message,
-      timestamp: new Date().toISOString(),
-    });
-  }
-}
 // --- AI 댓글 분석 함수 (Gemini API 호출) ---
 async function extractOrdersFromCommentsAI(
   postInfo,
@@ -105,112 +58,32 @@ async function extractOrdersFromCommentsAI(
     const systemInstructions = `
 당신은 댓글에서 주문 정보를 정확하게 추출하는 도우미입니다. 반드시 JSON 형식으로만 응답해야 하며, 그 외 텍스트는 절대 포함하지 마세요.
 
-※ 🔥 **중요: 여러 상품 주문 처리 규칙** 🔥
-
-**한 댓글에서 여러 상품을 주문한 경우 반드시 개별 주문으로 분리하세요:**
-
-🚨 **절대 지켜야 할 규칙**: 
-1. **상품명 키워드를 게시물의 상품 정보와 정확히 매칭하세요**
-2. 한 상품당 하나의 주문만 생성하세요 (중복 생성 금지)
-3. 수량을 정확히 파싱하세요 
-4. 같은 상품을 여러 번 언급해도 하나로 통합하세요
-5. **불필요한 추가 주문 생성 금지**
-
-예시 분석:
-- **"키워드1+수량, 키워드2+수량" 패턴** → **정확히 2개 주문**:
-  1) 첫 번째 상품의 해당 수량 주문 (별도 주문)
-  2) 두 번째 상품의 해당 수량 주문 (별도 주문)
-
-- **"키워드1+수량 키워드2+수량" 패턴** → **정확히 2개 주문**:
-  1) 첫 번째 상품의 해당 수량 주문 (별도 주문)  
-  2) 두 번째 상품의 해당 수량 주문 (별도 주문)
-
-- **수량이 명시된 여러 상품** → **각각 개별 주문으로 분리**:
-  1) 각 상품의 키워드와 게시물 정보를 매칭하여 정확한 productItemNumber 결정
-  2) 각 상품의 정확한 수량으로 개별 주문 생성
-
 ※ 주문 정보 추출 핵심 규칙:
 
 1. **명확한 주문 의도 판별**: 다음과 같은 댓글은 주문으로 처리하세요.
    - 구체적인 수량이 명시된 경우: "2개요", "3개 주문", "5개 부탁드려요"
    - 상품 번호가 명시된 경우: "1번 2개", "2번 상품 1개"
    - 명확한 주문 의도: "주문할게요", "예약해주세요", "신청합니다"
-   - **패턴 기반 주문**: "작성자명/숫자" 형태 (예: "김지연0381 상무/5", "홍길동/3", "이영희 대리/2")
-   - **단순 숫자**: 댓글이 주로 숫자로만 구성된 경우 (예: "5", "3개", "2통")
-   - **암묵적 주문**: 상품 게시물에서 단순히 수량만 언급한 경우도 주문 의도로 판단
 
-   **❌ 주문이 아닌 댓글들 (반드시 제외하세요)**:
-   - **공지/안내**: "마감되었습니다", "완판되었습니다", "재고 없음", "품절"
-   - **문의**: "가격이 얼마인가요?", "언제 배송되나요?", "재고 있나요?"
-   - **취소**: "취소해주세요", "주문 취소", "환불 요청", "취소할게요", "취소 요청"
-   - **감사/인사**: "감사합니다", "잘 받았습니다", "수고하세요"
-   - **일반 대화**: "좋네요", "맛있겠어요", "다음에 주문할게요"
-   
-   **🚨 취소 댓글 특별 처리**: 
-   - 취소 관련 댓글은 isOrder: false로 처리하되, reason에 "취소 댓글"임을 명시하세요
-   - 예: "취소해주세요" → {"isOrder": false, "reason": "취소 댓글 - 이전 주문 취소 요청"}
+2. **애매한 댓글 처리**: 다음과 같은 댓글은 주문이 아닌 것으로 처리하세요.
+   - 단순 문의: "가격이 어떻게 되나요?", "언제 받을 수 있나요?"
+   - 취소 요청: "취소요", "취소해주세요"
+   - 불분명한 의도: "한개요" (수량은 있지만 주문 의도가 불분명한 경우)
+   - 단순 반응: "좋아요", "감사합니다", "네"
 
-2. **상품 특정 규칙** (게시물 내용과 상품 정보를 함께 고려):
+3. **상품 특정 규칙**:
    - 상품 번호 명시: "1번", "2번" 등 명시적으로 상품을 지정한 경우 해당 상품으로 처리
-   - **상품명 키워드 매칭**: 댓글에 상품명의 핵심 키워드가 포함된 경우 해당 상품으로 처리
-     * 게시물의 상품 정보에서 각 상품의 **핵심 키워드**를 추출하여 매칭
-     * **수량 파싱 패턴**: "키워드+숫자" (예: "사과2", "참외3", "빵1", "쿠키5" 등)
-     * 상품명에 포함된 **구별되는 단어**를 기준으로 정확히 매칭
-     * **번호가 명시된 경우 우선**: "1번", "2번" 등이 있으면 해당 번호 사용
-   - **게시물 내용 기반 매칭**: 게시물에서 언급된 상품명/가격 정보와 댓글 내용을 종합하여 판단
+   - 상품명 키워드 매칭: 댓글에 상품명의 핵심 키워드가 포함된 경우 해당 상품으로 처리
+     * 예: "참외 3개" → "성주꿀참외" 상품으로 매칭
+     * 예: "망고 1개" → "애플망고" 상품으로 매칭
    - 상품 지정이 애매한 경우: isAmbiguous: true로 설정하고 가장 가능성 높은 상품 추천
    - 단일 상품인 경우: 자동으로 해당 상품으로 처리
 
-3. **수량 추출 규칙** (유연한 해석):
-   - **상품별 개별 수량**: "간장2, 고추장1" → 간장 2개, 고추장 1개 (각각 별도 주문)
-   - **상품명+숫자 패턴**: "간장1 고추장1" → 간장 1개, 고추장 1개 (각각 별도 주문)
+4. **수량 추출 규칙**:
    - 명확한 숫자: "2개", "3개", "5개 주문" → 해당 숫자
-   - **패턴 내 숫자**: "김지연/5", "홍길동 대리/3" → 슬래시 뒤 숫자를 수량으로 인식
-   - **단순 숫자**: "5", "3", "2" (단독 숫자) → 해당 숫자를 수량으로 인식
-   - **한글 숫자**: "하나", "둘", "셋", "다섯" → 해당하는 아라비아 숫자로 변환
-   - 단위가 붙은 숫자 제외: "300g", "2kg", "500ml" → 수량이 아님 (무게/용량 단위)
-   
-   **❌ 주문 의도가 없는 경우는 절대 처리하지 마세요**:
-   - 수량이 있어도 명백히 주문이 아닌 문맥: "5시에 마감", "2일 후 배송", "3번째 문의"
-   - 공지성 댓글에서의 숫자: "1차 마감", "2차 입고 예정"
-   - 수량 미명시 + 주문 의도 있음: 1개로 처리 (단, 명백히 주문인 경우만)
-
-※ 여러 상품 주문 예시:
-✅ 개별 주문으로 분리해야 할 댓글들:
-
-**❌ 절대 주문으로 처리하면 안 되는 댓글들**:
-- "마감되었습니다" → isOrder: false (공지성 댓글)
-- "완판되었습니다" → isOrder: false (공지성 댓글)  
-- "재고 없음" → isOrder: false (공지성 댓글)
-- "품절입니다" → isOrder: false (공지성 댓글)
-- "가격이 얼마인가요?" → isOrder: false (문의 댓글)
-- "언제 배송되나요?" → isOrder: false (문의 댓글)
-- "감사합니다" → isOrder: false (인사 댓글)
-- "잘 받았습니다" → isOrder: false (인사 댓글)
-- "좋네요" → isOrder: false (일반 댓글)
-- "맛있겠어요" → isOrder: false (일반 댓글)
-
-**범용적인 분석 방법**:
-
-1. **댓글에서 상품 키워드와 수량 추출**:
-   - "키워드1+숫자, 키워드2+숫자" 패턴 인식
-   - 각 키워드를 게시물의 상품 정보와 매칭
-
-2. **게시물 상품 정보와 매칭**:
-   - 1번 상품의 제목에서 핵심 키워드 추출 → 댓글의 키워드와 비교
-   - 2번 상품의 제목에서 핵심 키워드 추출 → 댓글의 키워드와 비교
-   - 가장 유사한 상품으로 productItemNumber 결정
-
-3. **각 매칭된 상품별로 개별 주문 생성**:
-   - 주문1: commentKey: "동일", productItemNumber: X, quantity: Y, isOrder: true
-   - 주문2: commentKey: "동일", productItemNumber: Z, quantity: W, isOrder: true
-
-4. **주문 생성 규칙**:
-   - 한 댓글에서 N개 상품이 인식되면 정확히 N개 주문만 생성
-   - 중복이나 불필요한 주문 생성 금지
-   - 각 상품의 정확한 수량 반영
-
-**중요**: 한 댓글에서 여러 상품을 언급하면 반드시 orders 배열에 여러 개의 주문 객체를 포함해야 합니다!
+   - 단위가 붙은 숫자 제외: "300g", "2kg", "500ml" → 수량이 아님
+   - 수량 미명시 + 명확한 주문 의도: 1개로 처리
+   - 수량 미명시 + 불분명한 의도: 주문이 아님
 
 출력 형식:
 {
@@ -223,8 +96,6 @@ async function extractOrdersFromCommentsAI(
       "isAmbiguous": true/false,
       "productItemNumber": 숫자 또는 null,
       "quantity": 숫자 또는 null,
-      "expectedUnitPrice": 숫자 또는 null,
-      "expectedTotalPrice": 숫자 또는 null,
       "reason": "판별 이유 설명"
     }
   ]
@@ -239,11 +110,6 @@ async function extractOrdersFromCommentsAI(
 
 === 상품 정보 ===
 ${productsSummary}
-
-🔥 **상품 매핑 규칙**:
-- 각 상품의 제목에서 핵심 키워드를 추출하여 댓글과 매칭하세요
-- 가장 유사도가 높은 상품으로 productItemNumber를 결정하세요
-- 번호가 명시된 경우("1번", "2번" 등) 해당 번호를 우선 사용하세요
 
 === 댓글들 ===
 ${commentsSummary}
@@ -311,214 +177,10 @@ ${commentsSummary}
     console.log(
       `[AI 댓글 분석] ${parsedResult.orders.length}개 댓글 분석 결과 받음`
     );
-
-    // 🔥 디버깅: 여러 상품 주문 분석 결과 로깅
-    const multipleOrderComments = parsedResult.orders.reduce((acc, order) => {
-      if (!acc[order.commentKey]) {
-        acc[order.commentKey] = [];
-      }
-      acc[order.commentKey].push(order);
-      return acc;
-    }, {});
-
-    Object.entries(multipleOrderComments).forEach(([commentKey, orders]) => {
-      if (orders.length > 1) {
-        console.log(
-          `[AI 다중주문 감지] 댓글 ${commentKey}: ${orders.length}개 주문 분리됨`
-        );
-        orders.forEach((order, index) => {
-          console.log(
-            `  주문${index + 1}: ${order.productItemNumber}번 상품, 수량: ${
-              order.quantity
-            }, 내용: "${order.commentContent}"`
-          );
-        });
-      }
-    });
-
     return parsedResult.orders;
   } catch (error) {
     console.error("[AI 댓글 분석] 실패:", error);
     return [];
-  }
-}
-
-// --- 취소 댓글 처리 함수 ---
-async function processCancellationComments(
-  supabase,
-  userId,
-  comments,
-  postKey,
-  bandKey,
-  bandNumber
-) {
-  try {
-    console.log(`[취소 처리] 게시물 ${postKey}의 댓글에서 취소 요청 확인 시작`);
-
-    // 취소 관련 키워드 패턴
-    const cancellationPatterns = [
-      /취소/i,
-      /주문\s*취소/i,
-      /취소해\s*주세요/i,
-      /취소\s*요청/i,
-      /취소할게요/i,
-      /취소\s*해주세요/i,
-      /주문\s*취소\s*합니다/i,
-    ];
-
-    // 댓글들을 시간순으로 정렬 (작성 시간 기준)
-    const sortedComments = [...comments].sort((a, b) => {
-      const timeA = new Date(a.createdAt || 0).getTime();
-      const timeB = new Date(b.createdAt || 0).getTime();
-      return timeA - timeB;
-    });
-
-    let cancellationCount = 0;
-
-    for (let i = 0; i < sortedComments.length; i++) {
-      const comment = sortedComments[i];
-      const commentContent = comment.content?.trim() || "";
-
-      // 취소 댓글인지 확인
-      const isCancellation = cancellationPatterns.some((pattern) =>
-        pattern.test(commentContent)
-      );
-
-      if (isCancellation) {
-        console.log(
-          `[취소 감지] 댓글: "${commentContent}" (작성자: ${comment.author})`
-        );
-
-        // 이 사용자의 이전 주문들을 찾아서 취소 처리
-        const authorUserNo = comment.authorUserNo || comment.author_user_no;
-
-        if (authorUserNo) {
-          await cancelPreviousOrders(
-            supabase,
-            userId,
-            postKey,
-            bandKey,
-            bandNumber,
-            authorUserNo,
-            comment.createdAt,
-            commentContent
-          );
-          cancellationCount++;
-        } else {
-          console.log(
-            `[취소 처리] 댓글 작성자 정보가 없어 취소 처리할 수 없습니다: "${commentContent}"`
-          );
-        }
-      }
-    }
-
-    if (cancellationCount > 0) {
-      console.log(
-        `[취소 처리] 총 ${cancellationCount}개의 취소 댓글 처리 완료`
-      );
-    }
-  } catch (error) {
-    console.error(`[취소 처리] 오류:`, error);
-  }
-}
-
-// --- 이전 주문 취소 처리 함수 ---
-async function cancelPreviousOrders(
-  supabase,
-  userId,
-  postKey,
-  bandKey,
-  bandNumber,
-  authorUserNo,
-  cancellationTime,
-  cancellationComment
-) {
-  try {
-    // 이 사용자의 해당 게시물에서 취소 댓글 이전의 주문들을 찾기
-    const { data: existingOrders, error: ordersError } = await supabase
-      .from("orders")
-      .select(
-        "id, order_id, created_at, sub_status, customer_name, quantity, total_price"
-      )
-      .eq("user_id", userId)
-      .eq("post_key", postKey)
-      .eq("band_key", bandKey)
-      .eq("author_user_no", authorUserNo)
-      .neq("sub_status", "취소요청") // 이미 취소 요청된 것은 제외
-      .neq("sub_status", "취소완료") // 이미 취소 완료된 것은 제외
-      .order("created_at", { ascending: false });
-
-    if (ordersError) {
-      console.error(`[취소 처리] 기존 주문 조회 오류:`, ordersError);
-      return;
-    }
-
-    if (!existingOrders || existingOrders.length === 0) {
-      console.log(
-        `[취소 처리] 사용자 ${authorUserNo}의 게시물 ${postKey}에서 취소할 주문이 없습니다`
-      );
-      return;
-    }
-
-    // 취소 댓글 시간 이전의 주문들만 필터링
-    const cancellationDate = new Date(cancellationTime);
-    const ordersToCancel = existingOrders.filter((order) => {
-      const orderDate = new Date(order.created_at);
-      return orderDate < cancellationDate;
-    });
-
-    if (ordersToCancel.length === 0) {
-      console.log(`[취소 처리] 취소 댓글 이전에 생성된 주문이 없습니다`);
-      return;
-    }
-
-    // 주문들의 sub_status를 '취소요청'으로 업데이트
-    const orderIds = ordersToCancel.map((order) => order.id);
-
-    const { error: updateError } = await supabase
-      .from("orders")
-      .update({
-        sub_status: "취소요청",
-        updated_at: new Date().toISOString(),
-      })
-      .in("id", orderIds);
-
-    if (updateError) {
-      console.error(`[취소 처리] 주문 상태 업데이트 오류:`, updateError);
-      return;
-    }
-
-    // 성공 로그
-    console.log(
-      `[취소 처리] 사용자 ${authorUserNo}의 ${ordersToCancel.length}개 주문 상태를 '취소요청'으로 변경`
-    );
-    ordersToCancel.forEach((order) => {
-      console.log(
-        `  - 주문 ID: ${order.order_id}, 고객: ${order.customer_name}, 수량: ${order.quantity}, 금액: ${order.total_price}`
-      );
-    });
-
-    // 취소 로그 저장 (선택적)
-    try {
-      await supabase.from("order_logs").insert({
-        user_id: userId,
-        post_key: postKey,
-        band_key: bandKey,
-        action: "취소요청",
-        details: {
-          author_user_no: authorUserNo,
-          cancelled_orders: ordersToCancel.length,
-          cancellation_comment: cancellationComment,
-          order_ids: ordersToCancel.map((o) => o.order_id),
-        },
-        created_at: new Date().toISOString(),
-      });
-    } catch (logError) {
-      // 로그 저장 실패는 무시 (주요 기능에 영향 없음)
-      console.warn(`[취소 처리] 로그 저장 실패:`, logError);
-    }
-  } catch (error) {
-    console.error(`[취소 처리] cancelPreviousOrders 오류:`, error);
   }
 }
 
@@ -561,32 +223,9 @@ description 필드: 해당 옵션에 대한 구체적인 설명을 포함합니�
 basePrice로 설정된 가격 정보(가장 기본 단위 옵션)도 priceOptions 배열 안에 반드시 포함되어야 합니다.
 텍스트에 유효한 판매 가격이 단 하나만 명시된 경우, 해당 가격 정보를 포함하는 옵션 객체 하나만 이 배열에 넣으세요. (예: [{ "quantity": 1, "price": 8900, "description": "1봉지(6알)" }])
 🔥중요: 위 1번 규칙에 따라 '원가', '정상가', '참고용 가격'으로 판단된 금액은 이 배열에 절대 포함시키지 마십시오.
-🔥🔥🔥 단일 상품 vs. 여러 상품 (중요한 판별 규칙):
-
-**반드시 여러 상품(multipleProducts: true)으로 처리해야 하는 경우:**
-1. **서로 다른 상품명**: "사과", "배", "딸기" 등 명백히 다른 상품들
-2. **같은 카테고리 내 다른 종류**: "빨간 파프리카", "노란 파프리카", "초록 파프리카"
-3. **번호가 매겨진 목록**: "1번 상품", "2번 상품" 또는 "1️⃣", "2️⃣", "3️⃣"
-4. **줄바꿈으로 구분된 서로 다른 상품명들**: 각 줄에 다른 상품이 가격과 함께 나열된 경우
-5. **🚨 핵심 규칙**: 상품명이 완전히 다른 경우 (예: "비건영양쿠키", "비건르뱅쿠키", "모싯잎쌀식빵", "단팥빵", "소금빵" 등)
-6. **가격이 함께 나열된 여러 상품**: 각 줄이나 항목에 "상품명 + 가격" 형태로 3개 이상 나열된 경우
-7. **빵집/디저트 메뉴**: 여러 종류의 빵, 쿠키, 케이크 등이 각각 다른 가격으로 나열된 경우
-
-**단일 상품(multipleProducts: false)으로 처리하는 경우:**
-- **동일 상품의 수량/용량별 가격**: "사과 1kg 5000원, 사과 2kg 9000원, 사과 5kg 20000원"
-- **동일 상품의 포장 단위별 가격**: "오렌지 1봉지 8900원, 오렌지 2봉지 16900원"
-
-**🔥 중요 예시:**
-❌ 잘못된 처리 (단일 상품으로 인식):
-비건영양쿠키3입 4,450원, 비건르뱅쿠키80g 2,780원  
-→ 이는 서로 다른 상품이므로 multipleProducts: true 처리 필요!
-
-✅ 올바른 처리 (여러 상품):
-products 배열에 각각 별도 상품으로 분리
-
-✅ 단일 상품 예시:
-사과 1kg 5,000원, 사과 2kg 9,000원  
-→ priceOptions로 처리 (동일 상품의 다른 용량)
+단일 상품 vs. 여러 상품:
+🔥게시물에 명확히 다른 상품(예: 사과, 배)이나 동일 품목이라도 종류/색상(빨간 파프리카, 노란 파프리카)이 다른 상품이 여러 개 있으면 반드시 multipleProducts를 true로 설정하고, 각 상품 정보를 products 배열에 담으세요. 특히 '1번', '2번' 또는 '1️⃣', '2️⃣', '3️⃣' 와 같이 번호가 매겨진 목록 형태나 서로 다른 상품명이 줄바꿈으로 구분된 경우는 무조건 여러 상품으로 처리하세요.
+동일 상품에 대한 수량/단위별 가격 차이는 여러 상품이 아니라, 단일 상품의 priceOptions로 처리해야 합니다. 이 경우 multipleProducts는 false입니다.
 기타 필드:
 title: 상품의 핵심 명칭만 간결하게 추출합니다. (수량/단위 정보는 반드시 제외)
   🔥🔥🔥 **날짜 접두사 중요:** 맨 앞에 반드시 **\`[M월D일]\` 형식**으로 나에게 전달된 게시물 작성 시간(마지막에 전달된 postTime)의 월과 일만 포함하세요. 상품 수령일이 아닌 게시물 작성일입니다. (예: 게시물이 5월 17일에 작성되었다면 \`[5월17일]\`)
@@ -1585,8 +1224,8 @@ function generateProductUniqueIdForItem(
 ) {
   return `prod_${bandNumber}_${originalPostId}_item${itemNumber}`;
 }
-function generateOrderUniqueId(bandNumber, postId, commentKey, itemIdentifier) {
-  return `order_${bandNumber}_${postId}_${commentKey}_item${itemIdentifier}`;
+function generateOrderUniqueId(bandNumber, postId, commentKey, itemNumber) {
+  return `order_${bandNumber}_${postId}_${commentKey}_item${itemNumber}`;
 }
 function generateCustomerUniqueId(userId, authorUserNo) {
   return `cust_${userId}_${authorUserNo}`;
@@ -1879,9 +1518,7 @@ async function savePostAndProducts(
       updated_at: new Date().toISOString(),
       post_key: post.postKey,
       ai_extraction_status: aiExtractionStatus,
-      products_data: aiAnalysisResult
-        ? safeJsonStringify(aiAnalysisResult)
-        : null,
+      products_data: aiAnalysisResult ? JSON.stringify(aiAnalysisResult) : null,
       multiple_products: aiAnalysisResult?.multipleProducts || false,
       ai_classification_result: classificationResult,
       ai_classification_reason: classificationReason,
@@ -1899,20 +1536,11 @@ async function savePostAndProducts(
       .select("post_id")
       .single();
     if (postUpsertError) {
-      console.error(`Post ${post.postKey} Supabase 저장 오류:`, {
-        error: postUpsertError,
-        message: postUpsertError.message,
-        code: postUpsertError.code,
-        details: postUpsertError.details,
-        hint: postUpsertError.hint,
-        dataAttempted: {
-          postId: postDataToUpsert.post_id,
-          title: postDataToUpsert.title,
-          content_length: postDataToUpsert.content?.length || 0,
-          products_data_length: postDataToUpsert.products_data?.length || 0,
-        },
-      });
-      throw new Error("Post save failed");
+      console.error(
+        `Post ${post.postKey} Supabase 저장 오류:`,
+        postUpsertError
+      );
+      return null;
     }
     if (!upsertedPostData || !upsertedPostData.post_id) {
       console.error(`Failed to get post ID after upsert for ${post.postKey}`);
@@ -1995,7 +1623,7 @@ async function savePostAndProducts(
             barcode: "",
             updated_at: new Date().toISOString(),
             posted_at: dateObject.toISOString(),
-            products_data: safeJsonStringify(aiAnalysisResult),
+            products_data: JSON.stringify(aiAnalysisResult),
           };
 
           // console.log(
@@ -2054,8 +1682,7 @@ async function savePostAndProducts(
   postKey,
   bandKey,
   bandNumber,
-  productMap,
-  post = null // 게시물 정보 추가
+  productMap
 ) {
   const orders = [];
   const customers = new Map();
@@ -2192,15 +1819,15 @@ async function savePostAndProducts(
       try {
         // AI 분석 진행 로그 (간소화)
 
-        // 게시물 정보 준비 (게시물 내용 포함)
+        // 게시물 정보 준비
         const postInfo = {
           products: Array.from(productMap.values()).map((product) => ({
             title: product.title,
             basePrice: product.base_price,
             priceOptions: product.price_options || [],
           })),
-          content: post?.content || "", // 실제 게시물 내용 포함
-          postTime: post?.createdAt || new Date().toISOString(), // 실제 게시물 시간
+          content: "", // 게시물 내용이 필요하면 별도로 조회 필요
+          postTime: new Date().toISOString(), // 게시물 시간이 필요하면 별도로 조회 필요
         };
 
         aiOrderResults = await extractOrdersFromCommentsAI(
@@ -2230,17 +1857,7 @@ async function savePostAndProducts(
       console.log(`[주문 생성] 댓글이 없어 AI 분석을 건너뜁니다.`);
     }
 
-    // --- 4. 취소 댓글 감지 및 처리 ---
-    await processCancellationComments(
-      supabase,
-      userId,
-      comments,
-      postKey,
-      bandKey,
-      bandNumber
-    );
-
-    // --- 5. 댓글 순회 및 처리 ---
+    // --- 4. 댓글 순회 및 처리 ---
     for (let i = 0; i < comments.length; i++) {
       const comment = comments[i];
       try {
@@ -2283,26 +1900,20 @@ async function savePostAndProducts(
         //     continue;
         // }
         // --- 4.4. 댓글에서 주문 정보 추출 (AI 결과 우선 사용) ---
-        let orderItems = [];
+        let representativeItem = null;
         let isProcessedAsOrder = false;
         let aiAnalyzed = false;
 
         // AI 결과가 있으면 우선 사용
         if (useAIResults && aiOrderResults.length > 0) {
-          // 같은 commentKey를 가진 모든 AI 결과를 찾기 (여러 상품 주문 처리)
-          const aiResults = aiOrderResults.filter(
+          const aiResult = aiOrderResults.find(
             (result) => result.commentKey === commentKey
           );
-
-          if (aiResults.length > 0) {
+          if (aiResult) {
             aiAnalyzed = true;
 
-            // 주문인 결과들만 필터링
-            const orderResults = aiResults.filter((result) => result.isOrder);
-
-            if (orderResults.length > 0) {
-              // 각 AI 결과를 개별 주문 아이템으로 변환
-              orderItems = orderResults.map((aiResult) => ({
+            if (aiResult.isOrder) {
+              representativeItem = {
                 itemNumber: aiResult.productItemNumber || 1,
                 quantity: aiResult.quantity || 1,
                 isAmbiguous: aiResult.isAmbiguous || false,
@@ -2312,23 +1923,9 @@ async function savePostAndProducts(
                 reason: aiResult.reason,
                 commentContent: aiResult.commentContent,
                 author: aiResult.author,
-              }));
+              };
               isProcessedAsOrder = true;
-              processingSummary.aiDetectedOrders += orderResults.length;
-
-              // 🔥 디버깅: 여러 주문 아이템 생성 로깅
-              if (orderResults.length > 1) {
-                console.log(
-                  `[주문생성 다중아이템] 댓글 ${commentKey}: ${orderResults.length}개 주문 아이템 생성`
-                );
-                orderItems.forEach((item, index) => {
-                  console.log(
-                    `  아이템${index + 1}: ${item.itemNumber}번 상품, 수량: ${
-                      item.quantity
-                    }`
-                  );
-                });
-              }
+              processingSummary.aiDetectedOrders++;
             } else {
               // AI가 주문이 아니라고 판단한 경우 건너뛰기
               processingSummary.aiSkippedNonOrders++;
@@ -2342,24 +1939,22 @@ async function savePostAndProducts(
           const extractedOrderItems =
             extractEnhancedOrderFromComment(commentContent);
           if (extractedOrderItems && extractedOrderItems.length > 0) {
-            // 추출 성공 시 모든 항목 사용
-            orderItems = extractedOrderItems;
+            // 추출 성공 시 첫 번째 항목 사용
+            representativeItem = extractedOrderItems[0];
             isProcessedAsOrder = true;
           } else {
             // 추출 실패 시: 기본 주문 생성 (아이템 1, 수량 1)
-            orderItems = [
-              {
-                itemNumber: 1,
-                quantity: 1,
-                isAmbiguous: true,
-              },
-            ];
+            representativeItem = {
+              itemNumber: 1,
+              quantity: 1,
+              isAmbiguous: true,
+            };
             isProcessedAsOrder = true;
           }
-          processingSummary.ruleBasedOrders += orderItems.length;
+          processingSummary.ruleBasedOrders++;
         }
         // --- 3.5. 주문으로 처리 결정 시 ---
-        if (isProcessedAsOrder && orderItems.length > 0) {
+        if (isProcessedAsOrder && representativeItem) {
           // --- 3.5.1. 고객 정보 생성 또는 업데이트 준비 ---
           const customerId = generateCustomerUniqueId(userId, authorUserNo);
           if (!customers.has(customerId)) {
@@ -2386,226 +1981,164 @@ async function savePostAndProducts(
             existingCustomer.customer_name = authorName; // 이름 업데이트될 수 있으므로 갱신
             existingCustomer.profile_image = authorProfileUrl || ""; // 프로필 이미지 업데이트
           }
+          // --- 3.5.2. 상품 매칭 및 가격 계산 ---
+          let isAmbiguous = representativeItem.isAmbiguous || false;
+          let productId = null;
+          let itemNumber = representativeItem.itemNumber || 1;
+          let quantity = representativeItem.quantity || 1;
+          let basePriceForOrder = 0;
+          let calculatedTotalAmount = 0;
+          let priceOptionDescription = null; // 가격 옵션 설명
+          let matchedExactly = false; // 정확히 매칭되었는지 여부
+          let productInfo = null; // 매칭된 상품 정보
 
-          // --- 3.5.2. 각 주문 아이템에 대해 개별 주문 생성 ---
-          for (
-            let orderIndex = 0;
-            orderIndex < orderItems.length;
-            orderIndex++
-          ) {
-            const orderItem = orderItems[orderIndex];
-
-            // --- 상품 매칭 및 가격 계산 ---
-            let isAmbiguous = orderItem.isAmbiguous || false;
-            let productId = null;
-            let itemNumber = orderItem.itemNumber || 1;
-            let quantity = orderItem.quantity || 1;
-            let basePriceForOrder = 0;
-            let calculatedTotalAmount = 0;
-            let priceOptionDescription = null; // 가격 옵션 설명
-            let matchedExactly = false; // 정확히 매칭되었는지 여부
-            let productInfo = null; // 매칭된 상품 정보
-
-            // itemNumber로 상품 찾기
-            if (itemNumber !== null && productMap.has(itemNumber)) {
-              productInfo = productMap.get(itemNumber);
-              if (productInfo && productInfo.product_id) {
-                productId = productInfo.product_id;
-                matchedExactly = !isAmbiguous;
-              } else {
-                productInfo = null; // 유효하지 않으면 null 처리
-              }
+          // itemNumber로 상품 찾기
+          if (itemNumber !== null && productMap.has(itemNumber)) {
+            productInfo = productMap.get(itemNumber);
+            if (productInfo && productInfo.product_id) {
+              productId = productInfo.product_id;
+              matchedExactly = !isAmbiguous;
+            } else {
+              productInfo = null; // 유효하지 않으면 null 처리
             }
+          }
 
-            // 매칭 실패 또는 모호한 경우 itemNumber 1로 폴백 시도
-            if (!productId && productMap.has(1)) {
-              const defaultProductInfo = productMap.get(1);
-              if (defaultProductInfo && defaultProductInfo.product_id) {
-                productId = defaultProductInfo.product_id;
-                productInfo = defaultProductInfo;
-                itemNumber = 1; // itemNumber 1로 확정
-                isAmbiguous = true; // 폴백했으므로 모호함
-                // PID Fallback 로그 제거 (간소화)
-              } else {
-                console.warn(
-                  `  [PID Fallback Warning] Comment ${commentKey}: Default product (itemNumber 1) found, but product_id is missing.`
-                );
-                productInfo = null;
-              }
-            }
-
-            // 최종 productId 확인
-            if (!productId || !productInfo) {
-              console.error(
-                `  [PID Match Failed] Comment ${commentKey}: Could not determine valid productId. Order will have null productId and 0 price.`
-              );
-              isAmbiguous = true;
-              productInfo = null;
-            }
-
-            // 가격 계산
-            if (productInfo) {
-              const productOptions = productInfo.price_options || [];
-              const fallbackPrice =
-                typeof productInfo.base_price === "number"
-                  ? productInfo.base_price
-                  : 0;
-              basePriceForOrder = fallbackPrice;
-              try {
-                calculatedTotalAmount = calculateOptimalPrice(
-                  quantity,
-                  productOptions,
-                  fallbackPrice
-                );
-                // 가격 옵션 설명 (옵션)
-                const matchingOption = productOptions.find(
-                  (opt) => opt.quantity === quantity
-                );
-                if (matchingOption) {
-                  priceOptionDescription =
-                    matchingOption.description || `${quantity} 단위 옵션`;
-                } else if (quantity === 1) {
-                  // 기본 수량일 때
-                  priceOptionDescription = productInfo.title
-                    ? `기본 (${productInfo.title})`
-                    : "기본 가격";
-                } else {
-                  priceOptionDescription = productInfo.title
-                    ? `${quantity}개 (${productInfo.title})`
-                    : `${quantity}개`;
-                }
-              } catch (calcError) {
-                console.error(
-                  `  [Price Calc Error] Comment ${commentKey}: Error during calculateOptimalPrice: ${calcError.message}`
-                );
-                calculatedTotalAmount = 0;
-                isAmbiguous = true;
-              }
+          // 매칭 실패 또는 모호한 경우 itemNumber 1로 폴백 시도
+          if (!productId && productMap.has(1)) {
+            const defaultProductInfo = productMap.get(1);
+            if (defaultProductInfo && defaultProductInfo.product_id) {
+              productId = defaultProductInfo.product_id;
+              productInfo = defaultProductInfo;
+              itemNumber = 1; // itemNumber 1로 확정
+              isAmbiguous = true; // 폴백했으므로 모호함
+              // PID Fallback 로그 제거 (간소화)
             } else {
               console.warn(
-                `  [Price Calc Skip] Comment ${commentKey}: Skipping calculation due to missing productInfo.`
+                `  [PID Fallback Warning] Comment ${commentKey}: Default product (itemNumber 1) found, but product_id is missing.`
               );
-              basePriceForOrder = 0;
-              calculatedTotalAmount = 0;
+              productInfo = null;
             }
-
-            // --- 3.5.3. 최종 주문 상태 결정 ---
-            // sub_status는 간단한 주문 상태만 저장 (확인필요, 미수령, 완료 등)
-            let finalSubStatus = null;
-
-            // 댓글에 숫자가 없는 경우 또는 모호한 경우
-            if (!/\d/.test(commentContent) || isAmbiguous) {
-              finalSubStatus = "확인필요";
-            }
-            // 여러 상품 게시물인데 정확히 매칭되지 않은 경우
-            else if (isMultipleProductsPost && productId && !matchedExactly) {
-              finalSubStatus = "확인필요";
-            }
-            // 기본값 (정상적인 주문) - 수령일 고려
-            else {
-              // 수령일이 있는 경우 현재 날짜와 비교하여 상태 결정
-              if (productInfo && productInfo.pickup_date) {
-                try {
-                  const pickupDate = new Date(productInfo.pickup_date);
-                  const currentDate = new Date();
-                  // 시간을 제거하고 날짜만 비교
-                  pickupDate.setHours(23, 59, 59, 999); // 수령일 당일 23:59:59까지
-                  currentDate.setHours(0, 0, 0, 0); // 현재일 00:00:00부터
-
-                  if (currentDate > pickupDate) {
-                    // 수령일이 지났으면 미수령
-                    finalSubStatus = "미수령";
-                  } else {
-                    // 수령일이 아직 안 지났으면 null (정상 주문)
-                    finalSubStatus = null;
-                  }
-                } catch (dateError) {
-                  console.warn(
-                    `  [Date Parse Error] Comment ${commentKey}: Invalid pickup_date format: ${productInfo.pickup_date}`
-                  );
-                  finalSubStatus = null; // 날짜 파싱 오류 시 기본값
-                }
-              } else {
-                // 수령일 정보가 없으면 기본값 null
-                finalSubStatus = null;
-              }
-            }
-
-            // --- 3.5.4. 주문 데이터 객체 생성 ---
-            // 개별 주문 ID 생성 (orderIndex 추가하여 고유성 보장)
-            const orderId = generateOrderUniqueId(
-              bandKey,
-              postKey,
-              commentKey,
-              `${itemNumber}_${orderIndex}`
-            );
-
-            // AI 분석 결과를 JSON으로 저장 (가격 정보 포함)
-            const aiExtractionResult = orderItem
-              ? {
-                  isOrder: orderItem.isOrder,
-                  reason: orderItem.reason,
-                  isAmbiguous: orderItem.isAmbiguous,
-                  productItemNumber: orderItem.itemNumber,
-                  quantity: orderItem.quantity,
-                  commentContent: orderItem.commentContent,
-                  author: orderItem.author,
-                  expectedUnitPrice: orderItem.expectedUnitPrice || null,
-                  expectedTotalPrice: orderItem.expectedTotalPrice || null,
-                  actualUnitPrice: basePriceForOrder,
-                  actualTotalPrice: calculatedTotalAmount,
-                  priceMatchAccuracy: orderItem.expectedTotalPrice
-                    ? Math.abs(
-                        1 -
-                          Math.abs(
-                            calculatedTotalAmount - orderItem.expectedTotalPrice
-                          ) /
-                            orderItem.expectedTotalPrice
-                      )
-                    : null,
-                }
-              : null;
-
-            const orderData = {
-              order_id: orderId,
-              customer_id: customerId,
-              user_id: userId,
-              band_key: bandKey,
-              band_number: bandNumber,
-              post_key: postKey,
-              post_number: null,
-              comment_key: commentKey,
-              customer_name: authorName,
-              product_id: productId,
-              item_number: itemNumber,
-              quantity: quantity,
-              price: basePriceForOrder,
-              total_amount: calculatedTotalAmount,
-              status: "주문완료",
-              sub_status: finalSubStatus,
-              comment: commentContent,
-              ordered_at: createdAt.toISOString(),
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-              ai_extraction_result: aiExtractionResult
-                ? safeJsonStringify(aiExtractionResult)
-                : null,
-            };
-            orders.push(orderData);
-            processingSummary.generatedOrders++;
-
-            // 🔥 디버깅: 개별 주문 생성 로깅
-            console.log(
-              `[주문생성] ${orderId} - ${orderItem.itemNumber}번 상품 ${quantity}개 (댓글: ${commentKey})`
-            );
-          } // End of orderItems loop
-
-          // 🔥 디버깅: 댓글당 최종 주문 개수 로깅
-          if (orderItems.length > 1) {
-            console.log(
-              `[주문생성 완료] 댓글 ${commentKey}에서 총 ${orderItems.length}개 주문 생성됨`
-            );
           }
+
+          // 최종 productId 확인
+          if (!productId || !productInfo) {
+            console.error(
+              `  [PID Match Failed] Comment ${commentKey}: Could not determine valid productId. Order will have null productId and 0 price.`
+            );
+            isAmbiguous = true;
+            productInfo = null;
+          }
+
+          // 가격 계산
+          if (productInfo) {
+            const productOptions = productInfo.price_options || [];
+            const fallbackPrice =
+              typeof productInfo.base_price === "number"
+                ? productInfo.base_price
+                : 0;
+            basePriceForOrder = fallbackPrice;
+            try {
+              calculatedTotalAmount = calculateOptimalPrice(
+                quantity,
+                productOptions,
+                fallbackPrice
+              );
+              // 가격 옵션 설명 (옵션)
+              const matchingOption = productOptions.find(
+                (opt) => opt.quantity === quantity
+              );
+              if (matchingOption) {
+                priceOptionDescription =
+                  matchingOption.description || `${quantity} 단위 옵션`;
+              } else if (quantity === 1) {
+                // 기본 수량일 때
+                priceOptionDescription = productInfo.title
+                  ? `기본 (${productInfo.title})`
+                  : "기본 가격";
+              } else {
+                priceOptionDescription = productInfo.title
+                  ? `${quantity}개 (${productInfo.title})`
+                  : `${quantity}개`;
+              }
+            } catch (calcError) {
+              console.error(
+                `  [Price Calc Error] Comment ${commentKey}: Error during calculateOptimalPrice: ${calcError.message}`
+              );
+              calculatedTotalAmount = 0;
+              isAmbiguous = true;
+            }
+          } else {
+            console.warn(
+              `  [Price Calc Skip] Comment ${commentKey}: Skipping calculation due to missing productInfo.`
+            );
+            basePriceForOrder = 0;
+            calculatedTotalAmount = 0;
+          }
+          // --- 3.5.3. 최종 주문 상태 결정 ---
+          // sub_status는 간단한 주문 상태만 저장 (확인필요, 미수령, 완료 등)
+          let finalSubStatus = null;
+
+          // 댓글에 숫자가 없는 경우 또는 모호한 경우
+          if (!/\d/.test(commentContent) || isAmbiguous) {
+            finalSubStatus = "확인필요";
+          }
+          // 여러 상품 게시물인데 정확히 매칭되지 않은 경우
+          else if (isMultipleProductsPost && productId && !matchedExactly) {
+            finalSubStatus = "확인필요";
+          }
+          // 기본값 (정상적인 주문)
+          else {
+            finalSubStatus = "미수령";
+          }
+
+          // --- 3.5.4. 주문 데이터 객체 생성 ---
+          const orderId = generateOrderUniqueId(
+            bandKey,
+            postKey,
+            commentKey,
+            itemNumber
+          ); // 고유 ID 생성
+
+          // AI 분석 결과를 JSON으로 저장
+          const aiExtractionResult = representativeItem
+            ? {
+                isOrder: representativeItem.isOrder,
+                reason: representativeItem.reason,
+                isAmbiguous: representativeItem.isAmbiguous,
+                productItemNumber: representativeItem.productItemNumber,
+                quantity: representativeItem.quantity,
+                commentContent: representativeItem.commentContent,
+                author: representativeItem.author,
+              }
+            : null;
+
+          const orderData = {
+            order_id: orderId,
+            customer_id: customerId,
+            user_id: userId,
+            band_key: bandKey,
+            band_number: bandNumber,
+            post_key: postKey,
+            post_number: null,
+            comment_key: commentKey,
+            customer_name: authorName,
+            product_id: productId,
+            item_number: itemNumber,
+            quantity: quantity,
+            price: basePriceForOrder,
+            total_amount: calculatedTotalAmount,
+            status: "주문완료",
+            sub_status: finalSubStatus,
+            comment: commentContent,
+            ordered_at: createdAt.toISOString(),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            ai_extraction_result: aiExtractionResult
+              ? JSON.stringify(aiExtractionResult)
+              : null,
+          };
+          orders.push(orderData);
+          processingSummary.generatedOrders++;
           // console.log(
           //   `[주문 생성] Generated order ${orderId} for comment ${commentKey}`
           // );
@@ -2790,37 +2323,26 @@ Deno.serve(async (req) => {
       .single();
 
     const defaultLimit = userSettings?.post_fetch_limit || 200; // 사용자 설정값 또는 기본값 200
-
-    // 사용자 설정이 있으면 그것을 우선 사용, URL 파라미터는 사용자 설정이 없을 때만 적용
-    let processingLimit;
-    if (userSettings?.post_fetch_limit) {
-      // 사용자 설정이 있으면 무조건 그것을 사용 (URL 파라미터 무시)
-      processingLimit = userSettings.post_fetch_limit;
-    } else {
-      // 사용자 설정이 없으면 URL 파라미터 또는 기본값 사용
-      const requestedLimit = parseInt(
-        params.get("limit") || defaultLimit.toString(),
-        10
-      );
-      processingLimit = requestedLimit > 0 ? requestedLimit : defaultLimit;
-    }
-
+    const requestedLimit = parseInt(
+      params.get("limit") || defaultLimit.toString(),
+      10
+    );
     // 🧪 테스트 모드에서는 처리량 제한 (최대 5개)
-    const maxLimit = testMode ? 5 : 1000; // 최대 1000개까지 허용
-    processingLimit = Math.min(processingLimit, maxLimit);
+    const maxLimit = testMode ? 5 : Math.max(defaultLimit, 200);
+    const processingLimit = Math.min(
+      requestedLimit > 0 ? requestedLimit : defaultLimit,
+      maxLimit
+    );
 
     if (userSettingsError) {
       console.warn(
         `사용자 설정 조회 실패: ${userSettingsError.message}, 기본값 200 사용`
       );
     } else {
-      const urlLimit = params.get("limit");
       console.log(
         `사용자 ${userId}의 게시물 제한 설정: ${
           userSettings?.post_fetch_limit || "미설정(기본값 200)"
-        }${
-          urlLimit ? `, URL 파라미터: ${urlLimit}` : ""
-        } → 실제 가져올 개수: ${processingLimit}개`
+        }`
       );
     }
     const processWithAI = params.get("processAI")?.toLowerCase() !== "false";
@@ -2899,11 +2421,11 @@ Deno.serve(async (req) => {
         // console.log(
         //   `  -> 게시물 ${postKey} 처리 중 (${isNewPost ? "신규" : "기존"})`
         // );
-        // console.log(
-        //   `  -> 기존 댓글 ${dbPostData?.comment_count ?? 0}개 api 댓글 ${
-        //     apiPost.commentCount ?? 0
-        //   }개`
-        // );
+        console.log(
+          `  -> 기존 댓글 ${dbPostData?.comment_count ?? 0}개 api 댓글 ${
+            apiPost.commentCount ?? 0
+          }개`
+        );
         // --- 👇 [수정 1] 변수 초기화 위치 및 기본값 설정 👇 ---
         let finalCommentCountForUpdate =
           apiPost.commentCount ?? (dbPostData?.comment_count || 0); // 기본값: API 값 또는 DB 값
@@ -3297,8 +2819,7 @@ Deno.serve(async (req) => {
                       postKey,
                       bandKey,
                       bandNumber,
-                      productMap,
-                      apiPost // 게시물 정보 추가
+                      productMap
                     );
                     // 🧪 테스트 모드에서는 주문/고객 저장 건너뛰기
                     if (!testMode) {

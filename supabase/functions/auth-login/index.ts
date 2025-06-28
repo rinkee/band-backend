@@ -37,8 +37,9 @@ Deno.serve(async (req: Request) => {
     }
     supabase = createClient(supabaseUrl, supabaseAnonKey);
     console.log("Supabase client initialized for login.");
-  } catch (error) {
-    console.error("Supabase init error:", error.message);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("Supabase init error:", errorMessage);
     return new Response(
       JSON.stringify({
         success: false,
@@ -208,6 +209,8 @@ Deno.serve(async (req: Request) => {
       bandUrl: userData.band_url,
       bandNumber: userData.band_number,
       naverId: userData.naver_id, // 네이버 ID는 필요에 따라 포함
+      band_access_token: userData.band_access_token, // BAND 액세스 토큰 추가
+      band_key: userData.band_key, // BAND 키 추가
       isActive: userData.is_active,
       excludedCustomers: userData.excluded_customers,
       subscription: userData.subscription, // 구독 정보
@@ -218,6 +221,13 @@ Deno.serve(async (req: Request) => {
     };
 
     // 성공 응답 (토큰과 사용자 정보 포함)
+    // httpOnly 쿠키로 토큰 설정 추가
+    const responseHeaders = {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+      "Set-Cookie": `authToken=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=3600`,
+    };
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -227,17 +237,18 @@ Deno.serve(async (req: Request) => {
       }),
       {
         status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: responseHeaders,
       }
     );
-  } catch (error) {
+  } catch (error: unknown) {
     // 예외 처리
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error("Unhandled error in login:", error);
     return new Response(
       JSON.stringify({
         success: false,
         message: "로그인 처리 중 오류 발생",
-        error: error.message,
+        error: errorMessage,
       }),
       {
         status: 500,
