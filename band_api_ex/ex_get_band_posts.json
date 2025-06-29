@@ -1,0 +1,208 @@
+{
+  "result_code": 1,
+  "result_data": {
+    "items": [
+      {
+        "author": {
+          "name": "학사농장유기데이",
+          "profile_image_url": "https://coresos-phinf.pstatic.net/a/349693/c_1a9Ud018svc17jvx1ioxkqcc_uqz5bo.png",
+          "description": "깨끗하고 정직한 건강한 먹거리 세상!",
+          "role": "leader",
+          "member_type": "membership",
+          "member_certified": false,
+          "me": false,
+          "member_key": "UUQGFBWIXIRSKM7GVCERQ7FFB4======",
+          "is_muted": false,
+          "profile_key": "JCM7B5Z726WVQZ45HOGFOPCOKM======",
+          "created_at": 1648036069000,
+          "user_key": "AAA9P73Dhy7_JP6VbJo7X9gi"
+        },
+        "post_key": "AACv3__At2CXa-IWjb9ulhm2",
+        "content": "펭귄박스 펭귄피자\n제주산 메밀 도우, 화덕구이 맛 그대로!\n집에서 간편하게 즐기는 고소하고 쫄깃한 피자!\n한 입만 먹어도 반할 맛!\n\n고르곤졸라315g&gt;&gt;고르1\n사전예약가 11,900원(13,500원)\n\n마르게리따300g&gt;&gt;마르1\n사전예약가 12,900원(14,500원)\n\n로제페퍼로니350g&gt;&gt;로제1\n사전예약가 11,500원(13,500원)\n\n[조기마감 될 수 있습니다.]\n예약마감 : 7.3(목)오후6시까지\n상품수령기간 : 7.4~5(2일간)\n\n주문방법 : 공지사항참조",
+        "comment_count": 9,
+        "created_at": 1751094044000,
+        "photos": [
+          {
+            "created_at": 1751094044200,
+            "is_video_thumbnail": false,
+            "height": 728,
+            "width": 645,
+            "url": "https://coresos-phinf.pstatic.net/a/387jac/5_996Ud018svc6dbmsga7pxhb_uqz5bo.png",
+            "comment_count": 0,
+            "emotion_count": 0,
+            "author": {
+              "name": "학사농장유기데이",
+              "profile_image_url": "https://coresos-phinf.pstatic.net/a/349693/c_1a9Ud018svc17jvx1ioxkqcc_uqz5bo.png",
+              "description": "깨끗하고 정직한 건강한 먹거리 세상!",
+              "role": "leader",
+              "member_type": "membership",
+              "member_certified": false,
+              "me": false,
+              "member_key": "UUQGFBWIXIRSKM7GVCERQ7FFB4======",
+              "is_muted": false,
+              "profile_key": "JCM7B5Z726WVQZ45HOGFOPCOKM======",
+              "created_at": 1648036069000,
+              "user_key": "AAA9P73Dhy7_JP6VbJo7X9gi"
+            },
+            "photo_key": "AAAdducrAHIfxb0Jfb3qgT6k",
+            "photo_album_key": null
+          },
+          {
+            "created_at": 1751094044208,
+            "is_video_thumbnail": false,
+            "height": 443,
+            "width": 647,
+            "url": "https://coresos-phinf.pstatic.net/a/387jja/e_i9gUd018svc1ln9utzn565r9_uqz5bo.png",
+            "comment_count": 0,
+            "emotion_count": 0,
+            "author": {
+              "name": "학사농장유기데이",
+              "profile_image_url": "https://coresos-phinf.pstatic.net/a/349693/c_1a9Ud018svc17jvx1ioxkqcc_uqz5bo.png",
+              "description": "깨끗하고 정직한 건강한 먹거리 세상!",
+              "role": "leader",
+              "member_type": "membership",
+              "member_certified": false,
+              "me": false,
+              "member_key": "UUQGFBWIXIRSKM7GVCERQ7FFB4======",
+              "is_muted": false,
+              "profile_key": "JCM7B5Z726WVQZ45HOGFOPCOKM======",
+              "created_at": 1648036069000,
+              "user_key": "AAA9P73Dhy7_JP6VbJo7X9gi"
+            },
+            "photo_key": "AABVem6WXA1AtGA5Z2kWVKHs",
+            "photo_album_key": null
+          }
+        ],
+        "emotion_count": 1,
+        "latest_comments": [
+          {
+            "body": "고선옥 3929 상무 고르1",
+            "created_at": 1751154853389,
+            "author": {
+              "name": "고선옥",
+              "profile_image_url": "",
+              "description": "",
+              "user_key": "AAAIW1knRGoFJZD9TRw2Llpb"
+            }
+          },
+          {
+            "body": "이영미 7761상무점  고르1 마르2",
+            "created_at": 1751161752718,
+            "author": {
+              "name": "빵미",
+              "profile_image_url": "https://coresos-phinf.pstatic.net/a/35h121/i_7c7Ud018svc1u5qqzh1hqwnd_t36x1u.jpg",
+              "description": "",
+              "user_key": "AAB5u7On9pHhhsk5_Ltpd9Q-"
+            }
+          }
+        ],
+        "band_key": "AACFA2XDkBJcbhte4h_whI82"
+      },
+      {
+        "author": {
+          "name": "학사농장유기데이",
+          "profile_image_url": "https://coresos-phinf.pstatic.net/a/349693/c_1a9Ud018svc17jvx1ioxkqcc_uqz5bo.png",
+          "description": "깨끗하고 정직한 건강한 먹거리 세상!",
+          "role": "leader",
+          "member_type": "membership",
+          "member_certified": false,
+          "me": false,
+          "member_key": "UUQGFBWIXIRSKM7GVCERQ7FFB4======",
+          "is_muted": false,
+          "profile_key": "JCM7B5Z726WVQZ45HOGFOPCOKM======",
+          "created_at": 1648036069000,
+          "user_key": "AAA9P73Dhy7_JP6VbJo7X9gi"
+        },
+        "post_key": "AADU4ZtIDlCCVi09M1_oheFz",
+        "content": "조미료 없이, 진짜 집밥처럼!\n국산 한우로 푹 고아낸 깊은 맛\n한우육개장, 든든한 한 그릇\n\n원래한우육개장1.1kg(1~2인분)&gt;&gt;육개장1\n사전예약가 : 19,980원(26,000원)\n\n[조기마감 될 수 있습니다.]\n예약마감 : 7.3(목)오후6시까지\n상품수령기간 : 7.4~5(2일간)\n주문방법 : 공지사항참조",
+        "comment_count": 7,
+        "created_at": 1751088894000,
+        "photos": [
+          {
+            "created_at": 1751088894269,
+            "is_video_thumbnail": false,
+            "height": 231,
+            "width": 650,
+            "url": "https://coresos-phinf.pstatic.net/a/3880ee/i_8f2Ud018svc1ma88gsqvoew7_uqz5bo.png",
+            "comment_count": 0,
+            "emotion_count": 0,
+            "author": {
+              "name": "학사농장유기데이",
+              "profile_image_url": "https://coresos-phinf.pstatic.net/a/349693/c_1a9Ud018svc17jvx1ioxkqcc_uqz5bo.png",
+              "description": "깨끗하고 정직한 건강한 먹거리 세상!",
+              "role": "leader",
+              "member_type": "membership",
+              "member_certified": false,
+              "me": false,
+              "member_key": "UUQGFBWIXIRSKM7GVCERQ7FFB4======",
+              "is_muted": false,
+              "profile_key": "JCM7B5Z726WVQZ45HOGFOPCOKM======",
+              "created_at": 1648036069000,
+              "user_key": "AAA9P73Dhy7_JP6VbJo7X9gi"
+            },
+            "photo_key": "AAAaLan956YAfkja47nUWQXv",
+            "photo_album_key": null
+          },
+          {
+            "created_at": 1751088894277,
+            "is_video_thumbnail": false,
+            "height": 474,
+            "width": 650,
+            "url": "https://coresos-phinf.pstatic.net/a/388048/a_bf3Ud018svc1brd0gg3l99pb_uqz5bo.png",
+            "comment_count": 0,
+            "emotion_count": 0,
+            "author": {
+              "name": "학사농장유기데이",
+              "profile_image_url": "https://coresos-phinf.pstatic.net/a/349693/c_1a9Ud018svc17jvx1ioxkqcc_uqz5bo.png",
+              "description": "깨끗하고 정직한 건강한 먹거리 세상!",
+              "role": "leader",
+              "member_type": "membership",
+              "member_certified": false,
+              "me": false,
+              "member_key": "UUQGFBWIXIRSKM7GVCERQ7FFB4======",
+              "is_muted": false,
+              "profile_key": "JCM7B5Z726WVQZ45HOGFOPCOKM======",
+              "created_at": 1648036069000,
+              "user_key": "AAA9P73Dhy7_JP6VbJo7X9gi"
+            },
+            "photo_key": "AABNGmLV1V4VU5K7jRI5L9yK",
+            "photo_album_key": null
+          }
+        ],
+        "emotion_count": 1,
+        "latest_comments": [
+          {
+            "body": "이봉희 육개장 1",
+            "created_at": 1751116000528,
+            "author": {
+              "name": "이봉희",
+              "profile_image_url": "https://coresos-phinf.pstatic.net/a/32bh47/i_d9dUd018svc18hg01wiq2zvi_r3hrpd.jpg",
+              "description": "",
+              "user_key": "AAB4t_IPFLjAMN65iAqBdtpI"
+            }
+          },
+          {
+            "body": "정지원 3122상무점 육개장1",
+            "created_at": 1751120419603,
+            "author": {
+              "name": "정지원",
+              "profile_image_url": "",
+              "description": "",
+              "user_key": "AABOPJJitWn9yULdaWWsFpW5"
+            }
+          }
+        ],
+        "band_key": "AACFA2XDkBJcbhte4h_whI82"
+      }
+    ],
+    "paging": {
+      "previous_params": null,
+      "next_params": {
+        "access_token": "ZQAAAYiaLZ7TBU8-UyXnGWiWZzQ3XRpTJMYHO9T29kOimEIp7XwFnecphwb79FAiv0X4bRCUEhWAJrPAeulCmpT3-ZYZSg4LzOHlkmMQZQlP3lEw",
+        "band_key": "AACFA2XDkBJcbhte4h_whI82",
+        "limit": "20",
+        "after": "AABYwYBL6C9rPcOhrr--zm6t"
+      }
+    }
+  }
+}
