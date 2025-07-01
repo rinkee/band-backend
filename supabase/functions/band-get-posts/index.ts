@@ -143,9 +143,10 @@ async function extractOrdersFromCommentsAI(
           product.priceOptions
             ?.map((opt) => `${opt.quantity}개 ${opt.price}원`)
             .join(", ") || "";
+        const orderUnit = product.orderUnit || "개"; // order_unit 정보 추가
         return `${index + 1}번 상품: ${product.title} - 기본가격: ${
           product.basePrice
-        }원, 옵션: ${optionsStr}`;
+        }원, 주문단위: ${orderUnit}, 옵션: ${optionsStr}`;
       })
       .join("\n");
 
@@ -159,6 +160,15 @@ async function extractOrdersFromCommentsAI(
       .join("\n");
 
     const systemInstructions = `
+🤖 **AI 호출 컨텍스트**: 
+시스템이 단위 기반 패턴 매칭("2세트", "3팩" 등)과 키워드 매칭을 먼저 시도했지만 실패했습니다. 
+이제 고급 분석이 필요한 복잡한 댓글들을 처리해야 합니다.
+
+**🔍 특별히 주의할 패턴들:**
+- 숫자만 언급된 경우 (예: "10개요") → 상품의 주문단위와 가격옵션을 고려하여 올바른 세트/패키지 옵션 선택
+- 축약어나 불완전한 키워드 (예: "콩1. 녹두1") → 상품명과 매칭하여 정확한 상품 구분
+- 복잡한 주문 패턴 → 각 상품별로 개별 주문 생성
+
 당신은 댓글에서 주문 정보를 정확하게 추출하는 도우미입니다. 반드시 유효한 JSON 형식으로만 응답해야 하며, 그 외 텍스트는 절대 포함하지 마세요.
 
 🚨 **JSON 응답 규칙**:
@@ -223,12 +233,15 @@ async function extractOrdersFromCommentsAI(
    - 상품 지정이 애매한 경우: isAmbiguous: true로 설정하고 가장 가능성 높은 상품 추천
    - 단일 상품인 경우: 자동으로 해당 상품으로 처리
 
-3. **수량 추출 규칙** (유연한 해석):
+3. **수량 추출 규칙** (🔥패키지 옵션 우선 고려🔥):
+   - **🥇 패키지 옵션 우선 매칭**: 댓글에 숫자만 있고 상품에 패키지 옵션이 있는 경우
+     * 예: "10개요" + 상품옵션 "2세트(10개) 8,900원" → quantity: 1, selectedOption: "2세트"
+     * 예: "5개" + 상품옵션 "1세트(5개) 4,900원" → quantity: 1, selectedOption: "1세트"
    - **상품별 개별 수량**: "간장2, 고추장1" → 간장 2개, 고추장 1개 (각각 별도 주문)
    - **상품명+숫자 패턴**: "간장1 고추장1" → 간장 1개, 고추장 1개 (각각 별도 주문)
-   - 명확한 숫자: "2개", "3개", "5개 주문" → 해당 숫자
+   - 명확한 숫자: "2개", "3개", "5개 주문" → 해당 숫자 (패키지 옵션 먼저 확인)
    - **패턴 내 숫자**: "김지연/5", "홍길동 대리/3" → 슬래시 뒤 숫자를 수량으로 인식
-   - **단순 숫자**: "5", "3", "2" (단독 숫자) → 해당 숫자를 수량으로 인식
+   - **단순 숫자**: "5", "3", "2" (단독 숫자) → 해당 숫자를 수량으로 인식 (패키지 옵션 먼저 확인)
    - **한글 숫자**: "하나", "둘", "셋", "다섯" → 해당하는 아라비아 숫자로 변환
    - 단위가 붙은 숫자 제외: "300g", "2kg", "500ml" → 수량이 아님 (무게/용량 단위)
    
@@ -663,6 +676,7 @@ async function extractProductInfoAI(content, postTime = null, postKey) {
 할인 처리: 동일 단위에 가격이 여러 개 표시되면(예: 13,900원 -> 10,900원), 항상 마지막/가장 낮은 가격을 '판매 가격'으로 간주합니다.
 가격을 절대 나누지 마세요: '3팩 묶음', '2개입 세트' 처럼 여러 개가 포함된 묶음 상품의 가격이 명시된 경우, 그 가격은 묶음 전체에 대한 가격입니다. 절대로 낱개 가격으로 나누어 계산하지 마세요.
 basePrice: 유효한 판매 가격 옵션 중 가장 기본 단위(보통 quantity: 1)의 가격입니다. 유효한 가격이 없으면 0으로 설정합니다.
+🔥 quantity 필드: 이 필드는 고객이 해당 가격 옵션을 선택할 때 주문하는 '판매 단위'의 수량을 나타냅니다. 예를 들어, "오렌지 1봉지(6알) 8,900원", "오렌지 2봉지(12알) 16,900원" 옵션이 있다면, 고객은 '봉지' 단위로 주문하므로 quantity는 각각 1, 2가 됩니다. 이는 총 가격 계산 로직(calculateOptimalPrice 함수 등)에서 orderQuantity (주문 단위 수량)와 직접적으로 비교/계산되는 값입니다. 내용물의 총 개수(6알, 12알)가 아니라, 고객이 주문하는 판매 단위(봉지, 박스, 세트, 묶음 등)의 개수를 정확히 입력해야 합니다.
 상품 구분 (multipleProducts):
 true (여러 상품): 상품명이 명확히 다르거나(예: 사과, 배), 종류가 다르거나(예: 빨간 파프리카, 노란 파프리카), 번호/줄바꿈으로 구분된 경우. 특히 빵집 메뉴처럼 여러 품목이 나열된 경우에 해당합니다.
 false (단일 상품): 동일 상품의 용량/수량별 옵션만 있는 경우(예: 우유 500ml, 우유 1L / 1봉 5000원, 2봉 3000원 ).
@@ -672,6 +686,10 @@ keywordMappings :
   - **해결책**: '대극천', '조대홍'처럼 구체적인 품종이나 고유 명칭을 키워드로 사용하세요.
   - **예외**: 게시물에 '복숭아' 상품이 단 하나만 존재할 경우에만 '복숭아'를 키워드로 사용할 수 있습니다.
 - **고객 사용 단어**: 고객이 실제로 주문할 때 사용할 단어("대극천 1개 혹은 대극천 복숭아 1개")를 상상하여 추출합니다.
+- **🔥 부분 키워드 포함**: 상품명이 길거나 복합어일 경우 고객이 축약어로 주문할 가능성을 고려해야 합니다.
+  - **예시 1**: "콩나물"과 "녹두나물" → "콩나물", "녹두나물", "콩", "녹두" 모두 포함
+  - **예시 2**: "대천복숭아"와 "조대홍복숭아" → "대천", "조대홍" (겹치는 "복숭아"는 제외)
+  - **예시 3**: "빨간파프리카"와 "노란파프리카" → "빨간", "노란", "빨간파프리카", "노란파프리카"
 - **단위/수량 제외**: "1키로", "1팩" 등은 키워드가 아닙니다.
 - **번호 포함**: "1번", "2번" 같은 키워드는 항상 포함합니다.
 - **🔥 인덱스 규칙**: productIndex는 반드시 1부터 시작합니다. (0이 아님! itemNumber와 동일해야 함)
@@ -688,8 +706,18 @@ priceOptions: [{ "quantity": 숫자, "price": 숫자, "description": "옵션설�
 quantity: 주문 단위 수량 (예: '2봉지' 주문 시 quantity: 2). 내용물 개수(예: 12알)가 아님.
 description: 주문 단위를 명확히 설명하는 텍스트 (예: "1봉지(6알)", "2봉지(12알)").
 basePrice에 해당하는 옵션도 반드시 포함해야 합니다.
-quantity (루트): 상품의 기본 판매 단위 수량 (보통 1).
-quantityText: 기본 판매 단위를 설명하는 텍스트 (예: "1봉지", "1개").
+🔥 quantity (루트 레벨): 상품의 가장 기본적인 판매 단위 수량을 나타냅니다. 예를 들어, 상품이 기본적으로 '1봉지' 단위로 판매된다면 이 값은 1입니다. '2개 묶음'으로만 판매된다면 기본 판매 단위는 '묶음'이므로, 이 값은 1입니다. 이 값은 priceOptions 배열 내 quantity와 직접적인 연관성은 없으며, 상품 자체의 최소 판매 단위를 나타냅니다. 대부분의 경우 1로 설정됩니다.
+🔥 quantityText: 고객이 실제로 주문할 때 사용할 것 같은 순수 단위 단어만 추출. 게시물의 문맥을 고려하여 실제 주문 단위로 판단하세요.
+- 식품류: "팩", "통", "세트", "봉지", "개", "키로", "kg" 등
+- 화장품/생활용품: "개", "병", "튜브", "용기" 등 (ml, g 등 용량 단위가 아닌 제품 개수 단위)
+- 의류/잡화: "개", "벌", "켤레" 등
+- 예시1: "2세트(10개)" → quantityText: "세트"
+- 예시2: "애호박 2통" → quantityText: "통"  
+- 예시3: "닥터슈라클 컨디셔너 300ml" → quantityText: "개" (화장품은 개 단위로 주문)
+- 예시4: "블루베리 4팩" → quantityText: "팩"
+- 예시5: "자연촌 두부 5모" → quantityText: "모"
+- 예시6: "우유 500ml" → quantityText: "개" (우유 1개, 2개로 주문)
+- 주의: ml, g, cm 등 단위나 용량은 quantityText로 사용하지 마세요. 고객이 실제 주문할 때 사용하는 개수 단위만 사용하세요.
 productId: "prod_" + postKey + "_" + itemNumber 형식으로 생성 (itemNumber는 상품 번호).
 stockQuantity: 명확한 재고 수량만 숫자로 추출 (예: "5개 한정" -> 5). 불명확하면 null.
 pickupDate: "내일", "5월 10일", "3시 이후" 등의 텍스트를 게시물 작성 시간 기준으로 YYYY-MM-DDTHH:mm:ss.sssZ 형식으로 변환. 기간이 명시된 경우(예: 6/1~6/2), 가장 늦은 날짜를 기준으로 설정.
@@ -708,7 +736,7 @@ Generated json
       "priceOptions": [
         { "quantity": 1, "price": 10000, "description": "옵션 설명 1" }
       ],
-      "quantityText": "1개",
+      "quantityText": "개",
       "quantity": 1,
       "category": "식품",
       "status": "판매중",
@@ -728,7 +756,9 @@ Generated json
         "참외": { "productIndex": 3 },
         "포도": { "productIndex": 4 },
         "1번": { "productIndex": 1 },
-        "2번": { "productIndex": 2 }
+        "2번": { "productIndex": 2 },
+        "3번": { "productIndex": 3 },
+        "4번": { "productIndex": 4 }
       }
   
 }
@@ -746,7 +776,7 @@ Generated json
     { "quantity": 1, "price": 8900, "description": "1봉지(6알)" },
     { "quantity": 2, "price": 16900, "description": "2봉지(12알)" }
   ],
-  "quantityText": "1봉지",
+  "quantityText": "봉지",
   "quantity": 1,
   "category": "식품",
   "status": "판매중",
@@ -757,9 +787,12 @@ Generated json
   "pickupType": "수령",
   "stockQuantity": null,
   "keywordMappings": {
+    "블랙라벨오렌지": { "productIndex": 1 },
     "블랙라벨 오렌지": { "productIndex": 1 },  
     "오렌지": { "productIndex": 1 },
-    "블랙라벨": { "productIndex": 1}
+    "블랙라벨": { "productIndex": 1 },
+    "블랙": { "productIndex": 1 },
+    "1번": { "productIndex": 1 }
   }
 }
 
@@ -1589,6 +1622,306 @@ function extractNumberedProducts(content) {
   return products;
 }
 
+// 🔥 단위 기반 패턴 매칭 함수 (사용자 요구사항에 맞게 개선)
+function extractOrderByUnitPattern(commentText, productMap) {
+  if (!commentText || !productMap || productMap.size === 0) {
+    return null;
+  }
+
+  // 텍스트 정규화
+  const text = commentText
+    .replace(/,/g, "")
+    .replace(/([가-힣])(\d)/g, "$1 $2") // "2세트" -> "2 세트"
+    .replace(/(\d)([가-힣])/g, "$1 $2") // "세트2" -> "세트 2"
+    .trim()
+    .toLowerCase();
+
+  const foundOrders = [];
+
+  // 취소/마감 댓글 체크
+  if (text.includes("마감") || text.includes("취소") || text.includes("완판")) {
+    return null;
+  }
+
+  // 각 상품의 quantity_text를 기준으로 패턴 매칭 시도
+  for (const [itemNumber, productInfo] of productMap) {
+    const quantityText = productInfo.quantity_text; // 이제 순수 단위만 저장됨 ("팩", "통", "세트")
+    const priceOptions = productInfo.price_options || [];
+
+    // 🔥 1단계: quantity_text 기반 강화된 매칭
+    if (quantityText) {
+      console.log(
+        `[단위 체크] 상품 ${itemNumber}번의 quantity_text: "${quantityText}"`
+      );
+
+      // 1-1: 명시적 단위 매칭 ("2세트", "3팩", "호박 2통이요" 등)
+      const unitPatterns = [
+        new RegExp(`(\\d+)\\s*${quantityText}(?:[가-힣]*)?`, "i"), // "2팩", "3세트", "2통이요"
+        new RegExp(`${quantityText}\\s*(\\d+)`, "i"), // "팩2", "세트3"
+      ];
+
+      for (const pattern of unitPatterns) {
+        const match = text.match(pattern);
+        if (match && match[1]) {
+          const quantity = parseInt(match[1]);
+          if (quantity >= 1 && quantity <= 999) {
+            foundOrders.push({
+              itemNumber: itemNumber,
+              quantity: quantity,
+              matchedUnit: quantityText,
+              matchType: "quantity-text-explicit",
+              isAmbiguous: false,
+              processingMethod: "quantity-text-pattern",
+            });
+
+            console.log(
+              `[quantity_text 명시적 매칭] "${commentText}" → ${quantity}${quantityText} (상품 ${itemNumber}번)`
+            );
+            return foundOrders; // 성공하면 즉시 반환
+          }
+        }
+      }
+
+      // 1-2: 🔥 단순 숫자 매칭 (quantity_text가 댓글에 없어도 숫자만으로 매칭)
+      // 예: quantity_text="통", 댓글="1" → 1통으로 해석
+      const simpleNumberMatch = text.match(/^\s*(\d+)\s*$/); // 순수 숫자만
+      if (simpleNumberMatch && simpleNumberMatch[1]) {
+        const quantity = parseInt(simpleNumberMatch[1]);
+        if (quantity >= 1 && quantity <= 999) {
+          foundOrders.push({
+            itemNumber: itemNumber,
+            quantity: quantity,
+            matchedUnit: quantityText,
+            matchType: "quantity-text-number-only",
+            isAmbiguous: false,
+            processingMethod: "quantity-text-pattern",
+          });
+
+          console.log(
+            `[quantity_text 숫자 매칭] "${commentText}" → ${quantity}${quantityText} (상품 ${itemNumber}번)`
+          );
+          return foundOrders; // 성공하면 즉시 반환
+        }
+      }
+    }
+
+    // 1-3: 🔥 보편적 단위 "개" 매칭 (quantity_text가 다른 단위여도 "개"로 주문 가능)
+    // 예: quantity_text="통", 댓글="호박 2개요" → 2통으로 해석
+    const universalPatterns = [
+      new RegExp(`(\\d+)\\s*개`, "i"), // "2개", "3개요"
+    ];
+
+    for (const pattern of universalPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1]) {
+        const quantity = parseInt(match[1]);
+        if (quantity >= 1 && quantity <= 999) {
+          // 🔥 패키지 옵션 우선 체크 (예: "10개" → "2세트(10개)" 옵션 찾기)
+          for (const [itemNumber, productInfo] of productMap) {
+            const priceOptions = productInfo.price_options || [];
+            const quantityText = productInfo.quantity_text;
+
+            if (priceOptions.length > 0) {
+              // A. 숫자+단위 → 패키지 옵션 매칭 ("1박스" → "한박스", "2세트" → "2세트")
+              for (const option of priceOptions) {
+                const desc = option.description?.toLowerCase() || "";
+
+                // "1박스" → "한박스", "2세트" → "2세트" 등 매칭
+                const unitLower = quantityText?.toLowerCase() || "";
+                console.log(
+                  `🔍 [패키지 매칭 디버깅] 상품 ${itemNumber}번: desc="${desc}", unitLower="${unitLower}", quantity=${quantity}`
+                );
+
+                if (desc.includes(unitLower)) {
+                  // 한글 숫자 매칭 ("1" → "한", "2" → "이", "3" → "삼")
+                  const koreanNumbers = {
+                    1: "한",
+                    2: "이",
+                    3: "삼",
+                    4: "사",
+                    5: "오",
+                    6: "육",
+                    7: "칠",
+                    8: "팔",
+                    9: "구",
+                    10: "십",
+                  };
+                  const koreanNum = koreanNumbers[quantity];
+
+                  console.log(
+                    `🔍 [패키지 매칭 디버깅] koreanNum="${koreanNum}", 매칭 패턴들: "${koreanNum}${unitLower}", "${quantity}${unitLower}"`
+                  );
+
+                  // 더 정확한 패턴 매칭
+                  const condition1 =
+                    koreanNum && desc === `${koreanNum}${unitLower}`;
+                  const condition2 = desc === `${quantity}${unitLower}`;
+                  const condition3 =
+                    desc.startsWith(`${koreanNum}${unitLower}`) && koreanNum;
+                  const condition4 = desc.startsWith(`${quantity}${unitLower}`);
+
+                  console.log(
+                    `🔍 [패키지 매칭 디버깅] 조건1(한글정확): ${condition1}, 조건2(숫자정확): ${condition2}, 조건3(한글시작): ${condition3}, 조건4(숫자시작): ${condition4}`
+                  );
+
+                  if (condition1 || condition2 || condition3 || condition4) {
+                    // 🔥 패키지 옵션에서 실제 세트 수 추출 ("2세트" → 2, "한박스" → 1)
+                    const setMatch = option.description?.match(/(\d+)세트/);
+                    const boxMatch =
+                      option.description?.match(/(한|두|세|네|다섯)박스/);
+                    let actualQuantity = option.quantity || 1;
+
+                    if (setMatch) {
+                      actualQuantity = parseInt(setMatch[1]);
+                    } else if (boxMatch) {
+                      const boxNumbers = {
+                        한: 1,
+                        두: 2,
+                        세: 3,
+                        네: 4,
+                        다섯: 5,
+                      };
+                      actualQuantity = boxNumbers[boxMatch[1]] || 1;
+                    } else if (option.description?.includes("반박스")) {
+                      actualQuantity = 1; // 반박스는 1개로 처리
+                    }
+
+                    foundOrders.push({
+                      itemNumber: itemNumber,
+                      quantity: actualQuantity, // 🔥 실제 세트/박스 수 사용
+                      matchedNumber: quantity,
+                      selectedOption: option.description,
+                      matchType: "package-option",
+                      isAmbiguous: false,
+                      processingMethod: "package-option-unit",
+                    });
+
+                    console.log(
+                      `[단위 패키지 매칭] "${commentText}" → ${option.description} ${actualQuantity}개 주문 (상품 ${itemNumber}번)`
+                    );
+                    return foundOrders;
+                  }
+                }
+              }
+
+              // B. 개수 기반 매칭 ("10개요" → "2세트(10개)" 옵션 찾기)
+              for (const option of priceOptions) {
+                const optionMatch = option.description?.match(/(\d+)개/);
+                if (optionMatch && parseInt(optionMatch[1]) === quantity) {
+                  // 🔥 패키지 옵션에서 실제 세트 수 추출 ("2세트(10개)" → 2)
+                  const setMatch = option.description?.match(/(\d+)세트/);
+                  const actualQuantity = setMatch
+                    ? parseInt(setMatch[1])
+                    : option.quantity || 1;
+
+                  foundOrders.push({
+                    itemNumber: itemNumber,
+                    quantity: actualQuantity, // 🔥 실제 세트 수 사용
+                    matchedNumber: quantity,
+                    selectedOption: option.description,
+                    matchType: "package-option",
+                    isAmbiguous: false,
+                    processingMethod: "package-option-count",
+                  });
+
+                  console.log(
+                    `[개수 패키지 매칭] "${commentText}" → ${option.description} ${actualQuantity}개 주문 (상품 ${itemNumber}번)`
+                  );
+                  return foundOrders;
+                }
+              }
+            }
+          }
+
+          // 패키지 옵션이 없거나 매칭되지 않으면 기본 단위 매칭
+          const firstItem = productMap.keys().next().value;
+          if (firstItem) {
+            foundOrders.push({
+              itemNumber: firstItem,
+              quantity: quantity,
+              matchedUnit: "개",
+              actualUnit: quantityText, // 실제 상품 단위
+              matchType: "universal-unit",
+              isAmbiguous: false,
+              processingMethod: "quantity-text-pattern",
+            });
+
+            console.log(
+              `[보편적 단위 매칭] "${commentText}" → ${quantity}개 (실제: ${quantity}${quantityText}, 상품 ${itemNumber}번)`
+            );
+            return foundOrders; // 성공하면 즉시 반환
+          }
+        }
+      }
+    }
+
+    // 🔥 2단계: 추가 패키지 옵션 매칭 (순수 숫자나 다른 패턴)
+    if (priceOptions.length > 0) {
+      // "10", "20" 등 순수 숫자나 "10요" 등에서 숫자 추출
+      const numberMatch = text.match(/^\s*(\d+)(?:요|개요)?\s*$/);
+      if (numberMatch && numberMatch[1]) {
+        const mentionedNumber = parseInt(numberMatch[1]);
+
+        // 패키지 옵션에서 해당 개수와 일치하는 옵션 찾기
+        for (const option of priceOptions) {
+          // 옵션 설명에서 개수 추출 ("2세트(10개)" → 10)
+          const optionMatch = option.description?.match(/(\d+)개/);
+          if (optionMatch && parseInt(optionMatch[1]) === mentionedNumber) {
+            // 🔥 패키지 옵션에서 실제 세트 수 추출 ("2세트(10개)" → 2)
+            const setMatch = option.description?.match(/(\d+)세트/);
+            const actualQuantity = setMatch
+              ? parseInt(setMatch[1])
+              : option.quantity || 1;
+
+            foundOrders.push({
+              itemNumber: itemNumber,
+              quantity: actualQuantity, // 🔥 실제 세트 수 사용
+              matchedNumber: mentionedNumber, // 댓글에서 언급된 숫자 (예: 10)
+              selectedOption: option.description, // 선택된 옵션 (예: "2세트(10개)")
+              matchType: "package-option",
+              isAmbiguous: false,
+              processingMethod: "package-option-numeric",
+            });
+
+            console.log(
+              `[숫자 패키지 매칭] "${commentText}" → ${option.description} ${actualQuantity}개 주문 (상품 ${itemNumber}번)`
+            );
+            return foundOrders; // 성공하면 즉시 반환
+          }
+        }
+      }
+    }
+  }
+
+  // 🔥 2단계: quantity_text가 없는 상품들에 대한 단순 숫자 매칭
+  // "2" 댓글 등을 처리하기 위해 추가
+  const simpleNumberMatch = text.match(/^\s*(\d+)\s*$/); // 순수 숫자만
+  if (simpleNumberMatch && simpleNumberMatch[1]) {
+    const quantity = parseInt(simpleNumberMatch[1]);
+    if (quantity >= 1 && quantity <= 999) {
+      // 첫 번째 상품에 매칭
+      const firstItem = productMap.keys().next().value;
+      if (firstItem) {
+        foundOrders.push({
+          itemNumber: firstItem,
+          quantity: quantity,
+          matchedUnit: "개", // 기본 단위
+          matchType: "simple-number",
+          isAmbiguous: false,
+          processingMethod: "simple-number-pattern",
+        });
+
+        console.log(
+          `[단순 숫자 매칭] "${commentText}" → ${quantity}개 (상품 ${firstItem}번)`
+        );
+        return foundOrders;
+      }
+    }
+  }
+
+  return foundOrders.length > 0 ? foundOrders : null;
+}
+
 // 키워드 매칭을 통한 주문 추출 함수 (여러 항목 처리 가능하도록 수정)
 function extractOrderByKeywordMatching(commentText, keywordMappings) {
   if (!keywordMappings || !commentText) {
@@ -1678,6 +2011,79 @@ function extractOrderByKeywordMatching(commentText, keywordMappings) {
   }
 
   return foundOrders.length > 0 ? foundOrders : null;
+}
+
+// 🔥 댓글 처리 방식 결정 함수 (패턴 처리 vs AI 처리)
+function shouldUsePatternProcessing(commentText, productMap) {
+  if (!commentText || !productMap || productMap.size === 0) {
+    return { shouldUsePattern: false, reason: "invalid_input" };
+  }
+
+  const text = commentText.toLowerCase().trim();
+
+  // 명백한 숫자 추출 (4자리 이상 제외, 시간 표현 제외)
+  const numberMatches = text.match(/\b(\d{1,3})\b/g);
+  const clearNumbers =
+    numberMatches
+      ?.filter((num) => {
+        const n = parseInt(num);
+        return n >= 1 && n <= 999;
+      })
+      .filter((num) => {
+        // 시간 표현 필터링 ("8시", "14:30" 등)
+        const beforeNum =
+          text.indexOf(num) > 0 ? text[text.indexOf(num) - 1] : "";
+        const afterNum = text[text.indexOf(num) + num.length] || "";
+        return !(afterNum === "시" || beforeNum === ":" || afterNum === ":");
+      }) || [];
+
+  const hasClearNumbers = clearNumbers.length > 0;
+
+  // quantity_text 확인 (상품 수가 1개면 해당 상품의 quantity_text, 여러 개면 어떤 것이든 있는지)
+  let hasQuantityText = false;
+  for (const [itemNumber, productInfo] of productMap) {
+    if (productInfo.quantity_text && productInfo.quantity_text.trim()) {
+      const quantityText = productInfo.quantity_text.toLowerCase();
+      if (text.includes(quantityText)) {
+        hasQuantityText = true;
+        break;
+      }
+    }
+  }
+
+  // '개' 단위 체크
+  const hasGaeUnit = /\d+\s*개/.test(text);
+
+  console.log(
+    `[처리 방식 결정] "${commentText}": 숫자=${hasClearNumbers}, quantity_text=${hasQuantityText}, 개단위=${hasGaeUnit}`
+  );
+
+  // 결정 로직
+  if (hasClearNumbers && hasQuantityText) {
+    return {
+      shouldUsePattern: true,
+      reason: "clear_number_with_quantity_text",
+    };
+  } else if (!hasClearNumbers && hasQuantityText) {
+    return {
+      shouldUsePattern: false,
+      reason: "no_clear_number_but_has_quantity_text",
+    };
+  } else if (hasClearNumbers && !hasQuantityText) {
+    if (hasGaeUnit) {
+      // 🤔 "개" 단위는 범용적이므로 AI 처리 (사용자 고민 중인 부분)
+      return {
+        shouldUsePattern: false,
+        reason: "number_with_gae_unit_ambiguous",
+      };
+    } else {
+      // 명백한 숫자만 있음 → 패턴 처리
+      return { shouldUsePattern: true, reason: "clear_number_only" };
+    }
+  } else {
+    // 명백한 숫자도 quantity_text도 없음 → AI 처리
+    return { shouldUsePattern: false, reason: "no_clear_indicators" };
+  }
 }
 
 function extractEnhancedOrderFromComment(commentText) {
@@ -2663,46 +3069,82 @@ async function savePostAndProducts(
         //     processingSummary.skippedClosing++;
         //     continue;
         // }
-        // --- 4.4. 스마트 주문 추출 (패턴 우선, AI 보조) ---
+        // --- 4.4. 🔥 새로운 스마트 주문 추출 (quantity_text 기반 판단) ---
         let orderItems = [];
         let isProcessedAsOrder = false;
         let processingMethod = "none";
 
-        // 🎯 1단계: 키워드 매칭 시도 (가장 우선)
-        let extractedOrderItems = extractOrderByKeywordMatching(
+        // 🧠 1단계: 처리 방식 결정 (패턴 vs AI)
+        const processingDecision = shouldUsePatternProcessing(
           commentContent,
-          keywordMappings
+          productMap
         );
 
-        // 키워드 매칭 결과를 배열로 변환
-        if (extractedOrderItems && !Array.isArray(extractedOrderItems)) {
-          extractedOrderItems = [extractedOrderItems];
-        }
+        console.log(
+          `[처리 결정] "${commentContent.substring(0, 30)}..." → ${
+            processingDecision.shouldUsePattern ? "패턴" : "AI"
+          } 처리 (${processingDecision.reason})`
+        );
 
-        // 키워드 매칭 실패 시 패턴 기반 추출 시도
-        if (!extractedOrderItems || extractedOrderItems.length === 0) {
-          extractedOrderItems = extractEnhancedOrderFromComment(commentContent);
-        }
+        if (processingDecision.shouldUsePattern) {
+          // 🔧 패턴 처리 시도
+          let extractedOrderItems = null;
 
-        if (extractedOrderItems && extractedOrderItems.length > 0) {
-          // 패턴 추출 성공
-          orderItems = extractedOrderItems.map((item) => ({
-            ...item,
-            aiAnalyzed: false,
-            processingMethod: "pattern",
-          }));
-          isProcessedAsOrder = true;
-          processingMethod = "pattern";
-          processingSummary.ruleBasedOrders += orderItems.length;
-
-          console.log(
-            `[패턴 처리] 댓글 "${commentContent.substring(0, 30)}..." → ${
-              orderItems.length
-            }개 주문`
+          // 🥇 1단계: 단위 기반 패턴 매칭 시도 (가장 우선 - 정확도 높음)
+          extractedOrderItems = extractOrderByUnitPattern(
+            commentContent,
+            productMap
           );
+
+          // 🥈 2단계: 단위 매칭 실패 시 키워드 매칭 시도
+          if (!extractedOrderItems || extractedOrderItems.length === 0) {
+            extractedOrderItems = extractOrderByKeywordMatching(
+              commentContent,
+              keywordMappings
+            );
+          }
+
+          // 키워드 매칭 결과를 배열로 변환
+          if (extractedOrderItems && !Array.isArray(extractedOrderItems)) {
+            extractedOrderItems = [extractedOrderItems];
+          }
+
+          // 🥉 3단계: 기본 패턴 매칭 시도 (마지막 패턴 기반 시도)
+          if (!extractedOrderItems || extractedOrderItems.length === 0) {
+            extractedOrderItems =
+              extractEnhancedOrderFromComment(commentContent);
+          }
+
+          if (extractedOrderItems && extractedOrderItems.length > 0) {
+            // 패턴 추출 성공
+            orderItems = extractedOrderItems.map((item) => ({
+              ...item,
+              aiAnalyzed: false,
+              processingMethod: "pattern",
+            }));
+            isProcessedAsOrder = true;
+            processingMethod = "pattern";
+            processingSummary.ruleBasedOrders += orderItems.length;
+
+            console.log(
+              `[패턴 처리 성공] 댓글 "${commentContent.substring(
+                0,
+                30
+              )}..." → ${orderItems.length}개 주문`
+            );
+          } else {
+            // 패턴 처리 실패 → AI로 넘김
+            console.log(
+              `[패턴 처리 실패] 댓글 "${commentContent.substring(
+                0,
+                30
+              )}..." → AI 처리로 전환`
+            );
+          }
         }
-        // 🤖 2단계: AI 결과 사용 (패턴 실패 시만)
-        else if (useAIResults && aiOrderResults.length > 0) {
+
+        // 🤖 AI 처리 (결정에 따라 또는 패턴 실패 시)
+        if (!isProcessedAsOrder && useAIResults && aiOrderResults.length > 0) {
           const aiResults = aiOrderResults.filter(
             (result) => result.commentKey === commentKey
           );
@@ -2864,7 +3306,7 @@ async function savePostAndProducts(
               productInfo = null;
             }
 
-            // 가격 계산
+            // 🔥 가격 계산 (패키지 옵션 지원)
             if (productInfo) {
               const productOptions = productInfo.price_options || [];
               const fallbackPrice =
@@ -2872,28 +3314,64 @@ async function savePostAndProducts(
                   ? productInfo.base_price
                   : 0;
               basePriceForOrder = fallbackPrice;
+
               try {
-                calculatedTotalAmount = calculateOptimalPrice(
-                  quantity,
-                  productOptions,
-                  fallbackPrice
-                );
-                // 가격 옵션 설명 (옵션)
-                const matchingOption = productOptions.find(
-                  (opt) => opt.quantity === quantity
-                );
-                if (matchingOption) {
-                  priceOptionDescription =
-                    matchingOption.description || `${quantity} 단위 옵션`;
-                } else if (quantity === 1) {
-                  // 기본 수량일 때
-                  priceOptionDescription = productInfo.title
-                    ? `기본 (${productInfo.title})`
-                    : "기본 가격";
+                // 패키지 옵션이 선택된 경우 특별 처리
+                if (
+                  orderItem.matchType === "package-option" &&
+                  orderItem.selectedOption
+                ) {
+                  // 선택된 패키지 옵션으로 가격 계산
+                  const selectedPackage = productOptions.find(
+                    (opt) => opt.description === orderItem.selectedOption
+                  );
+
+                  if (selectedPackage) {
+                    // 🔥 패키지 옵션은 이미 완성된 가격이므로 quantity 곱하지 않음
+                    calculatedTotalAmount = selectedPackage.price;
+                    priceOptionDescription = selectedPackage.description;
+                    // 🔥 단가는 패키지 가격을 수량으로 나눈 값
+                    basePriceForOrder = Math.round(
+                      selectedPackage.price / quantity
+                    );
+
+                    console.log(
+                      `[패키지 가격] "${commentContent}" → ${priceOptionDescription} (${calculatedTotalAmount}원, 단가: ${basePriceForOrder}원)`
+                    );
+                  } else {
+                    // 패키지 옵션을 찾지 못한 경우 기본 계산
+                    calculatedTotalAmount = calculateOptimalPrice(
+                      quantity,
+                      productOptions,
+                      fallbackPrice
+                    );
+                    priceOptionDescription = "기본가";
+                  }
                 } else {
-                  priceOptionDescription = productInfo.title
-                    ? `${quantity}개 (${productInfo.title})`
-                    : `${quantity}개`;
+                  // 기존 가격 계산 로직
+                  calculatedTotalAmount = calculateOptimalPrice(
+                    quantity,
+                    productOptions,
+                    fallbackPrice
+                  );
+
+                  // 가격 옵션 설명 (옵션)
+                  const matchingOption = productOptions.find(
+                    (opt) => opt.quantity === quantity
+                  );
+                  if (matchingOption) {
+                    priceOptionDescription =
+                      matchingOption.description || `${quantity} 단위 옵션`;
+                  } else if (quantity === 1) {
+                    // 기본 수량일 때
+                    priceOptionDescription = productInfo.title
+                      ? `기본 (${productInfo.title})`
+                      : "기본 가격";
+                  } else {
+                    priceOptionDescription = productInfo.title
+                      ? `${quantity}개 (${productInfo.title})`
+                      : `${quantity}개`;
+                  }
                 }
               } catch (calcError) {
                 console.error(
@@ -2999,6 +3477,10 @@ async function savePostAndProducts(
                   matchType: orderItem.matchType || null,
                   actualUnitPrice: basePriceForOrder,
                   actualTotalPrice: calculatedTotalAmount,
+                  // 🔥 패키지 옵션 정보 추가
+                  selectedOption: orderItem.selectedOption || null,
+                  matchedNumber: orderItem.matchedNumber || null,
+                  matchedUnit: orderItem.matchedUnit || null,
                 };
               }
             }
@@ -3025,6 +3507,7 @@ async function savePostAndProducts(
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
               processing_method: processingMethod || "unknown", // 처리 방식 저장
+              price_option_used: priceOptionDescription || "기본가", // 🔥 패키지 옵션 정보 포함
               ai_extraction_result: extractionResultForDb
                 ? safeJsonStringify(extractionResultForDb)
                 : null,
@@ -3110,7 +3593,9 @@ async function fetchProductMapForPost(supabase, userId, postKey) {
   try {
     const { data: products, error } = await supabase
       .from("products")
-      .select("product_id, base_price, price_options, item_number, title") // 필요한 컬럼만 select
+      .select(
+        "product_id, base_price, price_options, item_number, title, quantity_text"
+      ) // quantity_text 추가
       .eq("user_id", userId)
       .eq("post_key", postKey);
     if (error) {
@@ -3137,6 +3622,7 @@ async function fetchProductMapForPost(supabase, userId, postKey) {
             base_price: p.base_price,
             price_options: p.price_options || [],
             title: p.title,
+            quantity_text: p.quantity_text, // 순수 단위 추가
           });
         } else {
           console.warn(
