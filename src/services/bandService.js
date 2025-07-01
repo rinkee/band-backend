@@ -619,57 +619,12 @@ async function processAndGenerateOrdersFromComments(userId, allCommentsByPost) {
             break; // 첫 번째 유효 항목 처리 후 종료
           }
 
-          // --- 7-2. Fallback 1: 추출 실패 + 숫자 포함 ---
+          // --- 7-2. 패턴 추출 실패 시 주문 생성하지 않음 ---
         } else {
           logger.debug(
-            `게시물 ${postKey}, 댓글 ${commentKey}: 명시적 주문 추출 실패. Fallback 시도.`
+            `게시물 ${postKey}, 댓글 ${commentKey}: 패턴 추출 실패 - 주문 생성하지 않음.`
           );
-          let targetProductId = null;
-          let itemNumberToUse = 1;
-          let productInfo = null;
-
-          // Fallback 상품 결정 (이전과 동일)
-          if (productMap.has(1)) {
-            productInfo = productMap.get(1);
-          } else if (productMap.size > 0) {
-            [itemNumberToUse, productInfo] = Array.from(
-              productMap.entries()
-            )[0];
-          }
-
-          if (productInfo) {
-            targetProductId = productInfo.product_id;
-            const quantity = 1;
-            const productOptions = productInfo.price_options || [];
-            const fallbackPrice =
-              typeof productInfo.base_price === "number"
-                ? productInfo.base_price
-                : 0;
-            calculatedTotalAmount = calculateOptimalPrice(
-              quantity,
-              productOptions,
-              fallbackPrice
-            );
-
-            // 주문 데이터 업데이트 (Fallback 1)
-            orderData.product_id = targetProductId;
-            orderData.item_number = itemNumberToUse;
-            orderData.quantity = quantity;
-            orderData.price = fallbackPrice;
-            orderData.total_amount = calculatedTotalAmount;
-            orderData.price_option_description = productInfo.title
-              ? `${itemNumberToUse}번 (${productInfo.title}) - 추정`
-              : `상품 정보 불명 - 추정`;
-            orderData.sub_status = "확인필요";
-
-            processedAsOrder = true;
-            logger.info(
-              `  - 주문 생성됨 (Fallback 1): 상품 ${targetProductId} (항목 ${itemNumberToUse}), 금액 ${calculatedTotalAmount}`
-            );
-          } else {
-            logger.warn(` - Fallback 1 실패: 매칭할 상품 정보 없음.`);
-          }
-        } // end Fallback 1
+        }
       } // end if (isProductPost...)
 
       // --- 8. 최종 생성 결정 ---
