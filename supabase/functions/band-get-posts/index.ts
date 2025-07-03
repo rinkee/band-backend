@@ -2821,7 +2821,8 @@ async function savePostAndProducts(
   bandKey,
   bandNumber,
   productMap,
-  post = null // 게시물 정보 추가
+  post = null, // 게시물 정보 추가
+  userSettings = null // 사용자 설정 추가
 ) {
   const orders = [];
   const customers = new Map();
@@ -2997,14 +2998,26 @@ async function savePostAndProducts(
     let shouldUseAI = false;
     let commentsForAI = [];
 
+    // 사용자가 다중 상품 게시물에서 AI 강제 처리를 활성화했는지 확인
+    const forceAiProcessing = userSettings?.force_ai_processing === true;
+
     if (isMultipleProductsPost) {
-      // 다중 상품: 애매한 댓글만 AI 처리
-      if (ambiguousComments.length > 0) {
+      if (forceAiProcessing) {
+        // 🔥 AI 강제 처리: 모든 댓글을 AI로 처리
         shouldUseAI = true;
-        commentsForAI = ambiguousComments;
+        commentsForAI = comments; // 모든 댓글
         console.log(
-          `[최적화] 다중 상품 게시물: ${ambiguousComments.length}개 댓글만 AI 처리`
+          `[AI 강제 처리] 다중 상품 게시물에서 AI 강제 처리 설정 활성화: ${comments.length}개 모든 댓글을 AI로 처리`
         );
+      } else {
+        // 기존 로직: 애매한 댓글만 AI 처리
+        if (ambiguousComments.length > 0) {
+          shouldUseAI = true;
+          commentsForAI = ambiguousComments;
+          console.log(
+            `[최적화] 다중 상품 게시물: ${ambiguousComments.length}개 댓글만 AI 처리`
+          );
+        }
       }
     } else {
       // 단일 상품: 패턴으로 대부분 처리, 정말 애매한 것만 AI
@@ -3161,77 +3174,148 @@ async function savePostAndProducts(
         let isProcessedAsOrder = false;
         let processingMethod = "none";
 
-        // 🧠 1단계: 처리 방식 결정 (패턴 vs AI)
-        const processingDecision = shouldUsePatternProcessing(
-          commentContent,
-          productMap
-        );
+        // 🧠 1단계: 처리 방식 결정 (AI 강제 처리 우선 확인)
+        const forceAiProcessing = userSettings?.force_ai_processing === true;
 
-        console.log(
-          `[처리 결정] "${commentContent.substring(0, 30)}..." → ${
-            processingDecision.shouldUsePattern ? "패턴" : "AI"
-          } 처리 (${processingDecision.reason})`
-        );
+        // AI 강제 처리가 활성화되고 다중 상품 게시물이고 AI 결과가 있으면 AI 우선 처리
+        if (
+          forceAiProcessing &&
+          isMultipleProductsPost &&
+          useAIResults &&
+          aiOrderResults.length > 0
+        ) {
+          console.log(
+            `[AI 강제 처리] 댓글 "${commentContent.substring(
+              0,
+              30
+            )}..." → AI 결과 우선 확인`
+          );
 
-        if (processingDecision.shouldUsePattern) {
-          // 🔧 패턴 처리 시도
-          let extractedOrderItems = null;
+          // AI 결과 먼저 확인
+          const aiResults = aiOrderResults.filter(
+            (result) => result.commentKey === commentKey
+          );
 
-          // 🥇 1단계: 단위 기반 패턴 매칭 시도 (가장 우선 - 정확도 높음)
-          extractedOrderItems = extractOrderByUnitPattern(
+          if (aiResults.length > 0) {
+            const orderResults = aiResults.filter((result) => result.isOrder);
+
+            if (orderResults.length > 0) {
+              // AI 결과를 사용
+              orderItems = orderResults.map((aiResult) => ({
+                itemNumber: aiResult.productItemNumber || 1,
+                quantity: aiResult.quantity || 1,
+                isAmbiguous: aiResult.isAmbiguous || false,
+                aiAnalyzed: true,
+                aiReason: aiResult.reason,
+                isOrder: aiResult.isOrder,
+                reason: aiResult.reason,
+                commentContent: aiResult.commentContent,
+                author: aiResult.author,
+                processingMethod: "ai",
+              }));
+              isProcessedAsOrder = true;
+              processingMethod = "ai";
+              processingSummary.aiDetectedOrders += orderResults.length;
+
+              console.log(
+                `[AI 강제 처리 성공] 댓글 "${commentContent.substring(
+                  0,
+                  30
+                )}..." → ${orderItems.length}개 주문 (AI 우선)`
+              );
+            } else {
+              // AI가 주문이 아니라고 판단한 경우
+              processingSummary.aiSkippedNonOrders++;
+              console.log(
+                `[AI 강제 처리] 댓글 "${commentContent.substring(
+                  0,
+                  30
+                )}..." → 주문 아님 (AI 판단)`
+              );
+              continue;
+            }
+          }
+        }
+
+        // AI 강제 처리가 적용되지 않았거나 AI 결과가 없는 경우 기존 로직 적용
+        if (!isProcessedAsOrder) {
+          const processingDecision = shouldUsePatternProcessing(
             commentContent,
             productMap
           );
 
-          // 🥈 2단계: 단위 매칭 실패 시 키워드 매칭 시도
-          if (!extractedOrderItems || extractedOrderItems.length === 0) {
-            extractedOrderItems = extractOrderByKeywordMatching(
+          console.log(
+            `[처리 결정] "${commentContent.substring(0, 30)}..." → ${
+              processingDecision.shouldUsePattern ? "패턴" : "AI"
+            } 처리 (${processingDecision.reason})`
+          );
+
+          if (processingDecision.shouldUsePattern) {
+            // 🔧 패턴 처리 시도
+            let extractedOrderItems = null;
+
+            // 🥇 1단계: 단위 기반 패턴 매칭 시도 (가장 우선 - 정확도 높음)
+            extractedOrderItems = extractOrderByUnitPattern(
               commentContent,
-              keywordMappings
+              productMap
             );
-          }
 
-          // 키워드 매칭 결과를 배열로 변환
-          if (extractedOrderItems && !Array.isArray(extractedOrderItems)) {
-            extractedOrderItems = [extractedOrderItems];
-          }
+            // 🥈 2단계: 단위 매칭 실패 시 키워드 매칭 시도
+            if (!extractedOrderItems || extractedOrderItems.length === 0) {
+              extractedOrderItems = extractOrderByKeywordMatching(
+                commentContent,
+                keywordMappings
+              );
+            }
 
-          // 🥉 3단계: 기본 패턴 매칭 시도 (마지막 패턴 기반 시도)
-          if (!extractedOrderItems || extractedOrderItems.length === 0) {
-            extractedOrderItems =
-              extractEnhancedOrderFromComment(commentContent);
-          }
+            // 키워드 매칭 결과를 배열로 변환
+            if (extractedOrderItems && !Array.isArray(extractedOrderItems)) {
+              extractedOrderItems = [extractedOrderItems];
+            }
 
-          if (extractedOrderItems && extractedOrderItems.length > 0) {
-            // 패턴 추출 성공
-            orderItems = extractedOrderItems.map((item) => ({
-              ...item,
-              aiAnalyzed: false,
-              processingMethod: "pattern",
-            }));
-            isProcessedAsOrder = true;
-            processingMethod = "pattern";
-            processingSummary.ruleBasedOrders += orderItems.length;
+            // 🥉 3단계: 기본 패턴 매칭 시도 (마지막 패턴 기반 시도)
+            if (!extractedOrderItems || extractedOrderItems.length === 0) {
+              extractedOrderItems =
+                extractEnhancedOrderFromComment(commentContent);
+            }
 
-            console.log(
-              `[패턴 처리 성공] 댓글 "${commentContent.substring(
-                0,
-                30
-              )}..." → ${orderItems.length}개 주문`
-            );
-          } else {
-            // 패턴 처리 실패 → AI로 넘김
-            console.log(
-              `[패턴 처리 실패] 댓글 "${commentContent.substring(
-                0,
-                30
-              )}..." → AI 처리로 전환`
-            );
+            if (extractedOrderItems && extractedOrderItems.length > 0) {
+              // 패턴 추출 성공
+              orderItems = extractedOrderItems.map((item) => ({
+                ...item,
+                aiAnalyzed: false,
+                processingMethod: "pattern",
+              }));
+              isProcessedAsOrder = true;
+              processingMethod = "pattern";
+              processingSummary.ruleBasedOrders += orderItems.length;
+
+              console.log(
+                `[패턴 처리 성공] 댓글 "${commentContent.substring(
+                  0,
+                  30
+                )}..." → ${orderItems.length}개 주문`
+              );
+            } else {
+              // 패턴 처리 실패 → AI로 넘김
+              console.log(
+                `[패턴 처리 실패] 댓글 "${commentContent.substring(
+                  0,
+                  30
+                )}..." → AI 처리로 전환`
+              );
+            }
           }
         }
 
-        // 🤖 AI 처리 (결정에 따라 또는 패턴 실패 시)
-        if (!isProcessedAsOrder && useAIResults && aiOrderResults.length > 0) {
+        // 🤖 AI 처리 (기존 로직: 패턴 실패 시)
+        // 단일 상품 게시물이거나, 다중 상품 게시물이지만 force_ai_processing이 비활성화된 경우
+        if (
+          !isProcessedAsOrder &&
+          useAIResults &&
+          aiOrderResults.length > 0 &&
+          (!forceAiProcessing || !isMultipleProductsPost)
+        ) {
           const aiResults = aiOrderResults.filter(
             (result) => result.commentKey === commentKey
           );
@@ -4124,6 +4208,31 @@ Deno.serve(async (req) => {
                       }
                     });
                   }
+                  // 사용자 설정 조회 (force_ai_processing)
+                  let userSettings = null;
+                  try {
+                    const { data: userData, error: userError } = await supabase
+                      .from("users")
+                      .select("force_ai_processing")
+                      .eq("user_id", userId)
+                      .single();
+
+                    if (userError && userError.code !== "PGRST116") {
+                      console.warn(
+                        `[사용자 설정] 조회 실패: ${userError.message}`
+                      );
+                    } else if (userData) {
+                      userSettings = userData;
+                      console.log(
+                        `[사용자 설정] force_ai_processing: ${userData.force_ai_processing}`
+                      );
+                    }
+                  } catch (settingsError) {
+                    console.warn(
+                      `[사용자 설정] 조회 오류: ${settingsError.message}`
+                    );
+                  }
+
                   const { orders, customers } = await generateOrderData(
                     supabase,
                     userId,
@@ -4131,7 +4240,9 @@ Deno.serve(async (req) => {
                     postKey,
                     bandKey,
                     bandNumber,
-                    productMapForNewPost
+                    productMapForNewPost,
+                    apiPost, // 게시물 정보 전달
+                    userSettings // 사용자 설정 전달
                   );
                   // 🧪 테스트 모드에서는 주문/고객 저장 건너뛰기
                   if (!testMode) {
@@ -4322,6 +4433,32 @@ Deno.serve(async (req) => {
 
                   // 4) 신규 댓글이 있으면 주문/고객 생성
                   if (newComments.length > 0) {
+                    // 사용자 설정 조회 (force_ai_processing)
+                    let userSettings = null;
+                    try {
+                      const { data: userData, error: userError } =
+                        await supabase
+                          .from("users")
+                          .select("force_ai_processing")
+                          .eq("user_id", userId)
+                          .single();
+
+                      if (userError && userError.code !== "PGRST116") {
+                        console.warn(
+                          `[사용자 설정] 조회 실패: ${userError.message}`
+                        );
+                      } else if (userData) {
+                        userSettings = userData;
+                        console.log(
+                          `[사용자 설정] force_ai_processing: ${userData.force_ai_processing}`
+                        );
+                      }
+                    } catch (settingsError) {
+                      console.warn(
+                        `[사용자 설정] 조회 오류: ${settingsError.message}`
+                      );
+                    }
+
                     const { orders, customers } = await generateOrderData(
                       supabase,
                       userId,
@@ -4330,7 +4467,8 @@ Deno.serve(async (req) => {
                       bandKey,
                       bandNumber,
                       productMap,
-                      apiPost // 게시물 정보 추가
+                      apiPost, // 게시물 정보 추가
+                      userSettings // 사용자 설정 전달
                     );
                     // 🧪 테스트 모드에서는 주문/고객 저장 건너뛰기
                     if (!testMode) {
