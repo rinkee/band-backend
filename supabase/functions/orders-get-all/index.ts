@@ -37,7 +37,7 @@ Deno.serve(async (req: Request) => {
       auth: { autoRefreshToken: false, persistSession: false },
     });
     console.log("Supabase client initialized.");
-  } catch (error) {
+  } catch (error: any) {
     const status =
       error.message.includes("Authorization") || error.message.includes("token")
         ? 401
@@ -129,7 +129,7 @@ Deno.serve(async (req: Request) => {
           `Loaded ${excludedCustomers.length} excluded customers for filtering`
         );
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(`Error fetching excluded customers: ${e.message}`);
     }
     // --- 필터링 ---
@@ -163,13 +163,7 @@ Deno.serve(async (req: Request) => {
           query = query.in("sub_status", subStatusValues);
       }
     }
-    if (searchFilter && searchFilter !== "undefined") {
-      const searchTerm = `%${searchFilter}%`;
-      // 뷰 컬럼명 확인 (customer_name, product_title, product_barcode)
-      query = query.or(
-        `customer_name.ilike.${searchTerm},product_title.ilike.${searchTerm},product_barcode.ilike.${searchTerm}`
-      );
-    }
+    // 검색 조건은 아래에서 통합 처리
     if (startDateFilter && endDateFilter) {
       try {
         const start = new Date(startDateFilter).toISOString();
@@ -178,7 +172,7 @@ Deno.serve(async (req: Request) => {
         query = query
           .gte("ordered_at", start)
           .lte("ordered_at", end.toISOString());
-      } catch (dateError) {
+      } catch (dateError: any) {
         return new Response(
           JSON.stringify({
             success: false,
@@ -192,31 +186,43 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // --- 👇 4. 검색 조건 (정확한 고객명 필터 우선 적용) 👇 ---
+    // --- 👇 4. 검색 조건 (정확한 고객명 필터 및 post_key 우선 적용) 👇 ---
     if (exactCustomerNameFilter && exactCustomerNameFilter !== "undefined") {
       // 4.1. 정확한 고객명 필터가 있으면, 그것만 적용 (eq 사용)
       console.log(`Applying EXACT customer filter: ${exactCustomerNameFilter}`);
       query = query.eq("customer_name", exactCustomerNameFilter);
     } else if (searchFilter && searchFilter !== "undefined") {
-      // 4.2. 정확한 고객명 필터가 *없고* 일반 검색어가 있으면, ILIKE 사용 (이스케이프 처리 포함)
-      const escapedSearch = searchFilter
-        .replace(/\\/g, "\\\\") // 백슬래시 먼저
-        .replace(/%/g, "\\%") // 퍼센트
-        .replace(/_/g, "\\_") // 언더스코어
-        // --- 👇 괄호 이스케이프 추가 👇 ---
-        .replace(/\(/g, "\\(") // 여는 괄호
-        .replace(/\)/g, "\\)"); // 닫는 괄호
-      // --- 👆 괄호 이스케이프 추가 끝 👆 ---
+      // 4.2. post_key 검색인지 확인 (길이가 길고 공백이 없는 문자열)
+      console.log(`[DEBUG] Received searchFilter: "${searchFilter}"`);
+      const isPostKeySearch =
+        searchFilter.length > 20 && !searchFilter.includes(" ");
 
-      const searchTerm = `%${escapedSearch}%`;
-      console.log(`Applying GENERAL search with escaped term: ${searchTerm}`);
-      // orders_with_products 뷰의 컬럼명 확인 필요
-      query = query.or(
-        `customer_name.ilike.${searchTerm},product_title.ilike.${searchTerm},product_barcode.ilike.${searchTerm},comment.ilike.${searchTerm}` // <<< comment 컬럼 추가 (예시)
-      );
-      // 다른 검색 대상 컬럼이 있다면 여기에 추가 (예: ,order_id.ilike.${searchTerm})
+      console.log(`[DEBUG] isPostKeySearch: ${isPostKeySearch}`);
+
+      if (isPostKeySearch) {
+        console.log(
+          `[DEBUG] Applying EXACT post_key filter: "${searchFilter}"`
+        );
+        query = query.eq("post_key", searchFilter);
+      } else {
+        // 4.3. 일반 검색어는 ILIKE 사용 (이스케이프 처리 포함)
+        const escapedSearch = searchFilter
+          .replace(/\\/g, "\\\\") // 백슬래시 먼저
+          .replace(/%/g, "\\%") // 퍼센트
+          .replace(/_/g, "\\_") // 언더스코어
+          .replace(/\(/g, "\\(") // 여는 괄호
+          .replace(/\)/g, "\\)"); // 닫는 괄호
+
+        const searchTerm = `%${escapedSearch}%`;
+        console.log(`Applying GENERAL search with escaped term: ${searchTerm}`);
+        query = query.or(
+          `customer_name.ilike.${searchTerm},product_title.ilike.${searchTerm},product_barcode.ilike.${searchTerm},comment.ilike.${searchTerm},post_key.ilike.${searchTerm}`
+        );
+      }
     }
     // --- 👆 검색 조건 끝 👆 ---
+
+    console.log("[DEBUG] Final Query:", query);
 
     // 제외고객 필터링 적용 (항상)
     if (excludedCustomers.length > 0) {
@@ -235,16 +241,14 @@ Deno.serve(async (req: Request) => {
     const { data, error, count } = await query;
 
     if (error) {
-      console.error("Supabase query error:", error);
-      if (
-        error.message.includes("relation") &&
-        error.message.includes("does not exist")
-      ) {
+      console.error("Database query error:", error.message);
+      // 더 구체적인 에러 메시지나 상태 코드 반환 가능
+      if (error.code === "42P01") {
+        // 'undefined_table'
         return new Response(
           JSON.stringify({
             success: false,
-            message: "데이터베이스 뷰 또는 관계 오류.",
-            error: error.message,
+            message: `DB 오류: '${sortBy}' 컬럼 또는 'orders_with_products' 뷰를 찾을 수 없습니다.`,
           }),
           {
             status: 500,
@@ -252,7 +256,7 @@ Deno.serve(async (req: Request) => {
           }
         );
       }
-      throw error;
+      throw error; // 다른 DB 에러는 그대로 throw
     }
 
     const totalPages = count ? Math.ceil(count / limit) : 0;
@@ -270,14 +274,11 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       }
     );
-  } catch (error) {
-    console.error("Unhandled error in orders/get-all:", error);
+  } catch (error: any) {
+    // 최상위 에러 핸들러
+    console.error("An unexpected error occurred:", error.message);
     return new Response(
-      JSON.stringify({
-        success: false,
-        message: "주문 목록 조회 중 오류 발생",
-        error: error.message,
-      }),
+      JSON.stringify({ success: false, message: "내부 서버 오류" }),
       {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

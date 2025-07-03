@@ -177,20 +177,32 @@ async function extractOrdersFromCommentsAI(
 
 **CASE 1: '옵션 판매' 게시물의 경우 (가장 우선)**
 - **목표**: 고객이 **어떤 옵션**을 **몇 개** 주문했는지 정확히 찾아냅니다.
-- **분석 예시**:
-  - "1박스요" → '1박스(17과)' 옵션 1개 주문.
-  - "반박스 2개요" → '반박스(8개)' 옵션 2개 주문.
-  - "8개요" → '반박스(8개)' 옵션 1개 주문 (고객이 설명 안의 숫자를 보고 주문).
+- **분석 방법**:
+  - 댓글의 키워드를 게시물의 옵션 설명과 매칭
+  - 옵션 설명 내 숫자를 보고 주문하는 경우도 고려
+  - 옵션명이나 번호로 직접 지정하는 경우 우선 처리
 - **출력 (매우 중요)**:
-  - \`productItemNumber\`: 고객이 선택한 **옵션의 번호**. (예: '1박스(17과)'는 2번 옵션이므로 '2')
-  - \`quantity\`: 해당 **옵션의 주문 개수**.
-- **판단 이유(reason) 작성 예시**: "게시물이 옵션 판매 방식임을 확인. '1박스요' 댓글은 2번 옵션 '1박스(17과)' 1개를 의미하므로 productItemNumber: 2, quantity: 1로 설정함."
+  - \`productItemNumber\`: 고객이 선택한 **옵션의 번호**
+  - \`quantity\`: 해당 **옵션의 주문 개수**
+- **판단 이유(reason) 작성**: "게시물이 옵션 판매 방식임을 확인. 댓글 내용을 분석하여 해당 옵션으로 매칭함."
 
-**CASE 2: '단일 상품' 게시물의 경우**
-- **목표**: 고객의 요청을 '기본 판매 단위'로 나눠 수량을 계산합니다.
-- **분석**:
-  - **기본 단위 찾기**: 게시물 본문에서 가격이 매겨진 기본 단위를 찾습니다 (예: '400g').
-  - **수량 계산**: \`quantity\` = (고객 요청량) / (기본 단위)
+**CASE 2: '여러 상품' 게시물의 경우**
+- **목표**: 각 상품별로 개별 주문을 생성합니다.
+- **🔥 중요 원칙**: 
+  - 한 댓글에서 여러 상품을 주문하면 각각 별도의 주문 객체를 생성해야 합니다.
+  - 상품이 게시물에 존재하고 수량이 명시되어 있으면 **절대 주문을 제외하지 마세요**.
+- **분석 방법**:
+  - 댓글에서 "상품키워드 + 수량" 패턴을 찾아 분리
+  - 각 상품키워드를 게시물의 상품 정보와 매칭
+  - 쉼표, 공백, 줄바꿈 등으로 구분된 여러 주문 감지
+- **출력**: 각 상품마다 개별 주문 객체 생성
+- **판단 이유(reason) 작성**: "여러 상품 주문 감지. 댓글을 분석하여 각 상품별로 개별 주문 생성함."
+
+**CASE 3: '단일 상품' 게시물의 경우**
+- **목표**: 고객의 요청을 기본 판매 단위로 나눠 수량을 계산합니다.
+- **분석 방법**:
+  - 게시물에서 기본 판매 단위 식별
+  - 댓글의 수량을 기본 단위로 환산
 - **출력**:
   - \`productItemNumber\`: 항상 \`1\`
   - \`quantity\`: 계산된 최종 수량
@@ -209,6 +221,8 @@ ${commentsSummary}
 ### **[기타 규칙]**
 - **isOrder**: 주문 의도가 명확하면 \`true\`.
 - **isAmbiguous**: 판단이 애매할 때만 \`true\`.
+- **여러 상품 주문**: 한 댓글에서 여러 상품을 주문하면 각각 개별 주문 객체로 생성해야 합니다.
+- **주문 제외 금지**: 상품이 게시물에 존재하고 수량이 명시되어 있으면 절대 주문을 제외하지 마세요.
 
 ---
 🔥 **최종 출력 형식 (반드시 준수)**:
@@ -218,9 +232,17 @@ ${commentsSummary}
       "commentKey": "댓글의 고유 키",
       "isOrder": true,
       "isAmbiguous": false,
-      "productItemNumber": 2,
+      "productItemNumber": 1,
       "quantity": 1,
-      "reason": "게시물이 옵션 판매 방식임을 확인. '1박스요' 댓글은 2번 옵션 '1박스(17과)' 1개를 의미하므로 productItemNumber: 2, quantity: 1로 설정함."
+      "reason": "분석 결과 설명"
+    },
+    {
+      "commentKey": "댓글의 고유 키",
+      "isOrder": true,
+      "isAmbiguous": false,
+      "productItemNumber": 2,
+      "quantity": 2,
+      "reason": "여러 상품 주문 중 두 번째 상품 처리"
     }
   ]
 }
@@ -518,6 +540,10 @@ keywordMappings :
   - **예시 1**: "콩나물"과 "녹두나물" → "콩나물", "녹두나물", "콩", "녹두" 모두 포함
   - **예시 2**: "대천복숭아"와 "조대홍복숭아" → "대천", "조대홍" (겹치는 "복숭아"는 제외)
   - **예시 3**: "빨간파프리카"와 "노란파프리카" → "빨간", "노란", "빨간파프리카", "노란파프리카"
+- **🔥 괄호 안 용도 표기 필수 포함**: 상품명에 (제육용), (찌개용), (구이용) 등의 용도가 괄호로 표기된 경우, 괄호 안의 단어를 반드시 키워드에 포함하세요.
+  - **예시 1**: "돼지후지살(제육용)" → "제육", "제육용", "후지살", "돼지후지살" 모두 포함
+  - **예시 2**: "돼지앞다리살(찌개용)" → "찌개", "찌개용", "앞다리살", "돼지앞다리살" 모두 포함
+  - **예시 3**: "한우등심(구이용)" → "구이", "구이용", "등심", "한우등심" 모두 포함
 - **단위/수량 제외**: "1키로", "1팩" 등은 키워드가 아닙니다.
 - **번호 포함**: "1번", "2번" 같은 키워드는 항상 포함합니다.
 - **🔥 인덱스 규칙**: productIndex는 반드시 1부터 시작합니다. (0이 아님! itemNumber와 동일해야 함)
@@ -1492,7 +1518,21 @@ function extractOrderByUnitPattern(commentText, productMap) {
       for (const pattern of unitPatterns) {
         const match = text.match(pattern);
         if (match && match[1]) {
-          const quantity = parseInt(match[1]);
+          const numberStr = match[1];
+          // 🔥 4자리 이상이거나 0으로 시작하는 3자리+ 숫자는 전화번호로 간주하고 제외
+          if (
+            numberStr.length >= 4 ||
+            (numberStr.length >= 3 && numberStr.startsWith("0"))
+          ) {
+            console.log(
+              `[quantity_text 명시적 매칭] "${commentText}" → ${numberStr}은 전화번호로 간주, 건너뜀 (길이: ${
+                numberStr.length
+              }, 0시작: ${numberStr.startsWith("0")})`
+            );
+            continue; // 다음 패턴으로
+          }
+
+          const quantity = parseInt(numberStr);
           if (quantity >= 1 && quantity <= 999) {
             foundOrders.push({
               itemNumber: itemNumber,
@@ -1515,7 +1555,21 @@ function extractOrderByUnitPattern(commentText, productMap) {
       // 예: quantity_text="통", 댓글="1" → 1통으로 해석
       const simpleNumberMatch = text.match(/^\s*(\d+)\s*$/); // 순수 숫자만
       if (simpleNumberMatch && simpleNumberMatch[1]) {
-        const quantity = parseInt(simpleNumberMatch[1]);
+        const numberStr = simpleNumberMatch[1];
+        // 🔥 4자리 이상이거나 0으로 시작하는 3자리+ 숫자는 전화번호로 간주하고 제외
+        if (
+          numberStr.length >= 4 ||
+          (numberStr.length >= 3 && numberStr.startsWith("0"))
+        ) {
+          console.log(
+            `[quantity_text 숫자 매칭] "${commentText}" → ${numberStr}은 전화번호로 간주, 건너뜀 (길이: ${
+              numberStr.length
+            }, 0시작: ${numberStr.startsWith("0")})`
+          );
+          continue; // 다음 상품으로
+        }
+
+        const quantity = parseInt(numberStr);
         if (quantity >= 1 && quantity <= 999) {
           foundOrders.push({
             itemNumber: itemNumber,
@@ -1543,7 +1597,21 @@ function extractOrderByUnitPattern(commentText, productMap) {
     for (const pattern of universalPatterns) {
       const match = text.match(pattern);
       if (match && match[1]) {
-        const quantity = parseInt(match[1]);
+        const numberStr = match[1];
+        // 🔥 4자리 이상이거나 0으로 시작하는 3자리+ 숫자는 전화번호로 간주하고 제외
+        if (
+          numberStr.length >= 4 ||
+          (numberStr.length >= 3 && numberStr.startsWith("0"))
+        ) {
+          console.log(
+            `[개 단위 매칭] "${commentText}" → ${numberStr}은 전화번호로 간주, 건너뜀 (길이: ${
+              numberStr.length
+            }, 0시작: ${numberStr.startsWith("0")})`
+          );
+          continue; // 다음 패턴으로
+        }
+
+        const quantity = parseInt(numberStr);
         if (quantity >= 1 && quantity <= 999) {
           // 🔥 패키지 옵션 우선 체크 (예: "10개" → "2세트(10개)" 옵션 찾기)
           for (const [itemNumber, productInfo] of productMap) {
@@ -1689,7 +1757,21 @@ function extractOrderByUnitPattern(commentText, productMap) {
       // "10", "20" 등 순수 숫자나 "10요" 등에서 숫자 추출
       const numberMatch = text.match(/^\s*(\d+)(?:요|개요)?\s*$/);
       if (numberMatch && numberMatch[1]) {
-        const mentionedNumber = parseInt(numberMatch[1]);
+        const numberStr = numberMatch[1];
+        // 🔥 4자리 이상이거나 0으로 시작하는 3자리+ 숫자는 전화번호로 간주하고 제외
+        if (
+          numberStr.length >= 4 ||
+          (numberStr.length >= 3 && numberStr.startsWith("0"))
+        ) {
+          console.log(
+            `[패키지 옵션 매칭] "${commentText}" → ${numberStr}은 전화번호로 간주, 건너뜀 (길이: ${
+              numberStr.length
+            }, 0시작: ${numberStr.startsWith("0")})`
+          );
+          continue; // 다음 상품으로
+        }
+
+        const mentionedNumber = parseInt(numberStr);
 
         // 패키지 옵션에서 해당 개수와 일치하는 옵션 찾기
         for (const option of priceOptions) {
@@ -1726,7 +1808,21 @@ function extractOrderByUnitPattern(commentText, productMap) {
   // "2" 댓글 등을 처리하기 위해 추가
   const simpleNumberMatch = text.match(/^\s*(\d+)\s*$/); // 순수 숫자만
   if (simpleNumberMatch && simpleNumberMatch[1]) {
-    const quantity = parseInt(simpleNumberMatch[1]);
+    const numberStr = simpleNumberMatch[1];
+    // 🔥 4자리 이상이거나 0으로 시작하는 3자리+ 숫자는 전화번호로 간주하고 제외
+    if (
+      numberStr.length >= 4 ||
+      (numberStr.length >= 3 && numberStr.startsWith("0"))
+    ) {
+      console.log(
+        `[단순 숫자 매칭] "${commentText}" → ${numberStr}은 전화번호로 간주, 패턴 처리 불가 (길이: ${
+          numberStr.length
+        }, 0시작: ${numberStr.startsWith("0")})`
+      );
+      return null;
+    }
+
+    const quantity = parseInt(numberStr);
     if (quantity >= 1 && quantity <= 999) {
       // 첫 번째 상품에 매칭
       const firstItem = productMap.keys().next().value;
@@ -1785,6 +1881,24 @@ function extractOrderByKeywordMatching(commentText, keywordMappings) {
 
             const quantity = !isNaN(quantity1) ? quantity1 : quantity2;
 
+            // 🔥 원본 문자열도 체크해서 0으로 시작하는 숫자 제외
+            const originalStr1 = part1;
+            const originalStr2 = part2;
+            const relevantStr = !isNaN(quantity1) ? originalStr1 : originalStr2;
+
+            // 🔥 4자리 이상이거나 0으로 시작하는 3자리+ 숫자는 전화번호로 간주하고 제외
+            if (
+              relevantStr.length >= 4 ||
+              (relevantStr.length >= 3 && relevantStr.startsWith("0"))
+            ) {
+              console.log(
+                `[키워드 매칭] "${commentText}" → ${quantity}(${relevantStr})은 전화번호로 간주, 건너뜀 (길이: ${
+                  relevantStr.length
+                }, 0시작: ${relevantStr.startsWith("0")})`
+              );
+              continue; // 다음 매치로
+            }
+
             if (quantity >= 1 && quantity <= 999) {
               foundOrders.push({
                 itemNumber: mapping.productIndex,
@@ -1822,20 +1936,41 @@ function checkNumberPatternOnly(commentText) {
 
   console.log(`[1단계 숫자체크] 입력: "${commentText}"`);
 
-  // 🔍 1-1: 모든 숫자 패턴 추출
-  const numberMatches = text.match(/\b(\d{1,3})\b/g);
+  // 🔍 1-1: 모든 숫자 패턴 추출 (부분 매칭 방지를 위해 완전한 숫자만)
+  const numberMatches = [];
+  const numberPattern = /\d+/g;
+  let match;
+  while ((match = numberPattern.exec(text)) !== null) {
+    const numberStr = match[0];
+    // 4자리 이상이거나 0으로 시작하는 3자리+ 숫자는 전화번호로 간주하고 제외
+    if (
+      numberStr.length >= 4 ||
+      (numberStr.length >= 3 && numberStr.startsWith("0"))
+    ) {
+      console.log(
+        `[1단계 숫자체크] 전화번호로 간주하여 제외: "${numberStr}" (길이: ${
+          numberStr.length
+        }, 0시작: ${numberStr.startsWith("0")})`
+      );
+      continue;
+    }
+    // 1-3자리 숫자만 추가
+    if (numberStr.length >= 1 && numberStr.length <= 3) {
+      numberMatches.push(numberStr);
+    }
+  }
+
   console.log(
     `[1단계 숫자체크] 숫자 패턴 추출: ${
-      numberMatches ? `[${numberMatches.join(", ")}]` : "없음"
+      numberMatches.length > 0 ? `[${numberMatches.join(", ")}]` : "없음"
     }`
   );
 
   // 🔍 1-2: 유효한 숫자 필터링 (1-999 범위)
-  const validNumbers =
-    numberMatches?.filter((num) => {
-      const n = parseInt(num);
-      return n >= 1 && n <= 999;
-    }) || [];
+  const validNumbers = numberMatches.filter((num) => {
+    const n = parseInt(num);
+    return n >= 1 && n <= 999;
+  });
 
   console.log(
     `[1단계 숫자체크] 유효한 숫자 (1-999): [${validNumbers.join(", ")}]`
@@ -1913,15 +2048,54 @@ function shouldUsePatternProcessing(commentText, productMap) {
     return { shouldUsePattern: false, reason: "weight_volume_unit_detected" };
   }
 
-  // 🔥 새로 추가: 숫자가 2개 이상이면 AI 처리
-  const numberMatches = commentText.match(/\d+/g);
-  if (numberMatches && numberMatches.length >= 2) {
+  // 🔥 개선: 전화번호 등 무관한 숫자 제외 후 주문 관련 숫자만 카운트
+  // 0으로 시작하는 4자리+ 숫자와 일반 4자리+ 숫자를 모두 제외
+  const allNumberMatches = [];
+  const numberPattern = /\d+/g;
+  let match;
+  while ((match = numberPattern.exec(commentText)) !== null) {
+    const numberStr = match[0];
+    // 4자리 이상이거나 0으로 시작하는 3자리+ 숫자는 전화번호로 간주
+    if (
+      numberStr.length >= 4 ||
+      (numberStr.length >= 3 && numberStr.startsWith("0"))
+    ) {
+      continue; // 전화번호로 간주하고 제외
+    }
+    allNumberMatches.push(numberStr);
+  }
+
+  // 4자리 이상 연속 숫자는 전화번호/ID로 간주하고 제외
+  const orderRelevantNumbers = allNumberMatches.filter((num) => {
+    // 🔥 개선: 문자열 길이로 체크 (0으로 시작하는 4자리 숫자 처리)
+    if (num.length >= 4) {
+      // 4자리 이상은 전화번호/ID로 간주
+      return false;
+    }
+    const numValue = parseInt(num);
+    // 주문 수량은 보통 1-999 범위
+    return numValue >= 1 && numValue <= 999;
+  });
+
+  if (orderRelevantNumbers.length >= 2) {
     console.log(
-      `[처리 방식 결정] "${commentText}" → 숫자 2개 이상 감지 (${numberMatches.join(
+      `[처리 방식 결정] "${commentText}" → 주문 관련 숫자 2개 이상 감지 (${orderRelevantNumbers.join(
         ", "
-      )}), AI 처리로 전환`
+      )}), AI 처리로 전환 (전체 숫자: ${allNumberMatches.join(", ")})`
     );
-    return { shouldUsePattern: false, reason: "multiple_numbers_detected" };
+    return {
+      shouldUsePattern: false,
+      reason: "multiple_order_numbers_detected",
+    };
+  }
+
+  // 전화번호만 있고 주문 숫자가 1개면 패턴 처리 가능
+  if (allNumberMatches.length !== orderRelevantNumbers.length) {
+    console.log(
+      `[처리 방식 결정] "${commentText}" → 전화번호/ID 필터링됨 (${allNumberMatches
+        .filter((num) => num.length >= 4 || parseInt(num) > 999)
+        .join(", ")}), 주문 숫자: ${orderRelevantNumbers.join(", ")}`
+    );
   }
 
   // 🔍 1단계: 새로운 숫자 체크 (사용자 요구사항 1번)
@@ -2016,21 +2190,42 @@ function extractEnhancedOrderFromComment(commentText) {
   const genericNumberPattern = /(\d+)/g;
   const numbersFound = [];
   while ((match = genericNumberPattern.exec(text)) !== null) {
-    numbersFound.push(parseInt(match[1]));
+    const numberStr = match[1];
+    // 🔥 4자리 이상이거나 0으로 시작하는 3자리+ 숫자는 전화번호로 간주하고 제외
+    if (
+      numberStr.length >= 4 ||
+      (numberStr.length >= 3 && numberStr.startsWith("0"))
+    ) {
+      console.log(
+        `[Enhanced 주문 추출] "${commentText}" → ${numberStr}은 전화번호로 간주, 건너뜀 (길이: ${
+          numberStr.length
+        }, 0시작: ${numberStr.startsWith("0")})`
+      );
+      continue;
+    }
+    numbersFound.push(parseInt(numberStr));
   }
 
-  // 4자리 이상 숫자 필터링 (예: 2062 제거)
+  // 유효한 수량만 필터링 (1-999 범위)
   const validQuantities = numbersFound.filter(isValidQuantity);
 
   if (validQuantities.length > 0) {
-    for (const qty of validQuantities) {
-      foundOrders.push({
-        itemNumber: 1, // 상품 번호는 알 수 없으므로 '1'로 가정 (모호함)
-        quantity: qty,
-        matchType: "pattern-isolated-number",
-        isAmbiguous: true, // 상품 번호를 추정했으므로 '모호함'으로 표시
-      });
-    }
+    // 🔥 중복 주문 방지: 여러 숫자 중 가장 작은 값 하나만 선택 (일반적으로 주문 수량은 작은 숫자)
+    const bestQuantity = Math.min(...validQuantities);
+
+    foundOrders.push({
+      itemNumber: 1, // 상품 번호는 알 수 없으므로 '1'로 가정 (모호함)
+      quantity: bestQuantity,
+      matchType: "pattern-isolated-number",
+      isAmbiguous: true, // 상품 번호를 추정했으므로 '모호함'으로 표시
+    });
+
+    console.log(
+      `[중복 방지] "${commentText}" → 수량 ${bestQuantity}개 선택 (후보: ${validQuantities.join(
+        ", "
+      )}), 단일 주문만 생성`
+    );
+
     return foundOrders;
   }
 
